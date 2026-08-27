@@ -1,0 +1,30 @@
+{
+  "name": "excalidraw-desktop",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "description": "Local-first Excalidraw desktop app for Fedora Linux",
+  "scripts": {
+    "assets": "node scripts/copy-assets.mjs",
+    "dev": "npm run assets && vite",
+    "build": "npm run assets && tsc --noEmit && vite build",
+    "tauri": "tauri",
+    "start": "npm run assets && tauri dev",
+    "bundle": "npm run assets && tauri build"
+  },
+  "dependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0"
+  }
+}
