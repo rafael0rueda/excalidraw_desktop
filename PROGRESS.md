@@ -151,6 +151,12 @@ exposes either, add the key then.
   a `.excalidraw` file; `loadFromBlob` fills it with Excalidraw's own `#1e1e1e`.
   Every scene load therefore has to re-assert the theme's stroke, or dark themes
   draw invisible black.
+- **`api.getAppState()` does not reflect your own `updateScene` yet.** Probed
+  directly: a mark taken immediately after `updateScene` still reported the old
+  `#1e1e1e` / `#ffffff`, while a sample 100 ms later reported the theme's
+  values. Any read-then-write of appState that spans a render boundary loses.
+  Verified by writing samples to `/tmp` from the running app — the only way to
+  observe this, since the webview console is not forwarded to `tauri dev`.
 - Switching theme retints the *default* stroke/fill for new elements only while
   they still match the outgoing theme. A colour the user picked is theirs.
 - Existing elements are never recoloured.
