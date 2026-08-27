@@ -9,8 +9,12 @@ import { copyToClipboard, exportPng, exportSvg } from "./lib/exportActions";
 
 export default function App() {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
-  const { state, actions } = useDocument(api);
   const theme = useTheme(api);
+  const { state, actions } = useDocument(api, {
+    viewBackgroundColor: theme.active.colors.canvas,
+    currentItemStrokeColor: theme.active.colors.stroke,
+    currentItemBackgroundColor: theme.active.colors.fill,
+  });
 
   const handlers: MenuHandlers = {
     newDrawing: () => void actions.newDrawing(),
@@ -46,14 +50,6 @@ export default function App() {
     void buildMenu(handlers, themeMenu);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, state.path, state.dirty, theme.selection, theme.themes]);
-
-  // Loading a drawing brings its own appState — canvas background and default
-  // element colours — which would leave a themed UI around an unthemed canvas
-  // and, on a dark theme, invisible black strokes. The theme wins.
-  useEffect(() => {
-    if (api) theme.reapply();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, state.epoch]);
 
   // Guard the window-manager close button (menu Quit routes here too).
   useEffect(() => {

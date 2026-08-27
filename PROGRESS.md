@@ -116,6 +116,17 @@ Re-checked on window focus, so a desktop-wide light/dark flip follows.
 
 Both verified by reading the shipped bundle, not guessed:
 
+0. **The swatch row cannot be themed, and inverting it is a trap.** The web
+   app's dark mode shows light grey for the *same* stored `#1e1e1e`, via
+   `--theme-filter: invert(93%) hue-rotate(180deg)`. That variable is settable
+   and is applied to `.color-picker__button`, `.color-picker-swatch`,
+   `.color-picker-label-swatch` and the eye-dropper — while the canvas filter is
+   gated on the `.excalidraw.theme--dark canvas` *selector*, not the variable.
+   So setting it would invert the swatches without inverting the canvas: every
+   swatch would then display the opposite of what it draws. We keep it `none`
+   and default to a genuinely light stroke instead, so what you see is what is
+   stored. The cost is that the five fixed top picks stay literal — the first
+   one is black.
 1. **Grid colour.** Hardcoded as `{Bold:"#dddddd", Regular:"#e5e5e5"}` in a
    module-private object in `chunk-K2UTITRG.js`, read at draw time. Not in
    `appState` (which has only `gridSize`, `gridStep`, `gridModeEnabled`) and not
@@ -129,8 +140,17 @@ exposes either, add the key then.
 
 ### Behaviour decisions
 
-- The theme owns the canvas background, so opening a file reapplies it —
-  otherwise a drawing saved elsewhere leaves a themed UI around a white canvas.
+- The theme owns the canvas background and the default element colours, and
+  they are merged into the *same* `updateScene` call that replaces a scene
+  (`ThemedDefaults` in `document.ts`). Doing it afterwards does not work:
+  Excalidraw commits a replaced scene on its own render pass, which lands after
+  ours, so a repaint scheduled from an effect is silently overwritten. This was
+  observed, not theorised — an element drawn 28 s after a restart still came out
+  `#1e1e1e`.
+- `currentItemStrokeColor` is flagged `export: false`, so it is never stored in
+  a `.excalidraw` file; `loadFromBlob` fills it with Excalidraw's own `#1e1e1e`.
+  Every scene load therefore has to re-assert the theme's stroke, or dark themes
+  draw invisible black.
 - Switching theme retints the *default* stroke/fill for new elements only while
   they still match the outgoing theme. A colour the user picked is theirs.
 - Existing elements are never recoloured.

@@ -27,13 +27,21 @@ const NEVER_SAVED = -1;
 export interface DocumentState {
   path: string | null;
   dirty: boolean;
-  /**
-   * Bumped every time the whole scene is replaced. Replacing a scene also
-   * replaces `appState`, which carries colours the theme owns, so the theme
-   * needs to know — and `path` alone does not tell it (a recovered unsaved
-   * drawing keeps `path === null`).
-   */
-  epoch: number;
+}
+
+/**
+ * The `appState` fields a theme owns, merged into every scene replacement.
+ *
+ * This cannot be done afterwards: Excalidraw commits a replaced scene on its
+ * own render pass, which lands after ours, so a repaint scheduled from an
+ * effect gets overwritten. Note that `currentItemStrokeColor` is never in a
+ * `.excalidraw` file (it is flagged `export: false`) — `loadFromBlob` fills it
+ * with Excalidraw's own `#1e1e1e`, which is invisible on a dark canvas.
+ */
+export interface ThemedDefaults {
+  viewBackgroundColor: string;
+  currentItemStrokeColor: string;
+  currentItemBackgroundColor: string;
 }
 
 export interface DocumentActions {
@@ -48,11 +56,12 @@ export interface DocumentActions {
   endSession: () => Promise<void>;
 }
 
-export function useDocument(api: ExcalidrawImperativeAPI | null) {
+export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedDefaults) {
   const [path, setPath] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [epoch, setEpoch] = useState(0);
-  const sceneReplaced = useCallback(() => setEpoch((n) => n + 1), []);
+  // Read through a ref so a new theme does not churn every callback's identity.
+  const themedRef = useRef(themed);
+  themedRef.current = themed;
   // Scene version at the moment we last saved or loaded; anything else is dirty.
   const savedVersion = useRef(0);
 
@@ -179,21 +188,23 @@ export function useDocument(api: ExcalidrawImperativeAPI | null) {
       if (!api) return false;
       try {
         const scene = await parseScene(await readTextFile(target));
-        api.updateScene({ elements: scene.elements, appState: scene.appState });
+        api.updateScene({
+          elements: scene.elements,
+          appState: { ...scene.appState, ...themedRef.current },
+        });
         if (scene.files) api.addFiles(Object.values(scene.files));
         api.scrollToContent(scene.elements, { fitToContent: true });
         await pushRecent(target);
         setPath(target);
         savedVersion.current = sceneVersion(scene.elements);
         setDirty(false);
-        sceneReplaced();
         return true;
       } catch (err) {
         if (!quiet) await message(String(err), { title: "Could not open file", kind: "error" });
         return false;
       }
     },
-    [api, sceneReplaced],
+    [api],
   );
 
   const openDrawing = useCallback(
@@ -218,11 +229,12 @@ export function useDocument(api: ExcalidrawImperativeAPI | null) {
     if (!api) return;
     if (!(await confirmDiscard())) return;
     api.resetScene();
+    // resetScene puts Excalidraw's own defaults back; ours must land after it.
+    api.updateScene({ appState: { ...themedRef.current } });
     setPath(null);
     savedVersion.current = sceneVersion(api.getSceneElements());
     setDirty(false);
-    sceneReplaced();
-  }, [api, confirmDiscard, sceneReplaced]);
+  }, [api, confirmDiscard]);
 
   const restoreSession = useCallback(async () => {
     if (!api) return;
@@ -242,12 +254,14 @@ export function useDocument(api: ExcalidrawImperativeAPI | null) {
           const scene = await parseScene(session.scene);
           // No scrollToContent here: the snapshot's own appState puts the user
           // back at the viewport they were working in.
-          api.updateScene({ elements: scene.elements, appState: scene.appState });
+          api.updateScene({
+            elements: scene.elements,
+            appState: { ...scene.appState, ...themedRef.current },
+          });
           if (scene.files) api.addFiles(Object.values(scene.files));
           setPath(session.path);
           savedVersion.current = NEVER_SAVED;
           setDirty(true);
-          sceneReplaced();
           return;
         } catch (err) {
           await message(String(err), { title: "Could not restore session", kind: "error" });
@@ -258,7 +272,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null) {
     // Otherwise just reopen whatever was on screen, quietly — the file may well
     // have been moved or deleted since, and that is not worth a startup alert.
     if (session.path) await loadInto(session.path, true);
-  }, [api, loadInto, sceneReplaced]);
+  }, [api, loadInto]);
 
   // Guarded rather than cancelled on cleanup: StrictMode runs effects twice in
   // development, and startup must not ask the user to recover twice.
@@ -279,7 +293,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null) {
     })();
   }, [api, loadInto, restoreSession]);
 
-  const state: DocumentState = { path, dirty, epoch };
+  const state: DocumentState = { path, dirty };
   const actions: DocumentActions = {
     newDrawing,
     openDrawing,

@@ -32,8 +32,6 @@ export interface ThemeController {
   select: (id: string) => void;
   /** Re-reads the user themes directory. */
   reload: () => Promise<void>;
-  /** Repaints the current theme, e.g. after a file supplied its own background. */
-  reapply: () => void;
 }
 
 /** A user theme with the same id as a preset replaces it, keeping its position. */
@@ -138,12 +136,6 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
     );
   }, []);
 
-  const reapply = useCallback(() => {
-    // Passing the active theme as `previous` keeps any colour the user picked
-    // by hand while still restoring the themed canvas background.
-    applyTheme(active, api, active);
-  }, [active, api]);
-
   const systemPair = useMemo(
     () => ({
       light: themes.find((t) => t.id === settings.light_theme) ?? null,
@@ -152,5 +144,5 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
     [themes, settings.light_theme, settings.dark_theme],
   );
 
-  return { themes, active, selection: settings.theme, systemPair, select, reload, reapply };
+  return { themes, active, selection: settings.theme, systemPair, select, reload };
 }
