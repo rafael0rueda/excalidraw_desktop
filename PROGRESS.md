@@ -19,7 +19,7 @@ Last updated: 2026-08-27
 | 1 | Foundation — Tauri+React+Excalidraw, offline fonts, window state | **Done** |
 | 2 | Files — open/save/save-as, recent, dirty guard, CLI arg | **Done** |
 | 3 | Export — PNG, SVG, clipboard | **Done** |
-| 4 | Autosave + session restore | Not started |
+| 4 | Autosave + session restore | **Done** |
 | 5 | Theme engine + presets | Not started |
 | 6 | Theme editor UI | Not started |
 | 7 | Tabs / multiple drawings | Not started |
@@ -88,9 +88,43 @@ Catppuccin Mocha. Plus a "follow GNOME" option via `prefers-color-scheme`.
 
 ## Next steps
 
-1. `npm start` and verify phases 1–3 by hand (open, save, export, clipboard).
-2. Phase 4: autosave to `~/.config/excalidraw-desktop/session/`, restore on launch.
-3. Phase 5: theme engine, applying the two findings above.
+1. `npm start` and verify phases 1–4 by hand (open, save, export, clipboard, and
+   the recovery prompt — see "Autosave & session restore" for how to force it).
+2. Phase 5: theme engine, applying the two findings above.
+
+## Autosave & session restore (phase 4)
+
+State lives in `~/.config/excalidraw-desktop/session/`: `scene.excalidraw` (the
+snapshot, under its real extension so a failed recovery still leaves a file the
+user can open by hand) and `meta.json` (`path`, `dirty`, `saved_at`,
+`clean_exit`).
+
+Design decisions worth keeping:
+
+- **Autosave never writes to the user's file.** It only refreshes the snapshot.
+  Silently rewriting a drawing the user has not saved is a worse failure than
+  losing a few seconds of work.
+- **`clean_exit` is what distinguishes recovery from convenience.** It is
+  `false` in every snapshot and set to `true` by `mark_clean_exit`, called from
+  `endSession()` just before the window is destroyed. So:
+  - `!clean_exit && dirty` → crash or kill; offer to restore the snapshot.
+  - otherwise → reopen `meta.path` from disk, quietly (it may have been deleted).
+  This is why work the user explicitly *discarded* on close does not come back.
+- **Snapshots are suppressed until startup has decided what to restore**
+  (`restored` ref in `document.ts`) — otherwise the empty initial canvas would
+  overwrite the snapshot we are about to read.
+- **Timing:** 1.5 s debounce after the last edit, with a 10 s ceiling so a
+  snapshot never slips further behind while the user keeps drawing.
+- Restoring a snapshot sets `savedVersion` to `NEVER_SAVED` (-1), so the
+  document stays dirty until the user actually saves it.
+- The startup effect is guarded by a ref, not the usual `cancelled` flag —
+  StrictMode double-invokes effects and the recovery dialog must not appear
+  twice.
+
+To force the recovery prompt by hand: draw something without saving, then
+`kill -9` the app (a clean quit deliberately will not trigger it).
+
+`cargo test --lib` covers the snapshot file lifecycle.
 
 ## Gotchas
 
@@ -139,11 +173,12 @@ Wayland), or retest after a Tauri/tao upgrade. Note that GNOME denies both
 unsandboxed callers, so the title cannot be read back from the compositor —
 verification needs a human looking at the titlebar.
 
-## Useful commands## Useful commands
+## Useful commands
 
 ```bash
 npm start                      # tauri dev
 npx tsc --noEmit               # typecheck
+cargo test --lib --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path src-tauri/Cargo.toml
 npm run bundle                 # RPM
 ```

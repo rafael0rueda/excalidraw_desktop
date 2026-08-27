@@ -24,7 +24,9 @@ export default function App() {
   };
 
   const closeWindow = useCallback(async () => {
-    if (await actions.confirmDiscard()) await getCurrentWindow().destroy();
+    if (!(await actions.confirmDiscard())) return;
+    await actions.endSession();
+    await getCurrentWindow().destroy();
   }, [actions]);
 
   // Rebuild the native menu whenever the bound state changes, so Save targets
@@ -40,7 +42,9 @@ export default function App() {
     const win = getCurrentWindow();
     const pending = win.onCloseRequested(async (event) => {
       event.preventDefault();
-      if (await actions.confirmDiscard()) await win.destroy();
+      if (!(await actions.confirmDiscard())) return;
+      await actions.endSession();
+      await win.destroy();
     });
     return () => {
       void pending.then((unlisten) => unlisten());

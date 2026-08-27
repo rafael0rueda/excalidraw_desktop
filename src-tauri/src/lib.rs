@@ -1,6 +1,8 @@
 mod clipboard;
 mod files;
 mod recent;
+mod session;
+mod store;
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -56,6 +58,10 @@ pub fn run() {
             recent::list_recent,
             recent::push_recent,
             recent::clear_recent,
+            session::save_session,
+            session::load_session,
+            session::mark_clean_exit,
+            session::clear_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Excalidraw Desktop");

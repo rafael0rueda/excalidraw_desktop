@@ -24,6 +24,22 @@ export const listRecent = () => invoke<RecentEntry[]>("list_recent");
 export const pushRecent = (path: string) => invoke<RecentEntry[]>("push_recent", { path });
 export const clearRecent = () => invoke<RecentEntry[]>("clear_recent");
 
+export interface Session {
+  /** File the snapshot came from, or null for a drawing never saved anywhere. */
+  path: string | null;
+  dirty: boolean;
+  saved_at: number;
+  clean_exit: boolean;
+  /** `.excalidraw` JSON. */
+  scene: string;
+}
+
+export const saveSession = (path: string | null, dirty: boolean, scene: string) =>
+  invoke<void>("save_session", { path, dirty, scene });
+export const loadSession = () => invoke<Session | null>("load_session");
+export const markCleanExit = () => invoke<void>("mark_clean_exit");
+export const clearSession = () => invoke<void>("clear_session");
+
 /** A path passed on the command line, e.g. from a file-manager double click. */
 export const startupFile = () => invoke<string | null>("startup_file");
 

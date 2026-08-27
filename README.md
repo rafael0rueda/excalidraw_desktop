@@ -53,6 +53,17 @@ Shortcuts are registered both as native menu accelerators and as a
 window-level capture listener, because Excalidraw's canvas swallows many
 keystrokes on its own.
 
+## Autosave and recovery
+
+Your work is snapshotted to `~/.config/excalidraw-desktop/session/` a second or
+two after you stop drawing. **Autosave never writes to your own `.excalidraw`
+file** — saving stays something you ask for.
+
+- If the app crashes or is killed with unsaved changes, the next launch offers
+  to restore them.
+- If you quit normally, the next launch simply reopens the drawing you had open.
+  Changes you chose to discard on the way out stay discarded.
+
 ## Known limitations
 
 - **The window title does not update on GNOME/Wayland.** The titlebar always
@@ -64,7 +75,7 @@ keystrokes on its own.
 ```
 src/                    Renderer — React 19 + Excalidraw. No filesystem access.
   lib/api.ts            Typed wrappers over the Rust command layer
-  lib/document.ts       Open/save/dirty-tracking controller (useDocument hook)
+  lib/document.ts       Open/save/dirty-tracking/autosave controller (useDocument hook)
   lib/exports.ts        PNG/SVG/clipboard rendering
   lib/exportActions.ts  Dialog-driven export flows
   lib/menu.ts           Native menu construction
@@ -72,6 +83,8 @@ src/                    Renderer — React 19 + Excalidraw. No filesystem access
 src-tauri/src/          Rust backend
   files.rs              Atomic file reads/writes
   recent.rs             Recent-files list in ~/.config/excalidraw-desktop/
+  session.rs            Autosave snapshot + crash recovery
+  store.rs              Shared config-directory location
   clipboard.rs          GTK-native clipboard image copy
 scripts/copy-assets.mjs Copies Excalidraw fonts into public/ for offline use
 ```

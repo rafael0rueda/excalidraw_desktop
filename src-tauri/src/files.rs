@@ -21,7 +21,7 @@ pub fn write_binary_file(path: String, data: String) -> Result<(), String> {
 
 /// Writes to a sibling temp file and renames, so an interrupted save can never
 /// leave a half-written drawing where the original used to be.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or_else(|| "invalid path".to_string())?;
     if !parent.as_os_str().is_empty() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;

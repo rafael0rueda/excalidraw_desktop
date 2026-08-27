@@ -1,3 +1,4 @@
+use crate::store::{config_dir, now};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -8,16 +9,6 @@ pub struct RecentEntry {
     pub path: String,
     pub name: String,
     pub opened_at: u64,
-}
-
-/// Config lives under XDG_CONFIG_HOME so it sits alongside the rest of the
-/// user's desktop configuration rather than in an app-private blob.
-fn config_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("excalidraw-desktop")
 }
 
 fn recent_path() -> PathBuf {
@@ -36,13 +27,6 @@ fn store(entries: &[RecentEntry]) {
     if let Ok(json) = serde_json::to_string_pretty(entries) {
         let _ = std::fs::write(recent_path(), json);
     }
-}
-
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 #[tauri::command]
