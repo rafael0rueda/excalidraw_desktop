@@ -47,12 +47,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, state.path, state.dirty, theme.selection, theme.themes]);
 
-  // An opened file carries its own viewBackgroundColor, which would leave a
-  // themed UI wrapped around an unthemed canvas. The theme wins.
+  // Loading a drawing brings its own appState — canvas background and default
+  // element colours — which would leave a themed UI around an unthemed canvas
+  // and, on a dark theme, invisible black strokes. The theme wins.
   useEffect(() => {
     if (api) theme.reapply();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, state.path]);
+  }, [api, state.epoch]);
 
   // Guard the window-manager close button (menu Quit routes here too).
   useEffect(() => {

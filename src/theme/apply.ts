@@ -6,6 +6,15 @@ import { cssVariables } from "./variables";
 let applied: string[] = [];
 
 /**
+ * Excalidraw's factory defaults. A current colour still sitting on one of these
+ * was not chosen by anybody — it arrives with a reset scene, or inside a file
+ * saved from stock Excalidraw — so a theme is free to replace it. Without this,
+ * loading a drawing leaves new strokes black on a dark canvas: invisible.
+ */
+const FACTORY_STROKE = "#1e1e1e";
+const FACTORY_FILL = "transparent";
+
+/**
  * Paints a theme onto the running Excalidraw instance.
  *
  * `previous` is the theme currently in effect, and exists so a switch does not
@@ -35,17 +44,22 @@ export function applyTheme(
 
   if (!api) return;
 
-  // Retheme the drawing defaults only while they are still the outgoing
-  // theme's — once the user has chosen a colour, it is theirs to keep.
+  // Retheme the drawing defaults only while nobody has claimed them: either
+  // they are still the outgoing theme's, or they are Excalidraw's own. A colour
+  // the user picked by hand survives a theme change.
   const state = api.getAppState();
-  const ownStroke = previous !== null && state.currentItemStrokeColor !== previous.colors.stroke;
-  const ownFill = previous !== null && state.currentItemBackgroundColor !== previous.colors.fill;
+  const stroke = state.currentItemStrokeColor;
+  const fill = state.currentItemBackgroundColor;
+  const strokeIsFree =
+    previous === null || stroke === previous.colors.stroke || stroke.toLowerCase() === FACTORY_STROKE;
+  const fillIsFree =
+    previous === null || fill === previous.colors.fill || fill.toLowerCase() === FACTORY_FILL;
 
   api.updateScene({
     appState: {
       viewBackgroundColor: theme.colors.canvas,
-      currentItemStrokeColor: ownStroke ? state.currentItemStrokeColor : theme.colors.stroke,
-      currentItemBackgroundColor: ownFill ? state.currentItemBackgroundColor : theme.colors.fill,
+      currentItemStrokeColor: strokeIsFree ? theme.colors.stroke : stroke,
+      currentItemBackgroundColor: fillIsFree ? theme.colors.fill : fill,
     },
   });
 }

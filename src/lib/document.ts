@@ -27,6 +27,13 @@ const NEVER_SAVED = -1;
 export interface DocumentState {
   path: string | null;
   dirty: boolean;
+  /**
+   * Bumped every time the whole scene is replaced. Replacing a scene also
+   * replaces `appState`, which carries colours the theme owns, so the theme
+   * needs to know — and `path` alone does not tell it (a recovered unsaved
+   * drawing keeps `path === null`).
+   */
+  epoch: number;
 }
 
 export interface DocumentActions {
@@ -44,6 +51,8 @@ export interface DocumentActions {
 export function useDocument(api: ExcalidrawImperativeAPI | null) {
   const [path, setPath] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [epoch, setEpoch] = useState(0);
+  const sceneReplaced = useCallback(() => setEpoch((n) => n + 1), []);
   // Scene version at the moment we last saved or loaded; anything else is dirty.
   const savedVersion = useRef(0);
 
@@ -177,13 +186,14 @@ export function useDocument(api: ExcalidrawImperativeAPI | null) {
         setPath(target);
         savedVersion.current = sceneVersion(scene.elements);
         setDirty(false);
+        sceneReplaced();
         return true;
       } catch (err) {
         if (!quiet) await message(String(err), { title: "Could not open file", kind: "error" });
         return false;
       }
     },
-    [api],
+    [api, sceneReplaced],
   );
 
   const openDrawing = useCallback(
@@ -211,7 +221,8 @@ export function useDocument(api: ExcalidrawImperativeAPI | null) {
     setPath(null);
     savedVersion.current = sceneVersion(api.getSceneElements());
     setDirty(false);
-  }, [api, confirmDiscard]);
+    sceneReplaced();
+  }, [api, confirmDiscard, sceneReplaced]);
 
   const restoreSession = useCallback(async () => {
     if (!api) return;
@@ -236,6 +247,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null) {
           setPath(session.path);
           savedVersion.current = NEVER_SAVED;
           setDirty(true);
+          sceneReplaced();
           return;
         } catch (err) {
           await message(String(err), { title: "Could not restore session", kind: "error" });
@@ -246,7 +258,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null) {
     // Otherwise just reopen whatever was on screen, quietly — the file may well
     // have been moved or deleted since, and that is not worth a startup alert.
     if (session.path) await loadInto(session.path, true);
-  }, [api, loadInto]);
+  }, [api, loadInto, sceneReplaced]);
 
   // Guarded rather than cancelled on cleanup: StrictMode runs effects twice in
   // development, and startup must not ask the user to recover twice.
@@ -267,7 +279,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null) {
     })();
   }, [api, loadInto, restoreSession]);
 
-  const state: DocumentState = { path, dirty };
+  const state: DocumentState = { path, dirty, epoch };
   const actions: DocumentActions = {
     newDrawing,
     openDrawing,
