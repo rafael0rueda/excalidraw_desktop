@@ -99,6 +99,15 @@ Catppuccin Mocha. Plus a "follow GNOME" option via `prefers-color-scheme`.
   shows "Could not connect to localhost: Connection refused". Only the release
   build embeds `dist/`. Always launch dev via `npm start`.
 
+- **GTK calls must run on the GTK main thread, and tao is not always enough.**
+  `tauri::Window::set_title` returns `Ok` before GTK applies the change, and on
+  GNOME/Wayland the update never reaches the compositor — the titlebar keeps
+  showing the `tauri.conf.json` value. Fix: resolve `window.gtk_window()`
+  *inside* an `app_handle().run_on_main_thread(...)` closure (the GTK handle is
+  `!Send`, so it cannot be captured from outside) and set the title there. The
+  clipboard code in `clipboard.rs` follows the same pattern. Assume any other
+  native window/shell integration will need it too.
+
 ## Useful commands
 
 ```bash
