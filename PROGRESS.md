@@ -88,8 +88,9 @@ Catppuccin Mocha. Plus a "follow GNOME" option via `prefers-color-scheme`.
 
 ## Next steps
 
-1. `npm start` and verify phases 1–4 by hand (open, save, export, clipboard, and
-   the recovery prompt — see "Autosave & session restore" for how to force it).
+1. Verify by hand what is still unproven: open, save, export, clipboard, and the
+   clean-quit path (quit normally, relaunch, expect *no* recovery prompt).
+   Crash recovery itself is already verified.
 2. Phase 5: theme engine, applying the two findings above.
 
 ## Autosave & session restore (phase 4)
@@ -123,6 +124,10 @@ Design decisions worth keeping:
 
 To force the recovery prompt by hand: draw something without saving, then
 `kill -9` the app (a clean quit deliberately will not trigger it).
+
+**Verified by hand on 2026-08-27:** drew two elements without saving, `kill -9`,
+relaunched — the recovery dialog appeared and restoring brought the scene back
+intact, still marked dirty.
 
 `cargo test --lib` covers the snapshot file lifecycle.
 
