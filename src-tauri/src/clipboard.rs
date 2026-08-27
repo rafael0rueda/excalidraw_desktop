@@ -11,14 +11,12 @@ pub fn copy_image_to_clipboard(app: tauri::AppHandle, data: String) -> Result<()
 
     #[cfg(target_os = "linux")]
     {
-        use tauri::Manager;
         let (tx, rx) = std::sync::mpsc::channel();
         // GTK is not thread-safe; clipboard work must happen on the main loop.
         app.run_on_main_thread(move || {
             let _ = tx.send(set_clipboard_image(&bytes));
         })
         .map_err(|e| e.to_string())?;
-        let _ = &app;
         return rx.recv().map_err(|e| e.to_string())?;
     }
 
@@ -32,7 +30,6 @@ pub fn copy_image_to_clipboard(app: tauri::AppHandle, data: String) -> Result<()
 #[cfg(target_os = "linux")]
 fn set_clipboard_image(bytes: &[u8]) -> Result<(), String> {
     use gdk_pixbuf::prelude::PixbufLoaderExt;
-    use gtk::prelude::*;
 
     let loader = gdk_pixbuf::PixbufLoader::new();
     loader.write(bytes).map_err(|e| e.to_string())?;
