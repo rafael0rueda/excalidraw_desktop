@@ -24,6 +24,12 @@ npm install
 npm start          # tauri dev — launches the real desktop window
 ```
 
+> **Do not launch `src-tauri/target/debug/excalidraw-desktop` directly.** A debug
+> build points at `devUrl` (`http://localhost:1420`) and does *not* embed the
+> frontend, so on its own it shows "Could not connect to localhost: Connection
+> refused". Only release builds (`npm run bundle`) embed `dist/`. Use `npm start`
+> for development.
+
 ## Building an RPM
 
 ```bash

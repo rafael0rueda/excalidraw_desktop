@@ -92,6 +92,13 @@ Catppuccin Mocha. Plus a "follow GNOME" option via `prefers-color-scheme`.
 2. Phase 4: autosave to `~/.config/excalidraw-desktop/session/`, restore on launch.
 3. Phase 5: theme engine, applying the two findings above.
 
+## Gotchas
+
+- **The debug binary is not standalone.** `cargo build` produces a binary that
+  loads `devUrl` (`http://localhost:1420`); running it without `npm start`
+  shows "Could not connect to localhost: Connection refused". Only the release
+  build embeds `dist/`. Always launch dev via `npm start`.
+
 ## Useful commands
 
 ```bash
