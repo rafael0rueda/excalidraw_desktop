@@ -20,7 +20,7 @@ Last updated: 2026-08-27
 | 2 | Files — open/save/save-as, recent, dirty guard, CLI arg | **Done** |
 | 3 | Export — PNG, SVG, clipboard | **Done** |
 | 4 | Autosave + session restore | **Done** |
-| 5 | Theme engine + presets | Not started |
+| 5 | Theme engine + presets | **Done** |
 | 6 | Theme editor UI | Not started |
 | 7 | Tabs / multiple drawings | Not started |
 | 8 | RPM + .desktop + MIME association | Config stubbed, not built |
@@ -39,7 +39,7 @@ Tested by rendering a real Excalidraw bundle in WebKitGTK 2.52.5 via the
    WebKitGTK. This is why `clipboard.rs` copies images through the **GTK
    clipboard on the main thread**, not the web API.
 
-## Theming findings — READ BEFORE STARTING PHASE 5
+## Theming findings — the basis of phase 5
 
 Both were verified by experiment and both apply to Electron too; they are
 Excalidraw quirks, not engine quirks.
@@ -74,24 +74,73 @@ The variables that matter: `--color-primary`, `--color-primary-darker`,
 `--color-surface-primary-container`, `--select-highlight-color`,
 `--focus-highlight-color`.
 
-## Planned theme JSON schema (phase 5)
+## Theme engine (phase 5, built)
+
+**Schema.** Ten colours, deliberately hand-authorable — anything requiring a
+look-up in Excalidraw's stylesheet is derived instead of asked for:
 
 ```jsonc
-{ "id": "nord", "name": "Nord", "base": "light",   // always "light" for dark themes
-  "ui":     { "accent": "#88c0d0", "surface": "#3b4252", "text": "#eceff4", ... },
-  "canvas": { "background": "#2e3440", "grid": "#434c5e", "defaultStroke": "#d8dee9" },
-  "palette": ["#bf616a", "#d08770", "#ebcb8b", "#a3be8c", "#b48ead"] }
+{ "id": "my-theme", "name": "My Theme", "dark": true,
+  "colors": {
+    "canvas": "#1F1F28", "surface": "#2A2A37", "surfaceAlt": "#363646",
+    "text": "#DCD7BA", "textMuted": "#727169",
+    "accent": "#7E9CD8", "accentText": "#1F1F28", "danger": "#E82424",
+    "stroke": "#DCD7BA", "fill": "transparent" } }
 ```
 
-Presets to ship: Light, Dark, Nord, Dracula, Gruvbox, Solarized light/dark,
-Catppuccin Mocha. Plus a "follow GNOME" option via `prefers-color-scheme`.
+`src/theme/variables.ts` expands that into 64 CSS custom properties. It sets
+**base** variables wherever it can, because Excalidraw derives many properties
+with `var()` (`--text-primary-color: var(--color-on-surface)`,
+`--popup-bg-color: var(--island-bg-color)`, `--button-hover-bg:
+var(--color-surface-high)`), and those resolve against the computed value on the
+element — so overriding the base carries the whole chain.
+
+**Shipped presets:** Light, Dark, Nord, Dracula, Gruvbox Dark, Solarized
+Light/Dark, Catppuccin Mocha, Kanagawa Wave, Kanagawa Lotus. Kanagawa hexes come
+straight from `~/.local/share/nvim/lazy/kanagawa.nvim/lua/kanagawa/colors.lua`
+with surfaces mapped as that theme maps its own (`bg` / `bg_p1` / `bg_p2`) —
+not eyeballed. Wave/Lotus is the pair this machine's desktop already uses.
+
+**User themes:** `~/.config/excalidraw-desktop/themes/*.json`, read at startup
+and on View → Theme → Reload user themes. A user theme reusing a preset's `id`
+replaces it in place. Invalid files are skipped with a named reason on reload,
+and silently at startup — a broken file should not greet the user with a dialog.
+
+**Settings:** `~/.config/excalidraw-desktop/settings.json` —
+`{ theme, light_theme, dark_theme }`. `theme` is a theme id or `"system"`;
+`"system"` reads GNOME's `color-scheme` via `gsettings` and picks from the pair.
+The pair is only editable in the file for now (phase 6 should expose it).
+Re-checked on window focus, so a desktop-wide light/dark flip follows.
+
+### Two things Excalidraw 0.18.1 will not let us theme
+
+Both verified by reading the shipped bundle, not guessed:
+
+1. **Grid colour.** Hardcoded as `{Bold:"#dddddd", Regular:"#e5e5e5"}` in a
+   module-private object in `chunk-K2UTITRG.js`, read at draw time. Not in
+   `appState` (which has only `gridSize`, `gridStep`, `gridModeEnabled`) and not
+   a CSS variable. Unreachable, so the schema deliberately has no `grid` key.
+2. **The colour-picker palette.** `UIOptions` exposes only
+   `dockedSidebarBreakpoint`, `canvasActions`, `tools.image` and a deprecated
+   `welcomeScreen`. No palette hook, so the schema has no `palette` key either.
+
+Dead configuration is worse than a missing feature; if a later Excalidraw
+exposes either, add the key then.
+
+### Behaviour decisions
+
+- The theme owns the canvas background, so opening a file reapplies it —
+  otherwise a drawing saved elsewhere leaves a themed UI around a white canvas.
+- Switching theme retints the *default* stroke/fill for new elements only while
+  they still match the outgoing theme. A colour the user picked is theirs.
+- Existing elements are never recoloured.
 
 ## Next steps
 
 1. Verify by hand what is still unproven: open, save, export, clipboard, and the
    clean-quit path (quit normally, relaunch, expect *no* recovery prompt).
    Crash recovery itself is already verified.
-2. Phase 5: theme engine, applying the two findings above.
+2. Phase 6: theme editor UI, plus exposing the follow-system pair.
 
 ## Autosave & session restore (phase 4)
 

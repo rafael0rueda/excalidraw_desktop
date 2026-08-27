@@ -40,6 +40,21 @@ export const loadSession = () => invoke<Session | null>("load_session");
 export const markCleanExit = () => invoke<void>("mark_clean_exit");
 export const clearSession = () => invoke<void>("clear_session");
 
+/** Mirrors the Rust `Settings` struct, snake_case included. */
+export interface Settings {
+  /** A theme id, or "system" to follow the desktop's light/dark preference. */
+  theme: string;
+  light_theme: string;
+  dark_theme: string;
+}
+
+export const loadSettings = () => invoke<Settings>("load_settings");
+export const saveSettings = (settings: Settings) => invoke<void>("save_settings", { settings });
+export const themesDirPath = () => invoke<string>("themes_dir_path");
+/** Raw JSON from ~/.config/excalidraw-desktop/themes; the caller validates. */
+export const listUserThemes = () => invoke<unknown[]>("list_user_themes");
+export const systemColorScheme = () => invoke<"light" | "dark">("system_color_scheme");
+
 /** A path passed on the command line, e.g. from a file-manager double click. */
 export const startupFile = () => invoke<string | null>("startup_file");
 

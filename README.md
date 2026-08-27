@@ -53,6 +53,45 @@ Shortcuts are registered both as native menu accelerators and as a
 window-level capture listener, because Excalidraw's canvas swallows many
 keystrokes on its own.
 
+## Theming
+
+**View → Theme** switches between the built-in themes: Light, Dark, Nord,
+Dracula, Gruvbox Dark, Solarized Light/Dark, Catppuccin Mocha, **Kanagawa Wave**
+and **Kanagawa Lotus**. *Follow system* tracks GNOME's light/dark preference and
+picks from a pair (Kanagawa Lotus / Kanagawa Wave by default).
+
+### Your own themes
+
+Drop a JSON file in `~/.config/excalidraw-desktop/themes/`:
+
+```json
+{
+  "id": "my-theme",
+  "name": "My Theme",
+  "dark": true,
+  "colors": {
+    "canvas": "#1F1F28",
+    "surface": "#2A2A37",
+    "surfaceAlt": "#363646",
+    "text": "#DCD7BA",
+    "textMuted": "#727169",
+    "accent": "#7E9CD8",
+    "accentText": "#1F1F28",
+    "danger": "#E82424",
+    "stroke": "#DCD7BA",
+    "fill": "transparent"
+  }
+}
+```
+
+Ten colours, expanded into Excalidraw's ~64 CSS variables for you. Use **View →
+Theme → Reload user themes** after editing; files that do not parse are listed
+with the reason. Reusing a built-in `id` overrides that theme.
+
+Preferences live in `~/.config/excalidraw-desktop/settings.json`; edit
+`light_theme` / `dark_theme` there to change what *Follow system* switches
+between.
+
 ## Autosave and recovery
 
 Your work is snapshotted to `~/.config/excalidraw-desktop/session/` a second or
@@ -66,6 +105,11 @@ file** — saving stays something you ask for.
 
 ## Known limitations
 
+- **The grid colour is not themeable.** Excalidraw 0.18.1 hardcodes it
+  (`#dddddd` / `#e5e5e5`) in its renderer, with no `appState` or CSS hook.
+- **The colour-picker palette is not themeable** either — `UIOptions` exposes no
+  hook for it. A theme sets the *default* stroke and fill for new elements, but
+  the swatch grid stays Excalidraw's own.
 - **The window title does not update on GNOME/Wayland.** The titlebar always
   shows `Excalidraw Desktop`; the current filename and unsaved-changes marker do
   not appear there. Investigated and parked — see PROGRESS.md. Cosmetic only.
@@ -80,10 +124,16 @@ src/                    Renderer — React 19 + Excalidraw. No filesystem access
   lib/exportActions.ts  Dialog-driven export flows
   lib/menu.ts           Native menu construction
   lib/scene.ts          Excalidraw (de)serialisation helpers
+  theme/types.ts        Theme schema and validation
+  theme/presets.ts      Built-in themes
+  theme/variables.ts    Theme -> Excalidraw CSS custom properties
+  theme/apply.ts        Paints a theme onto the running instance
+  theme/useTheme.ts     Theme selection, persistence, follow-system
 src-tauri/src/          Rust backend
   files.rs              Atomic file reads/writes
   recent.rs             Recent-files list in ~/.config/excalidraw-desktop/
   session.rs            Autosave snapshot + crash recovery
+  settings.rs           Preferences, user themes, system colour scheme
   store.rs              Shared config-directory location
   clipboard.rs          GTK-native clipboard image copy
 scripts/copy-assets.mjs Copies Excalidraw fonts into public/ for offline use

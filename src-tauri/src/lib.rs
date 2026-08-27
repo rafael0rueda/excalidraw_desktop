@@ -2,6 +2,7 @@ mod clipboard;
 mod files;
 mod recent;
 mod session;
+mod settings;
 mod store;
 
 use std::sync::Mutex;
@@ -62,6 +63,11 @@ pub fn run() {
             session::load_session,
             session::mark_clean_exit,
             session::clear_session,
+            settings::load_settings,
+            settings::save_settings,
+            settings::themes_dir_path,
+            settings::list_user_themes,
+            settings::system_color_scheme,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Excalidraw Desktop");

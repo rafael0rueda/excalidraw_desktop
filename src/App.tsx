@@ -3,12 +3,14 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useDocument } from "./lib/document";
-import { buildMenu, type MenuHandlers } from "./lib/menu";
+import { buildMenu, type MenuHandlers, type ThemeMenu } from "./lib/menu";
+import { useTheme } from "./theme/useTheme";
 import { copyToClipboard, exportPng, exportSvg } from "./lib/exportActions";
 
 export default function App() {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const { state, actions } = useDocument(api);
+  const theme = useTheme(api);
 
   const handlers: MenuHandlers = {
     newDrawing: () => void actions.newDrawing(),
@@ -23,6 +25,14 @@ export default function App() {
     quit: () => void closeWindow(),
   };
 
+  const themeMenu: ThemeMenu = {
+    themes: theme.themes,
+    selection: theme.selection,
+    systemLabel: `${theme.systemPair.light?.name ?? "—"} / ${theme.systemPair.dark?.name ?? "—"}`,
+    select: theme.select,
+    reload: () => void theme.reload(),
+  };
+
   const closeWindow = useCallback(async () => {
     if (!(await actions.confirmDiscard())) return;
     await actions.endSession();
@@ -33,9 +43,16 @@ export default function App() {
   // the current path and Open Recent stays current.
   useEffect(() => {
     if (!api) return;
-    void buildMenu(handlers);
+    void buildMenu(handlers, themeMenu);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, state.path, state.dirty]);
+  }, [api, state.path, state.dirty, theme.selection, theme.themes]);
+
+  // An opened file carries its own viewBackgroundColor, which would leave a
+  // themed UI wrapped around an unthemed canvas. The theme wins.
+  useEffect(() => {
+    if (api) theme.reapply();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, state.path]);
 
   // Guard the window-manager close button (menu Quit routes here too).
   useEffect(() => {
@@ -79,6 +96,8 @@ export default function App() {
     <div style={{ height: "100vh", width: "100vw" }}>
       <Excalidraw
         excalidrawAPI={setApi}
+        // Always "light": Excalidraw's dark mode inverts the canvas, so dark
+        // themes are built from dark colours on the light base instead.
         theme="light"
         onChange={actions.onSceneChange}
         UIOptions={{
