@@ -14,8 +14,10 @@ export interface MenuHandlers {
   quit: () => void;
 }
 
+type AnyMenuItem = MenuItem | PredefinedMenuItem;
+
 async function recentSubmenu(handlers: MenuHandlers, recents: RecentEntry[]) {
-  const items = recents.length
+  const items: AnyMenuItem[] = recents.length
     ? await Promise.all(
         recents.map((entry, i) =>
           MenuItem.new({
