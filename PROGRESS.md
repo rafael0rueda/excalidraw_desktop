@@ -99,16 +99,47 @@ Catppuccin Mocha. Plus a "follow GNOME" option via `prefers-color-scheme`.
   shows "Could not connect to localhost: Connection refused". Only the release
   build embeds `dist/`. Always launch dev via `npm start`.
 
-- **GTK calls must run on the GTK main thread, and tao is not always enough.**
-  `tauri::Window::set_title` returns `Ok` before GTK applies the change, and on
-  GNOME/Wayland the update never reaches the compositor — the titlebar keeps
-  showing the `tauri.conf.json` value. Fix: resolve `window.gtk_window()`
-  *inside* an `app_handle().run_on_main_thread(...)` closure (the GTK handle is
-  `!Send`, so it cannot be captured from outside) and set the title there. The
-  clipboard code in `clipboard.rs` follows the same pattern. Assume any other
-  native window/shell integration will need it too.
+- **GTK calls must run on the GTK main thread.** `clipboard.rs` uses
+  `app_handle().run_on_main_thread(...)` and resolves the GTK handle *inside*
+  the closure (GTK types are `!Send`). Assume other native integrations need it.
 
-## Useful commands
+## Parked: window title on GNOME/Wayland
+
+The window title does not update at runtime. The titlebar permanently shows the
+value from `tauri.conf.json`; `Untitled — Excalidraw Desktop` and the `•` dirty
+marker never appear. **Cosmetic only — deliberately parked, do not re-derive.**
+
+What was established, with evidence:
+
+1. The command runs and returns `Ok`. Confirmed by stderr instrumentation.
+2. `tao`'s `set_title` returns before applying — an immediate read-back returns
+   the *old* title, the next call reads the new one. So `Ok` is not evidence the
+   change landed.
+3. Setting the title on the GTK window from the GTK main thread **does** apply:
+   `gtk_window.title()` reads back the new value on a window reporting
+   `realized=true visible=true`.
+4. There is exactly **one** toplevel — enumerating `gtk::Window::list_toplevels()`
+   showed a single `GtkApplicationWindow`, `visible=true decorated=true`, holding
+   the correct new title. So it is not a wrong-handle or second-window problem.
+5. The decoration *does* honour the creation-time title: setting
+   `tauri.conf.json` to `CONFIG-TITLE-TEST` displayed exactly that, while GTK
+   simultaneously held `Untitled — Excalidraw Desktop`.
+6. An explicit `gdk::Display::flush()` after `set_title` did not help.
+
+Conclusion: GTK holds the right title; Mutter does not pick up the runtime
+change. Not an application-logic bug.
+
+Ruled out along the way: stale/duplicate app instances (verified single PID),
+IPC failure, permissions, the em-dash, and a second GTK window.
+
+If ever revisited: check whether forcing `GDK_BACKEND=x11` makes updates
+propagate (would confirm a Wayland-specific path, at the cost of native
+Wayland), or retest after a Tauri/tao upgrade. Note that GNOME denies both
+`org.gnome.Shell.Eval` and `org.gnome.Shell.Introspect.GetWindows` to
+unsandboxed callers, so the title cannot be read back from the compositor —
+verification needs a human looking at the titlebar.
+
+## Useful commands## Useful commands
 
 ```bash
 npm start                      # tauri dev

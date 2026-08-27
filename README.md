@@ -53,6 +53,12 @@ Shortcuts are registered both as native menu accelerators and as a
 window-level capture listener, because Excalidraw's canvas swallows many
 keystrokes on its own.
 
+## Known limitations
+
+- **The window title does not update on GNOME/Wayland.** The titlebar always
+  shows `Excalidraw Desktop`; the current filename and unsaved-changes marker do
+  not appear there. Investigated and parked — see PROGRESS.md. Cosmetic only.
+
 ## Architecture
 
 ```
