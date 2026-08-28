@@ -24,6 +24,8 @@ export interface ThemeMenu {
   systemLabel: string;
   select: (id: string) => void;
   reload: () => void;
+  /** Opens the theme editor panel. */
+  edit: () => void;
 }
 
 type AnyMenuItem = MenuItem | CheckMenuItem | PredefinedMenuItem;
@@ -79,6 +81,14 @@ async function themeSubmenu(theme: ThemeMenu) {
   }
 
   items.push(await PredefinedMenuItem.new({ item: "Separator" }));
+  items.push(
+    await MenuItem.new({
+      id: "theme-edit",
+      text: "Customise themes…",
+      accelerator: "CmdOrCtrl+,",
+      action: theme.edit,
+    }),
+  );
   items.push(
     await MenuItem.new({
       id: "theme-reload",

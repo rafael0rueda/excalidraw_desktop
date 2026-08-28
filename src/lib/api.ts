@@ -54,6 +54,9 @@ export const themesDirPath = () => invoke<string>("themes_dir_path");
 /** Raw JSON from ~/.config/excalidraw-desktop/themes; the caller validates. */
 export const listUserThemes = () => invoke<unknown[]>("list_user_themes");
 export const systemColorScheme = () => invoke<"light" | "dark">("system_color_scheme");
+/** Writes `<id>.json` into the themes directory; resolves to the file written. */
+export const saveUserTheme = (theme: unknown) => invoke<string>("save_user_theme", { theme });
+export const deleteUserTheme = (id: string) => invoke<void>("delete_user_theme", { id });
 
 /** A path passed on the command line, e.g. from a file-manager double click. */
 export const startupFile = () => invoke<string | null>("startup_file");

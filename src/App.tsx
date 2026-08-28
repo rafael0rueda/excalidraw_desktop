@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Excalidraw } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import ThemeEditor from "./components/ThemeEditor";
 import { useDocument } from "./lib/document";
 import { buildMenu, type MenuHandlers, type ThemeMenu } from "./lib/menu";
 import { useTheme } from "./theme/useTheme";
@@ -9,6 +10,7 @@ import { copyToClipboard, exportPng, exportSvg } from "./lib/exportActions";
 
 export default function App() {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
+  const [editingTheme, setEditingTheme] = useState(false);
   const theme = useTheme(api);
   const { state, actions } = useDocument(api, {
     viewBackgroundColor: theme.active.colors.canvas,
@@ -35,6 +37,7 @@ export default function App() {
     systemLabel: `${theme.systemPair.light?.name ?? "—"} / ${theme.systemPair.dark?.name ?? "—"}`,
     select: theme.select,
     reload: () => void theme.reload(),
+    edit: () => setEditingTheme(true),
   };
 
   const closeWindow = useCallback(async () => {
@@ -49,7 +52,15 @@ export default function App() {
     if (!api) return;
     void buildMenu(handlers, themeMenu);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, state.path, state.dirty, theme.selection, theme.themes]);
+  }, [
+    api,
+    state.path,
+    state.dirty,
+    theme.selection,
+    theme.themes,
+    theme.systemPair.light?.id,
+    theme.systemPair.dark?.id,
+  ]);
 
   // Guard the window-manager close button (menu Quit routes here too).
   useEffect(() => {
@@ -70,6 +81,9 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey || e.altKey) return;
+      // The editor's own inputs handle their keystrokes; the menu accelerators
+      // would otherwise fire while the user is typing a colour.
+      if ((e.target as HTMLElement | null)?.closest(".theme-editor")) return;
       const key = e.key.toLowerCase();
       const shift = e.shiftKey;
       const fire = (fn: () => void) => {
@@ -84,6 +98,7 @@ export default function App() {
       else if (key === "p" && shift) fire(handlers.exportPng);
       else if (key === "g" && shift) fire(handlers.exportSvg);
       else if (key === "c" && shift) fire(handlers.copyImage);
+      else if (key === "," && !shift) fire(() => setEditingTheme(true));
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -109,6 +124,7 @@ export default function App() {
           },
         }}
       />
+      {editingTheme && <ThemeEditor theme={theme} onClose={() => setEditingTheme(false)} />}
     </div>
   );
 }

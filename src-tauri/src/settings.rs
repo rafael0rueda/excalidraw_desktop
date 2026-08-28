@@ -87,3 +87,62 @@ pub fn system_color_scheme() -> String {
         _ => "light".into(),
     }
 }
+
+/// Resolves a theme id to its file, refusing anything that is not a plain
+/// slug. Ids reach us from the renderer and end up in a path, so `../` and
+/// absolute paths have to be impossible rather than merely unlikely.
+fn theme_file(id: &str) -> Result<PathBuf, String> {
+    let valid = !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !valid {
+        return Err(format!(
+            "invalid theme id {id:?} — use lower-case letters, digits and dashes"
+        ));
+    }
+    Ok(themes_dir().join(format!("{id}.json")))
+}
+
+/// Writes a theme to the themes directory, returning the file it landed in.
+/// The value is stored as given: the renderer owns the schema, and a theme it
+/// wrote is a theme it can read back.
+#[tauri::command]
+pub fn save_user_theme(theme: serde_json::Value) -> Result<String, String> {
+    let id = theme
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "theme has no id".to_string())?;
+    let path = theme_file(id)?;
+    let json = serde_json::to_string_pretty(&theme).map_err(|e| e.to_string())?;
+    write_atomic(&path, json.as_bytes())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Removes a user theme. A missing file is success: the caller wanted it gone.
+#[tauri::command]
+pub fn delete_user_theme(id: String) -> Result<(), String> {
+    let path = theme_file(&id)?;
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::theme_file;
+
+    #[test]
+    fn theme_ids_stay_inside_the_themes_directory() {
+        assert!(theme_file("kanagawa-wave").is_ok());
+        assert!(theme_file("solarized-light-2").is_ok());
+
+        for bad in ["", "../escape", "/etc/passwd", "Upper", "with space", "dot.dot"] {
+            assert!(theme_file(bad).is_err(), "{bad:?} should be rejected");
+        }
+        assert!(theme_file(&"a".repeat(65)).is_err());
+    }
+}

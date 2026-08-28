@@ -18,6 +18,11 @@ function format([r, g, b]: RGB): string {
   return "#" + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
 }
 
+/** True if the helpers here can work with this value. */
+export function isHex(value: string): boolean {
+  return parse(value) !== null;
+}
+
 /** Blends `a` toward `b`. Non-hex inputs (e.g. "transparent") pass through. */
 export function mix(a: string, b: string, t: number): string {
   const x = parse(a);

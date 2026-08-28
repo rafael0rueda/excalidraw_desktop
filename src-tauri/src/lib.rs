@@ -68,6 +68,8 @@ pub fn run() {
             settings::themes_dir_path,
             settings::list_user_themes,
             settings::system_color_scheme,
+            settings::save_user_theme,
+            settings::delete_user_theme,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Excalidraw Desktop");

@@ -8,6 +8,7 @@
     "assets": "node scripts/copy-assets.mjs",
     "dev": "npm run assets && vite",
     "build": "npm run assets && tsc --noEmit && vite build",
+    "check": "node scripts/check-theme.mjs",
     "tauri": "tauri",
     "start": "npm run assets && tauri dev",
     "bundle": "npm run assets && tauri build"
