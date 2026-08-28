@@ -21,7 +21,7 @@ Last updated: 2026-08-27
 | 3 | Export — PNG, SVG, clipboard | **Done** |
 | 4 | Autosave + session restore | **Done** |
 | 5 | Theme engine + presets | **Done** |
-| 6 | Theme editor UI | Not started |
+| 6 | Theme editor UI | **Built, not yet checked by eye** |
 | 7 | Tabs / multiple drawings | Not started |
 | 8 | RPM + .desktop + MIME association | Config stubbed, not built |
 
@@ -109,7 +109,7 @@ and silently at startup — a broken file should not greet the user with a dialo
 **Settings:** `~/.config/excalidraw-desktop/settings.json` —
 `{ theme, light_theme, dark_theme }`. `theme` is a theme id or `"system"`;
 `"system"` reads GNOME's `color-scheme` via `gsettings` and picks from the pair.
-The pair is only editable in the file for now (phase 6 should expose it).
+The pair is editable from the editor panel (phase 6) as well as in the file.
 Re-checked on window focus, so a desktop-wide light/dark flip follows.
 
 ### Two things Excalidraw 0.18.1 will not let us theme
@@ -161,12 +161,58 @@ exposes either, add the key then.
   they still match the outgoing theme. A colour the user picked is theirs.
 - Existing elements are never recoloured.
 
+## Theme editor (phase 6, built)
+
+`components/ThemeEditor.tsx` — a fixed side panel opened from **View → Theme →
+Customise themes…** or `Ctrl+,`. Edits the ten colours with a live preview,
+and holds the appearance controls (what the app uses, and the follow-system
+pair, which previously only existed in `settings.json`).
+
+Design decisions worth keeping:
+
+- **The draft is painted through the controller, not written to disk.**
+  `useTheme` gained `preview(theme | null)`; a draft outranks the chosen theme
+  for as long as the panel is open and never reaches `settings.json`. Dropping
+  the preview on unmount is what makes "close without saving" work.
+- **Half-typed colours are repaired before painting** (`draft.paintable`).
+  `color.ts` passes unparseable values straight through — that is deliberate, so
+  `"transparent"` survives `mix` — which means `#12` would otherwise land in a
+  CSS variable mid-keystroke.
+- **Ids are validated in Rust, not only in the renderer.** An id arrives from
+  the renderer and becomes a path, so `settings::theme_file` accepts only
+  `[a-z0-9-]{1,64}`; `../` and absolute paths are rejected outright rather than
+  merely being unlikely. Covered by a unit test.
+- **Changing the appearance reloads the editor onto the result; saving does
+  not.** Otherwise the panel and the screen could disagree about which theme is
+  in play. The `adopt` ref is what distinguishes the two cases.
+- **Save keeps the id, Save as new derives one from the name.** Saving over a
+  preset id is a supported way to customise a built-in theme, since `merge()`
+  already lets a user file replace a preset in place; the panel says so.
+- The panel styles itself from the ten theme colours via its own `--ed-*`
+  variables. It cannot use Excalidraw's: those are set inline on the
+  `.excalidraw` element (see `apply.ts`) and do not reach a sibling.
+- Keystrokes are stopped at the panel root, and the window-level accelerator
+  listener in `App.tsx` skips events originating inside it. Excalidraw binds
+  single-key tool shortcuts on the document.
+
+`npm run check` (`scripts/check-theme.mjs`) covers the pure parts: preset
+validity, that preset ids satisfy the Rust id rule, `parseTheme` diagnostics,
+well-formed CSS output for every preset, and the id/repair helpers. It uses
+esbuild, which Vite already depends on, rather than adding a test runner.
+
+**Not yet verified by eye.** The app cannot be driven in an ordinary browser —
+`App.tsx` calls `getCurrentWindow()` on mount, so React never renders outside
+Tauri — which rules out headless checking of this panel. It needs a human
+looking at the window.
+
 ## Next steps
 
-1. Verify by hand what is still unproven: open, save, export, clipboard, and the
+1. Look at the theme editor in a running window: open it, drag a colour, check
+   the panel and the app repaint together, save as new, reopen, delete.
+2. Verify by hand what is still unproven: open, save, export, clipboard, and the
    clean-quit path (quit normally, relaunch, expect *no* recovery prompt).
    Crash recovery itself is already verified.
-2. Phase 6: theme editor UI, plus exposing the follow-system pair.
+3. Phase 7 (tabs) or phase 8 (RPM + .desktop + MIME association).
 
 ## Autosave & session restore (phase 4)
 
@@ -258,6 +304,7 @@ verification needs a human looking at the titlebar.
 ```bash
 npm start                      # tauri dev
 npx tsc --noEmit               # typecheck
+npm run check                  # theme module assertions
 cargo test --lib --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path src-tauri/Cargo.toml
 npm run bundle                 # RPM

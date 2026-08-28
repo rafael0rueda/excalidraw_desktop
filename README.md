@@ -48,6 +48,7 @@ sudo dnf install src-tauri/target/release/bundle/rpm/*.rpm
 | `Ctrl+Shift+P` | Export PNG |
 | `Ctrl+Shift+G` | Export SVG |
 | `Ctrl+Shift+C` | Copy image to clipboard |
+| `Ctrl+,` | Customise themes |
 
 Shortcuts are registered both as native menu accelerators and as a
 window-level capture listener, because Excalidraw's canvas swallows many
@@ -60,9 +61,26 @@ Dracula, Gruvbox Dark, Solarized Light/Dark, Catppuccin Mocha, **Kanagawa Wave**
 and **Kanagawa Lotus**. *Follow system* tracks GNOME's light/dark preference and
 picks from a pair (Kanagawa Lotus / Kanagawa Wave by default).
 
+### The theme editor
+
+**View → Theme → Customise themes…** (`Ctrl+,`) opens a side panel. Pick any
+theme to start from, change its ten colours, and watch the app repaint as you
+type — nothing is written until you press a save button.
+
+- **Save** writes the theme under its current id. Doing this to a built-in
+  theme means your version replaces it from then on; delete the file to get the
+  original back.
+- **Save as new** derives a fresh id from the name and leaves the original
+  alone.
+- **Delete** removes a theme you saved.
+
+The same panel holds the appearance controls: what the app uses, and which two
+themes *Follow system* switches between.
+
 ### Your own themes
 
-Drop a JSON file in `~/.config/excalidraw-desktop/themes/`:
+The editor writes ordinary JSON files, and you can equally write one yourself.
+Drop it in `~/.config/excalidraw-desktop/themes/`:
 
 ```json
 {
@@ -88,9 +106,9 @@ Ten colours, expanded into Excalidraw's ~64 CSS variables for you. Use **View �
 Theme → Reload user themes** after editing; files that do not parse are listed
 with the reason. Reusing a built-in `id` overrides that theme.
 
-Preferences live in `~/.config/excalidraw-desktop/settings.json`; edit
-`light_theme` / `dark_theme` there to change what *Follow system* switches
-between.
+Preferences live in `~/.config/excalidraw-desktop/settings.json`
+(`theme`, `light_theme`, `dark_theme`), but there is nothing in there the
+editor panel does not also expose.
 
 ## Autosave and recovery
 
@@ -128,7 +146,9 @@ src/                    Renderer — React 19 + Excalidraw. No filesystem access
   theme/presets.ts      Built-in themes
   theme/variables.ts    Theme -> Excalidraw CSS custom properties
   theme/apply.ts        Paints a theme onto the running instance
-  theme/useTheme.ts     Theme selection, persistence, follow-system
+  theme/useTheme.ts     Theme selection, persistence, follow-system, live preview
+  theme/draft.ts        Pure helpers behind the editor (ids, colour repair)
+  components/ThemeEditor.tsx  The theme editor panel
 src-tauri/src/          Rust backend
   files.rs              Atomic file reads/writes
   recent.rs             Recent-files list in ~/.config/excalidraw-desktop/
@@ -137,6 +157,7 @@ src-tauri/src/          Rust backend
   store.rs              Shared config-directory location
   clipboard.rs          GTK-native clipboard image copy
 scripts/copy-assets.mjs Copies Excalidraw fonts into public/ for offline use
+scripts/check-theme.mjs Assertions over the theme modules (`npm run check`)
 ```
 
 **Offline guarantee.** Excalidraw fetches its handwriting fonts (Excalifont,
