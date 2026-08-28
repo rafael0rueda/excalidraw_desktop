@@ -79,8 +79,9 @@ themes *Follow system* switches between.
 
 ### Your own themes
 
-The editor writes ordinary JSON files, and you can equally write one yourself.
-Drop it in `~/.config/excalidraw-desktop/themes/`:
+The editor writes ordinary JSON files — in the order below, so they stay
+readable — and you can equally write one yourself. Drop it in
+`~/.config/excalidraw-desktop/themes/`:
 
 ```json
 {

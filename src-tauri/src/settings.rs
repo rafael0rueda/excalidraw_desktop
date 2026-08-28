@@ -106,17 +106,21 @@ fn theme_file(id: &str) -> Result<PathBuf, String> {
 }
 
 /// Writes a theme to the themes directory, returning the file it landed in.
-/// The value is stored as given: the renderer owns the schema, and a theme it
-/// wrote is a theme it can read back.
+///
+/// The caller hands us the finished text rather than a value to serialise:
+/// these files are meant to be read and edited by hand, and the renderer holds
+/// the keys in the order the schema documents them, which round-tripping
+/// through `serde_json::Value` would sort alphabetically.
 #[tauri::command]
-pub fn save_user_theme(theme: serde_json::Value) -> Result<String, String> {
-    let id = theme
-        .get("id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "theme has no id".to_string())?;
-    let path = theme_file(id)?;
-    let json = serde_json::to_string_pretty(&theme).map_err(|e| e.to_string())?;
-    write_atomic(&path, json.as_bytes())?;
+pub fn save_user_theme(id: String, contents: String) -> Result<String, String> {
+    let path = theme_file(&id)?;
+    // Parsed only to check it, never re-emitted.
+    let value: serde_json::Value =
+        serde_json::from_str(&contents).map_err(|e| format!("not valid JSON: {e}"))?;
+    if value.get("id").and_then(|v| v.as_str()) != Some(id.as_str()) {
+        return Err(format!("theme id does not match {}", path.display()));
+    }
+    write_atomic(&path, contents.as_bytes())?;
     Ok(path.to_string_lossy().into_owned())
 }
 

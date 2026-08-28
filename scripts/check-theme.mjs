@@ -93,4 +93,28 @@ check("paintable repairs half-typed colours from the fallback", () => {
   assert.deepEqual(t.invalidKeys(base), []);
 });
 
+check("serializeTheme writes schema order and normalises scrambled files", () => {
+  const preset = t.PRESET_THEMES[0];
+  const text = t.serializeTheme(preset);
+  assert.ok(text.endsWith("}\n"), "files should end with a newline");
+  assert.deepEqual(Object.keys(JSON.parse(text)), ["id", "name", "dark", "colors"]);
+  assert.deepEqual(Object.keys(JSON.parse(text).colors), t.THEME_COLOR_KEYS);
+
+  // A file written by hand in any order comes back in schema order, because
+  // parseTheme rebuilds `colors` by walking THEME_COLOR_KEYS.
+  const scrambled = JSON.parse(text);
+  scrambled.colors = Object.fromEntries(Object.entries(scrambled.colors).reverse());
+  const parsed = t.parseTheme(scrambled);
+  assert.ok("theme" in parsed);
+  assert.equal(t.serializeTheme(parsed.theme), text);
+});
+
+check("a serialized theme parses back to the same theme", () => {
+  for (const preset of t.PRESET_THEMES) {
+    const parsed = t.parseTheme(JSON.parse(t.serializeTheme(preset)));
+    assert.ok("theme" in parsed);
+    assert.deepEqual(parsed.theme, preset);
+  }
+});
+
 console.log(`\n${checks} checks passed`);

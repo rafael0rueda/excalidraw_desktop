@@ -13,7 +13,7 @@ import {
 } from "../lib/api";
 import { applyTheme } from "./apply";
 import { FALLBACK_THEME_ID, PRESET_THEMES } from "./presets";
-import { SYSTEM_THEME, parseTheme, type Theme } from "./types";
+import { SYSTEM_THEME, parseTheme, serializeTheme, type Theme } from "./types";
 
 /** Mirrors `Settings::default()` on the Rust side. */
 const DEFAULT_SETTINGS: Settings = {
@@ -161,7 +161,7 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
   const preview = useCallback((theme: Theme | null) => setDraft(theme), []);
 
   const saveTheme = useCallback(async (theme: Theme) => {
-    await saveUserTheme(theme);
+    await saveUserTheme(theme.id, serializeTheme(theme));
     // Update in place rather than re-reading the directory: the file we just
     // wrote is the file we would read back, and this keeps the list stable.
     setUserThemes((prev) => {

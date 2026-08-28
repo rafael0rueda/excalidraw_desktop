@@ -76,3 +76,16 @@ export function parseTheme(value: unknown): { theme: Theme } | { error: string }
 
   return { theme: { id: raw.id, name: raw.name, dark: raw.dark === true, colors: out } };
 }
+
+/**
+ * A theme as it is written to disk: schema order, two-space indent, trailing
+ * newline. These files are hand-edited, and the documented order groups the
+ * colours by role — alphabetical would scatter those groups and put the whole
+ * `colors` block above the `id` that names it.
+ */
+export function serializeTheme(theme: Theme): string {
+  const colors = {} as ThemeColors;
+  for (const key of THEME_COLOR_KEYS) colors[key] = theme.colors[key];
+  const ordered = { id: theme.id, name: theme.name, dark: theme.dark, colors };
+  return `${JSON.stringify(ordered, null, 2)}\n`;
+}

@@ -185,6 +185,17 @@ Design decisions worth keeping:
 - **Changing the appearance reloads the editor onto the result; saving does
   not.** Otherwise the panel and the screen could disagree about which theme is
   in play. The `adopt` ref is what distinguishes the two cases.
+- **The renderer serialises the file, Rust just writes it.**
+  `save_user_theme` takes the finished text plus an id, parses it only to check
+  it, and writes the caller's bytes. Round-tripping through
+  `serde_json::Value` sorted the keys alphabetically, which scatters colours
+  that belong together and puts the whole `colors` block above the `id` naming
+  it. `types.serializeTheme` emits schema order; `parseTheme` rebuilds `colors`
+  from `THEME_COLOR_KEYS`, so a hand-written file in any order is normalised
+  the first time it is saved from the editor. Enabling `serde_json`'s
+  `preserve_order` would have been one line, but Cargo unifies features, so it
+  would switch every map in the build — Tauri's included — to `IndexMap` for a
+  cosmetic gain.
 - **Save keeps the id, Save as new derives one from the name.** Saving over a
   preset id is a supported way to customise a built-in theme, since `merge()`
   already lets a user file replace a preset in place; the panel says so.
