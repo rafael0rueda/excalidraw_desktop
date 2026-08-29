@@ -41,7 +41,11 @@ sudo dnf install src-tauri/target/release/bundle/rpm/*.rpm
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+N` | New drawing |
+| `Ctrl+T`, `Ctrl+N` | New tab |
+| `Ctrl+W` | Close tab |
+| `Ctrl+Tab`, `Ctrl+PageDown` | Next tab |
+| `Ctrl+Shift+Tab`, `Ctrl+PageUp` | Previous tab |
+| `Ctrl+1` … `Ctrl+9` | Go to tab |
 | `Ctrl+O` | Open |
 | `Ctrl+S` | Save |
 | `Ctrl+Shift+S` | Save As |
@@ -53,6 +57,22 @@ sudo dnf install src-tauri/target/release/bundle/rpm/*.rpm
 Shortcuts are registered both as native menu accelerators and as a
 window-level capture listener, because Excalidraw's canvas swallows many
 keystrokes on its own.
+
+## Tabs
+
+Several drawings can be open at once, one per tab. The bar along the top is
+also where the filename and the unsaved-changes dot live, since the titlebar
+does not update on GNOME/Wayland (see *Known limitations*).
+
+- **Open** reuses the current tab when it is empty and unsaved, and otherwise
+  opens a new one. A file that is already open is brought forward rather than
+  opened twice.
+- **Close** asks about unsaved changes, showing you the drawing it is asking
+  about. Closing the last tab leaves an empty one — quitting is `Ctrl+Q`.
+- Each tab keeps its own viewport, so switching back puts you where you were.
+- Undo history is shared by the editor, not by the drawing, so it is cleared on
+  a switch: `Ctrl+Z` can never reach into another tab.
+- Every open tab is snapshotted, so a crash offers all of them back at once.
 
 ## Theming
 
@@ -118,9 +138,9 @@ two after you stop drawing. **Autosave never writes to your own `.excalidraw`
 file** — saving stays something you ask for.
 
 - If the app crashes or is killed with unsaved changes, the next launch offers
-  to restore them.
-- If you quit normally, the next launch simply reopens the drawing you had open.
-  Changes you chose to discard on the way out stay discarded.
+  to restore them — every tab, not just the one you were looking at.
+- If you quit normally, the next launch simply reopens the drawings you had
+  open. Changes you chose to discard on the way out stay discarded.
 
 ## Known limitations
 
@@ -138,27 +158,30 @@ file** — saving stays something you ask for.
 ```
 src/                    Renderer — React 19 + Excalidraw. No filesystem access.
   lib/api.ts            Typed wrappers over the Rust command layer
-  lib/document.ts       Open/save/dirty-tracking/autosave controller (useDocument hook)
+  lib/document.ts       Tabs, open/save, dirty tracking, autosave (useDocument hook)
   lib/exports.ts        PNG/SVG/clipboard rendering
   lib/exportActions.ts  Dialog-driven export flows
   lib/menu.ts           Native menu construction
   lib/scene.ts          Excalidraw (de)serialisation helpers
+  lib/tabs.ts           The tab model and its pure helpers
   theme/types.ts        Theme schema and validation
   theme/presets.ts      Built-in themes
   theme/variables.ts    Theme -> Excalidraw CSS custom properties
   theme/apply.ts        Paints a theme onto the running instance
   theme/useTheme.ts     Theme selection, persistence, follow-system, live preview
   theme/draft.ts        Pure helpers behind the editor (ids, colour repair)
+  theme/panel.ts        The --ui-* variables our own chrome styles itself from
+  components/TabBar.tsx       The open drawings
   components/ThemeEditor.tsx  The theme editor panel
 src-tauri/src/          Rust backend
   files.rs              Atomic file reads/writes
   recent.rs             Recent-files list in ~/.config/excalidraw-desktop/
-  session.rs            Autosave snapshot + crash recovery
+  session.rs            Autosave snapshots (one per tab) + crash recovery
   settings.rs           Preferences, user themes, system colour scheme
-  store.rs              Shared config-directory location
+  store.rs              Config-directory location and the id-to-filename rule
   clipboard.rs          GTK-native clipboard image copy
 scripts/copy-assets.mjs Copies Excalidraw fonts into public/ for offline use
-scripts/check-theme.mjs Assertions over the theme modules (`npm run check`)
+scripts/check.mjs       Assertions over the pure modules (`npm run check`)
 ```
 
 **Offline guarantee.** Excalidraw fetches its handwriting fonts (Excalifont,

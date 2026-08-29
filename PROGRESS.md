@@ -1,6 +1,6 @@
 # Project state & how to resume
 
-Last updated: 2026-08-27
+Last updated: 2026-08-29
 
 ## Decisions already made (do not re-litigate)
 
@@ -21,8 +21,8 @@ Last updated: 2026-08-27
 | 3 | Export — PNG, SVG, clipboard | **Done** |
 | 4 | Autosave + session restore | **Done** |
 | 5 | Theme engine + presets | **Done** |
-| 6 | Theme editor UI | **Built, not yet checked by eye** |
-| 7 | Tabs / multiple drawings | Not started |
+| 6 | Theme editor UI | **Done** |
+| 7 | Tabs / multiple drawings | **Built, not yet checked by eye** |
 | 8 | RPM + .desktop + MIME association | Config stubbed, not built |
 
 ## Engine findings (verified by experiment, keep these)
@@ -216,21 +216,81 @@ esbuild, which Vite already depends on, rather than adding a test runner.
 Tauri — which rules out headless checking of this panel. It needs a human
 looking at the window.
 
+## Tabs (phase 7, built)
+
+`lib/tabs.ts` is the model, `lib/document.ts` the controller, `components/
+TabBar.tsx` the strip along the top. React state holds only what the bar and the
+menu draw (`{id, path, dirty}` per tab); the scenes live in a ref-held `Map` so
+drawing does not re-render the shell.
+
+Design decisions worth keeping:
+
+- **An inactive tab is `.excalidraw` text, not a live scene.** Excalidraw is one
+  editor instance, so a switch is a scene load — the same path as open, save and
+  snapshot, which already works. The alternative, holding several live scenes and
+  swapping element arrays, means holding objects Excalidraw mutates in place.
+- **Two things that text does not carry are kept beside it.** The viewport
+  (`scrollX`/`scrollY`/`zoom` are flagged `export: false`, so a saved file has no
+  viewport) and the scene version the tab was last saved at, which is what the
+  dirty flag compares against.
+- **A capture is refused while `committed` is false.** Excalidraw commits a
+  replaced scene on its own render pass, which lands after ours (see the phase-5
+  note on `getAppState`), so in that window `getSceneElements()` still reports the
+  *outgoing* drawing. Capturing then would file one tab's scene under another
+  tab's id — the one bug in this design that would silently destroy work. The
+  flag is cleared when we hand Excalidraw a scene and set again in `onChange`.
+- **Undo history belongs to the instance, not to a drawing.** So a switch calls
+  `api.history.clear()`, and scene loads pass
+  `captureUpdate: CaptureUpdateAction.NEVER`. Otherwise `Ctrl+Z` would rewind
+  past the drawing now on screen, into another tab's edits.
+- **Saved versions of inactive tabs are resolved lazily** (`UNPARSED`). Working
+  one out means parsing the tab's text, which at startup would mean parsing every
+  restored drawing at once; instead it is done the first time a tab is shown.
+- **Autosave sends a scene only for tabs that have changed.** Each tab carries a
+  `rev` that moves only when its text does, and `save_session` treats an omitted
+  scene as "keep the file you have". Without it, drawing in one tab would rewrite
+  every open tab's snapshot every 1.5 s.
+- **Tab ids are validated in Rust**, by the same `store::safe_id` as theme ids —
+  they arrive from the renderer and become file names.
+- **A pre-tabs session is adopted rather than dropped.** `load_session` falls back
+  to the legacy `path`/`dirty` fields and `scene.excalidraw`, under the tab id
+  `restored`; the old file is pruned on the next save.
+- **The tab bar is shown even with one tab open.** On GNOME/Wayland the titlebar
+  never updates, so this row is the only place the filename and the unsaved
+  marker actually appear.
+- **Reopening a session does not touch the recent-files list.** Those files were
+  added when they were opened; pushing all of them on every launch would order
+  the list by tab position rather than by when the user last reached for
+  something. (This is a deliberate change from the single-document version, which
+  pushed the one restored file.)
+
+`--ed-*` became `--ui-*` and moved to `theme/panel.ts`, since the tab bar and the
+theme editor now style themselves from the same set.
+
+**Not yet verified by eye**, for the same reason as the theme editor: `App.tsx`
+calls `getCurrentWindow()` on mount, so React never renders outside Tauri and the
+window cannot be driven headlessly. What *was* verified from outside: the app
+starts, writes a `meta.json` in the new shape with one tab, and its snapshot
+carries the theme's canvas colour — so startup, restore and autosave all ran.
+
 ## Next steps
 
-1. Look at the theme editor in a running window: open it, drag a colour, check
-   the panel and the app repaint together, save as new, reopen, delete.
+1. Look at the tab bar in a running window: open two files, switch, check each
+   tab keeps its own viewport and dirty dot, close a dirty tab, close the last
+   tab (should leave an empty one, not quit), then `kill -9` with two dirty tabs
+   and check the recovery prompt offers both back.
 2. Verify by hand what is still unproven: open, save, export, clipboard, and the
    clean-quit path (quit normally, relaunch, expect *no* recovery prompt).
-   Crash recovery itself is already verified.
-3. Phase 7 (tabs) or phase 8 (RPM + .desktop + MIME association).
+   Crash recovery itself is already verified, but only for a single drawing.
+3. Phase 8 (RPM + .desktop + MIME association).
 
 ## Autosave & session restore (phase 4)
 
-State lives in `~/.config/excalidraw-desktop/session/`: `scene.excalidraw` (the
-snapshot, under its real extension so a failed recovery still leaves a file the
-user can open by hand) and `meta.json` (`path`, `dirty`, `saved_at`,
-`clean_exit`).
+State lives in `~/.config/excalidraw-desktop/session/`: one `<tab-id>.excalidraw`
+per open tab (under its real extension so a failed recovery still leaves a file
+the user can open by hand) and `meta.json` (`tabs[]` of `{id, path, dirty}`,
+`active`, `saved_at`, `clean_exit`). Phase 7 widened this from a single
+`scene.excalidraw`; see "Tabs" for what that changed.
 
 Design decisions worth keeping:
 
@@ -240,8 +300,10 @@ Design decisions worth keeping:
 - **`clean_exit` is what distinguishes recovery from convenience.** It is
   `false` in every snapshot and set to `true` by `mark_clean_exit`, called from
   `endSession()` just before the window is destroyed. So:
-  - `!clean_exit && dirty` → crash or kill; offer to restore the snapshot.
-  - otherwise → reopen `meta.path` from disk, quietly (it may have been deleted).
+  - `!clean_exit` and any tab dirty → crash or kill; offer to restore the
+    snapshots, all of them, in one prompt.
+  - otherwise → reopen each tab's `path` from disk, quietly, dropping the ones
+    whose file has gone (it may well have been deleted).
   This is why work the user explicitly *discarded* on close does not come back.
 - **Snapshots are suppressed until startup has decided what to restore**
   (`restored` ref in `document.ts`) — otherwise the empty initial canvas would
@@ -249,7 +311,8 @@ Design decisions worth keeping:
 - **Timing:** 1.5 s debounce after the last edit, with a 10 s ceiling so a
   snapshot never slips further behind while the user keeps drawing.
 - Restoring a snapshot sets `savedVersion` to `NEVER_SAVED` (-1), so the
-  document stays dirty until the user actually saves it.
+  document stays dirty until the user actually saves it. A tab that was *clean*
+  gets `UNPARSED` (-2) instead, which resolves to its real version when shown.
 - The startup effect is guarded by a ref, not the usual `cancelled` flag —
   StrictMode double-invokes effects and the recovery dialog must not appear
   twice.
@@ -257,7 +320,8 @@ Design decisions worth keeping:
 To force the recovery prompt by hand: draw something without saving, then
 `kill -9` the app (a clean quit deliberately will not trigger it).
 
-**Verified by hand on 2026-08-27:** drew two elements without saving, `kill -9`,
+**Verified by hand on 2026-08-27** (single-drawing version; the multi-tab
+prompt has not been through this yet): drew two elements without saving, `kill -9`,
 relaunched — the recovery dialog appeared and restoring brought the scene back
 intact, still marked dirty.
 
@@ -315,7 +379,7 @@ verification needs a human looking at the titlebar.
 ```bash
 npm start                      # tauri dev
 npx tsc --noEmit               # typecheck
-npm run check                  # theme module assertions
+npm run check                  # theme + tab module assertions
 cargo test --lib --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path src-tauri/Cargo.toml
 npm run bundle                 # RPM
