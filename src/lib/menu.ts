@@ -1,9 +1,11 @@
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { listRecent, clearRecent, type RecentEntry } from "./api";
+import { tabTitle, type TabMeta } from "./tabs";
 import { SYSTEM_THEME } from "../theme/types";
 
 export interface MenuHandlers {
-  newDrawing: () => void;
+  newTab: () => void;
+  closeTab: () => void;
   open: () => void;
   openRecent: (path: string) => void;
   save: () => void;
@@ -28,9 +30,23 @@ export interface ThemeMenu {
   edit: () => void;
 }
 
+/** The slice of the tab controller the menu needs. */
+export interface TabsMenu {
+  tabs: TabMeta[];
+  activeId: string;
+  select: (id: string) => void;
+  next: () => void;
+  previous: () => void;
+}
+
 type AnyMenuItem = MenuItem | CheckMenuItem | PredefinedMenuItem;
 
-async function recentSubmenu(handlers: MenuHandlers, theme: ThemeMenu, recents: RecentEntry[]) {
+async function recentSubmenu(
+  handlers: MenuHandlers,
+  theme: ThemeMenu,
+  tabs: TabsMenu,
+  recents: RecentEntry[],
+) {
   const items: AnyMenuItem[] = recents.length
     ? await Promise.all(
         recents.map((entry, i) =>
@@ -50,7 +66,7 @@ async function recentSubmenu(handlers: MenuHandlers, theme: ThemeMenu, recents: 
         id: "recent-clear",
         text: "Clear recent files",
         action: () => {
-          clearRecent().then(() => buildMenu(handlers, theme));
+          clearRecent().then(() => buildMenu(handlers, theme, tabs));
         },
       }),
     );
@@ -100,23 +116,62 @@ async function themeSubmenu(theme: ThemeMenu) {
   return Submenu.new({ text: "Theme", items });
 }
 
+async function tabsSubmenu(tabs: TabsMenu) {
+  const items: AnyMenuItem[] = [];
+  for (const [index, tab] of tabs.tabs.entries()) {
+    items.push(
+      await CheckMenuItem.new({
+        id: `tab-${index}`,
+        // The same unsaved marker the tab bar shows, for the same reason: the
+        // titlebar does not update on GNOME/Wayland.
+        text: `${tab.dirty ? "• " : ""}${tabTitle(tab)}`,
+        checked: tab.id === tabs.activeId,
+        // Only the first nine get a number; beyond that the list is the way in.
+        accelerator: index < 9 ? `CmdOrCtrl+${index + 1}` : undefined,
+        action: () => tabs.select(tab.id),
+      }),
+    );
+  }
+
+  items.push(await PredefinedMenuItem.new({ item: "Separator" }));
+  items.push(
+    await MenuItem.new({
+      id: "tab-next",
+      text: "Next Tab",
+      accelerator: "CmdOrCtrl+PageDown",
+      action: tabs.next,
+    }),
+  );
+  items.push(
+    await MenuItem.new({
+      id: "tab-previous",
+      text: "Previous Tab",
+      accelerator: "CmdOrCtrl+PageUp",
+      action: tabs.previous,
+    }),
+  );
+
+  return Submenu.new({ text: "Tabs", items });
+}
+
 /**
  * Rebuilds and installs the whole window menu. Cheap enough to re-run whenever
  * the recent-files list changes, which keeps the submenu in sync.
  */
-export async function buildMenu(handlers: MenuHandlers, theme: ThemeMenu) {
+export async function buildMenu(handlers: MenuHandlers, theme: ThemeMenu, tabs: TabsMenu) {
   const recents = await listRecent().catch(() => [] as RecentEntry[]);
 
   const file = await Submenu.new({
     text: "File",
     items: [
-      await MenuItem.new({ id: "new", text: "New", accelerator: "CmdOrCtrl+N", action: handlers.newDrawing }),
+      await MenuItem.new({ id: "new", text: "New Tab", accelerator: "CmdOrCtrl+T", action: handlers.newTab }),
       await MenuItem.new({ id: "open", text: "Open…", accelerator: "CmdOrCtrl+O", action: handlers.open }),
-      await recentSubmenu(handlers, theme, recents),
+      await recentSubmenu(handlers, theme, tabs, recents),
       await PredefinedMenuItem.new({ item: "Separator" }),
       await MenuItem.new({ id: "save", text: "Save", accelerator: "CmdOrCtrl+S", action: handlers.save }),
       await MenuItem.new({ id: "saveas", text: "Save As…", accelerator: "CmdOrCtrl+Shift+S", action: handlers.saveAs }),
       await PredefinedMenuItem.new({ item: "Separator" }),
+      await MenuItem.new({ id: "close", text: "Close Tab", accelerator: "CmdOrCtrl+W", action: handlers.closeTab }),
       await MenuItem.new({ id: "quit", text: "Quit", accelerator: "CmdOrCtrl+Q", action: handlers.quit }),
     ],
   });
@@ -134,7 +189,7 @@ export async function buildMenu(handlers: MenuHandlers, theme: ThemeMenu) {
 
   const view = await Submenu.new({ text: "View", items: [await themeSubmenu(theme)] });
 
-  const menu = await Menu.new({ items: [file, exportMenu, view] });
+  const menu = await Menu.new({ items: [file, exportMenu, view, await tabsSubmenu(tabs)] });
   await menu.setAsAppMenu().catch(() => {});
   return menu;
 }

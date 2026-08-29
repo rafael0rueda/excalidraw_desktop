@@ -24,18 +24,35 @@ export const listRecent = () => invoke<RecentEntry[]>("list_recent");
 export const pushRecent = (path: string) => invoke<RecentEntry[]>("push_recent", { path });
 export const clearRecent = () => invoke<RecentEntry[]>("clear_recent");
 
-export interface Session {
+export interface SessionTab {
+  id: string;
   /** File the snapshot came from, or null for a drawing never saved anywhere. */
   path: string | null;
   dirty: boolean;
-  saved_at: number;
-  clean_exit: boolean;
   /** `.excalidraw` JSON. */
   scene: string;
 }
 
-export const saveSession = (path: string | null, dirty: boolean, scene: string) =>
-  invoke<void>("save_session", { path, dirty, scene });
+export interface Session {
+  tabs: SessionTab[];
+  active: string | null;
+  clean_exit: boolean;
+}
+
+/** A tab on its way into the session file. */
+export interface TabSnapshot {
+  id: string;
+  path: string | null;
+  dirty: boolean;
+  /**
+   * Left out when the tab's scene has not changed since the last snapshot, so
+   * an autosave only ever carries the drawing actually being worked on.
+   */
+  scene?: string;
+}
+
+export const saveSession = (tabs: TabSnapshot[], active: string | null) =>
+  invoke<void>("save_session", { tabs, active });
 export const loadSession = () => invoke<Session | null>("load_session");
 export const markCleanExit = () => invoke<void>("mark_clean_exit");
 export const clearSession = () => invoke<void>("clear_session");

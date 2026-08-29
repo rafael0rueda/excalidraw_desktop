@@ -1,9 +1,10 @@
 /**
- * Assertions over the theme modules, which are pure TypeScript with no DOM or
- * Tauri behind them. esbuild is already a dependency of Vite, so this runs
- * without adding a test runner to the project.
+ * Assertions over the modules that are pure TypeScript with no DOM, Excalidraw
+ * or Tauri behind them — the theme engine and the tab model. esbuild is already
+ * a dependency of Vite, so this runs without adding a test runner to the
+ * project.
  *
- *   node scripts/check-theme.mjs
+ *   node scripts/check.mjs
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -19,7 +20,8 @@ writeFileSync(
    export * from "${process.cwd()}/src/theme/types";
    export * from "${process.cwd()}/src/theme/color";
    export { cssVariables } from "${process.cwd()}/src/theme/variables";
-   export { PRESET_THEMES, FALLBACK_THEME_ID } from "${process.cwd()}/src/theme/presets";`,
+   export { PRESET_THEMES, FALLBACK_THEME_ID } from "${process.cwd()}/src/theme/presets";
+   export * from "${process.cwd()}/src/lib/tabs";`,
 );
 const bundle = join(out, "bundle.mjs");
 await build({ entryPoints: [entry], bundle: true, format: "esm", outfile: bundle, logLevel: "warning" });
@@ -115,6 +117,44 @@ check("a serialized theme parses back to the same theme", () => {
     assert.ok("theme" in parsed);
     assert.deepEqual(parsed.theme, preset);
   }
+});
+
+check("a tab is titled by its file, and an unsaved one is Untitled", () => {
+  assert.equal(t.tabTitle({ id: "a", path: "/home/rafa/notes/plan.excalidraw", dirty: false }), "plan.excalidraw");
+  assert.equal(t.tabTitle({ id: "a", path: null, dirty: true }), "Untitled");
+  assert.equal(t.basename("plan.excalidraw"), "plan.excalidraw");
+});
+
+check("tab ids are ids the backend will accept as file names", () => {
+  // Mirrors `safe_id` in src-tauri/src/store.rs, which is what a tab id has to
+  // satisfy before it names a snapshot.
+  for (let i = 0; i < 5; i++) assert.match(t.newTabId(), /^[a-z0-9-]{1,64}$/);
+  assert.equal(new Set([t.newTabId(), t.newTabId(), t.newTabId()]).size, 3);
+});
+
+check("closing a tab hands over to the one that takes its place", () => {
+  const tabs = ["a", "b", "c"].map((id) => ({ id, path: null, dirty: false }));
+  assert.equal(t.successorId(tabs, "a"), "b");
+  assert.equal(t.successorId(tabs, "b"), "c", "the tab sliding into the gap");
+  assert.equal(t.successorId(tabs, "c"), "b", "nothing follows the last one");
+  assert.equal(t.successorId([tabs[0]], "a"), null, "the last tab leaves nothing");
+});
+
+check("stepping through tabs wraps at both ends", () => {
+  const tabs = ["a", "b", "c"].map((id) => ({ id, path: null, dirty: false }));
+  assert.equal(t.relativeId(tabs, "a", 1), "b");
+  assert.equal(t.relativeId(tabs, "c", 1), "a");
+  assert.equal(t.relativeId(tabs, "a", -1), "c");
+  assert.equal(t.relativeId([], "a", 1), null);
+});
+
+check("a file already open is found rather than opened twice", () => {
+  const tabs = [
+    { id: "a", path: "/tmp/one.excalidraw", dirty: false },
+    { id: "b", path: null, dirty: false },
+  ];
+  assert.equal(t.findByPath(tabs, "/tmp/one.excalidraw").id, "a");
+  assert.equal(t.findByPath(tabs, "/tmp/two.excalidraw"), undefined);
 });
 
 console.log(`\n${checks} checks passed`);

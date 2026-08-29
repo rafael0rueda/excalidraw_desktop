@@ -1,7 +1,7 @@
 //! Persisted preferences and user-supplied themes.
 
 use crate::files::write_atomic;
-use crate::store::config_dir;
+use crate::store::{config_dir, safe_id};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -88,20 +88,9 @@ pub fn system_color_scheme() -> String {
     }
 }
 
-/// Resolves a theme id to its file, refusing anything that is not a plain
-/// slug. Ids reach us from the renderer and end up in a path, so `../` and
-/// absolute paths have to be impossible rather than merely unlikely.
+/// Resolves a theme id to its file, refusing anything that is not a plain slug.
 fn theme_file(id: &str) -> Result<PathBuf, String> {
-    let valid = !id.is_empty()
-        && id.len() <= 64
-        && id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-    if !valid {
-        return Err(format!(
-            "invalid theme id {id:?} — use lower-case letters, digits and dashes"
-        ));
-    }
+    safe_id(id)?;
     Ok(themes_dir().join(format!("{id}.json")))
 }
 
@@ -139,14 +128,10 @@ pub fn delete_user_theme(id: String) -> Result<(), String> {
 mod tests {
     use super::theme_file;
 
+    /// The rule itself is covered in `store`; this is the theme layer applying it.
     #[test]
     fn theme_ids_stay_inside_the_themes_directory() {
-        assert!(theme_file("kanagawa-wave").is_ok());
         assert!(theme_file("solarized-light-2").is_ok());
-
-        for bad in ["", "../escape", "/etc/passwd", "Upper", "with space", "dot.dot"] {
-            assert!(theme_file(bad).is_err(), "{bad:?} should be rejected");
-        }
-        assert!(theme_file(&"a".repeat(65)).is_err());
+        assert!(theme_file("../escape").is_err());
     }
 }

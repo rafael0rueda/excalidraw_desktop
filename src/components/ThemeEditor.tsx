@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { isHex } from "../theme/color";
+import { panelVariables } from "../theme/panel";
 import { TRANSPARENT, invalidKeys, isColorValue, paintable, slugify, uniqueId } from "../theme/draft";
 import { SYSTEM_THEME, type Theme, type ThemeColors } from "../theme/types";
 import type { ThemeController } from "../theme/useTheme";
@@ -162,17 +163,7 @@ export default function ThemeEditor({ theme, onClose }: ThemeEditorProps) {
 
   const isUserTheme = theme.userThemeIds.has(draft.id);
   const editable = paintable(draft, source);
-  const style = {
-    "--ed-surface": editable.colors.surface,
-    "--ed-input": editable.colors.canvas,
-    "--ed-hover": editable.colors.surfaceAlt,
-    "--ed-border": editable.colors.surfaceAlt,
-    "--ed-text": editable.colors.text,
-    "--ed-muted": editable.colors.textMuted,
-    "--ed-accent": editable.colors.accent,
-    "--ed-accent-text": editable.colors.accentText,
-    "--ed-danger": editable.colors.danger,
-  } as CSSProperties;
+  const style = panelVariables(editable);
 
   return (
     <div className="theme-editor" ref={panel} style={style} onKeyDown={onKeyDown}>

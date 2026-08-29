@@ -1,7 +1,7 @@
 import { message, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { copyPngToClipboard, savePng, saveSvg, type ExportOptions } from "./exports";
-import { basename } from "./scene";
+import { basename } from "./tabs";
 
 function suggestedName(path: string | null, ext: string) {
   const stem = path ? basename(path).replace(/\.excalidraw$/, "") : "Untitled";
