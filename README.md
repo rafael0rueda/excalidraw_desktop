@@ -30,12 +30,41 @@ npm start          # tauri dev — launches the real desktop window
 > refused". Only release builds (`npm run bundle`) embed `dist/`. Use `npm start`
 > for development.
 
-## Building an RPM
+## Building and installing the RPM
 
 ```bash
 npm run bundle     # → src-tauri/target/release/bundle/rpm/*.rpm
-sudo dnf install src-tauri/target/release/bundle/rpm/*.rpm
+sudo dnf install "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.4.0-1.x86_64.rpm"
 ```
+
+The quotes matter: the file name has a space in it. The package itself is named
+`excalidraw-desktop`, so `sudo dnf remove excalidraw-desktop` takes it away
+again.
+
+What lands on the system:
+
+| Path | What it is |
+|---|---|
+| `/usr/bin/excalidraw-desktop` | The app |
+| `/usr/share/applications/Excalidraw Desktop.desktop` | Menu entry and file handler |
+| `/usr/share/mime/packages/excalidraw-desktop.xml` | Teaches the desktop what a `.excalidraw` file is |
+| `/usr/share/icons/hicolor/*/apps/excalidraw-desktop.png` | Icons (32, 128, 512) |
+
+## Opening drawings from the file manager
+
+Installing the package registers `application/vnd.excalidraw+json` and makes
+this app its default handler, so double-clicking a `.excalidraw` file opens it.
+Files are recognised by their extension, and also by their contents if the
+extension is missing.
+
+Selecting several drawings and opening them together puts each in its own tab of
+a single window — **the app only ever runs once.** A second launch hands its
+files to the window already open instead of starting a rival copy, which matters
+because two copies would share one config directory and prune each other's
+session snapshots.
+
+Drawings named on the command line (`excalidraw-desktop a.excalidraw b.excalidraw`)
+open the same way, as extra tabs on top of the session being restored.
 
 ## Keyboard shortcuts
 
@@ -154,6 +183,9 @@ file** — saving stays something you ask for.
 - **The colour-picker palette is not themeable** either — `UIOptions` exposes no
   hook for it. A theme sets the *default* stroke and fill for new elements, but
   the swatch grid stays Excalidraw's own.
+- **A second launch may not raise the window on GNOME/Wayland.** The drawing
+  does open as a new tab, but the compositor is entitled to refuse the
+  focus request and merely highlight the app in the dock instead.
 - **The window title does not update on GNOME/Wayland.** The titlebar always
   shows `Excalidraw Desktop`; the current filename and unsaved-changes marker do
   not appear there. Investigated and parked — see PROGRESS.md. Cosmetic only.
@@ -188,6 +220,11 @@ src-tauri/src/          Rust backend
   chrome.rs             Paints the GTK menu bar and menus in the theme's colours
 scripts/copy-assets.mjs Copies Excalidraw fonts into public/ for offline use
 scripts/check.mjs       Assertions over the pure modules (`npm run check`)
+packaging/              What the RPM installs beyond the binary
+  excalidraw-desktop.xml           MIME definition for .excalidraw
+  excalidraw-desktop.desktop.hbs   Desktop entry template (adds the Exec field code)
+  rpm-post-install.sh              Refreshes the MIME/desktop/icon caches
+  rpm-post-remove.sh               ...and again once the definition is gone
 ```
 
 **Offline guarantee.** Excalidraw fetches its handwriting fonts (Excalifont,

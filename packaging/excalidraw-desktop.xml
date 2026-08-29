@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Teaches the desktop what a .excalidraw file *is*.
+
+  The .desktop entry only says which types this app opens; without this file no
+  type named application/vnd.excalidraw+json exists, so a file manager sees
+  plain JSON (or "unknown") and never offers us. Installed to
+  /usr/share/mime/packages and compiled into the database by update-mime-database.
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/vnd.excalidraw+json">
+    <comment>Excalidraw drawing</comment>
+    <!-- It really is JSON, so tools that handle JSON should still be offered. -->
+    <sub-class-of type="application/json"/>
+    <glob pattern="*.excalidraw"/>
+    <!--
+      Content sniffing for a drawing saved without the extension. The closing
+      quote matters: it keeps "excalidrawlib" (a library file, not a drawing)
+      from matching. Priority stays under the glob's default of 50.
+    -->
+    <magic priority="40">
+      <match type="string" value="&quot;type&quot;: &quot;excalidraw&quot;" offset="0:64"/>
+    </magic>
+    <generic-icon name="image-x-generic"/>
+  </mime-type>
+</mime-info>

@@ -23,7 +23,7 @@ Last updated: 2026-08-29
 | 5 | Theme engine + presets | **Done** |
 | 6 | Theme editor UI | **Done** |
 | 7 | Tabs / multiple drawings | **Built, not yet checked by eye** |
-| 8 | RPM + .desktop + MIME association | Config stubbed, not built |
+| 8 | RPM + .desktop + MIME association | **Done** (installed package not yet tried on the system) |
 
 ## Engine findings (verified by experiment, keep these)
 
@@ -295,14 +295,102 @@ carries the theme's canvas colour — so startup, restore and autosave all ran.
 
 ## Next steps
 
-1. Look at the tab bar in a running window: open two files, switch, check each
+All eight phases are built. What is left is verification by a human at the
+machine, and then whatever the app turns out to want in use.
+
+1. Install the RPM (`sudo dnf install "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.4.0-1.x86_64.rpm"`)
+   and double-click a `.excalidraw` file in Files: it should open in the app,
+   with the app's icon on it. Then select two and open them together, and
+   double-click a third while the app is running — one window, three tabs.
+2. Look at the tab bar in a running window: open two files, switch, check each
    tab keeps its own viewport and dirty dot, close a dirty tab, close the last
    tab (should leave an empty one, not quit), then `kill -9` with two dirty tabs
    and check the recovery prompt offers both back.
-2. Verify by hand what is still unproven: open, save, export, clipboard, and the
+3. Verify by hand what is still unproven: open, save, export, clipboard, and the
    clean-quit path (quit normally, relaunch, expect *no* recovery prompt).
    Crash recovery itself is already verified, but only for a single drawing.
-3. Phase 8 (RPM + .desktop + MIME association).
+4. Check the menu bar and the theme editor's dropdowns follow the theme
+   (phase 7's GTK chrome — see "The GTK chrome").
+
+## Packaging (phase 8, built)
+
+`npm run bundle` produces `src-tauri/target/release/bundle/rpm/Excalidraw
+Desktop-<version>-1.x86_64.rpm` — package name `excalidraw-desktop`, ~17 MB.
+Everything the package installs beyond the binary lives in `packaging/`.
+
+What a working file association actually needs, in order:
+
+1. **A MIME type must exist.** `packaging/excalidraw-desktop.xml` goes to
+   `/usr/share/mime/packages/` and defines
+   `application/vnd.excalidraw+json` — Excalidraw's own type string. Without it
+   there is nothing for the desktop entry's `MimeType=` to name, and a `.excalidraw`
+   file is seen as plain JSON.
+2. **The desktop entry must accept a file argument.** This is the one thing
+   Tauri gets wrong: its built-in template writes `Exec=excalidraw-desktop` with
+   no field code, so the file manager launches the app and the drawing is never
+   passed. `packaging/excalidraw-desktop.desktop.hbs` (wired up as
+   `bundle.linux.rpm.desktopTemplate`) is a copy of Tauri's output plus
+   `Exec={{exec}} %F`, `Keywords`, and `Version=1.0`. The template variables the
+   bundler actually provides were established by probing: `name`, `comment`,
+   `categories`, `exec`, `icon` and `mime_type` render; `exec_arg`,
+   `file_associations` and `identifier` come out empty.
+3. **The caches must be rebuilt.** `%post` and `%postun` run
+   `update-mime-database`, `update-desktop-database` and `gtk-update-icon-cache`.
+   Fedora runs all three from its own rpm file triggers, so on Fedora these are
+   belt and braces; they are what makes the package work on other RPM
+   distributions.
+
+Decisions worth keeping:
+
+- **`sub-class-of application/json` stays.** It is accurate, and the worry that
+  it would let a JSON-handling app outrank us proved wrong: with our entry
+  installed, `gio mime application/vnd.excalidraw+json` reports us as both
+  default and the only *recommended* app, while text editors remain available
+  under "Open With".
+- **The magic block sniffs `"type": "excalidraw"` including the closing quote.**
+  Without the quote it would also match `"type": "excalidrawlib"`, which is a
+  library file and not a drawing. Priority 40, below the glob's default 50.
+- **One instance, not many** (`tauri-plugin-single-instance`). Double-clicking a
+  second drawing used to be one command away from starting a second app against
+  the same config directory — and `save_session` prunes snapshots that are not in
+  the tab list, so the two copies would have deleted each other's unsaved work.
+  The second launch now forwards its argv over D-Bus (local IPC, no network) and
+  exits; the running instance opens the files as tabs and asks to be raised.
+- **Relative paths are resolved against the *caller's* cwd**, which the plugin
+  hands over with the arguments. The running instance may sit in a different
+  directory entirely. Paths are then canonicalised, so the same drawing named
+  two ways lands in one tab.
+- **The command line no longer replaces the session, it adds to it.** Opening
+  only the named file would have left every other tab out of the next snapshot,
+  and the snapshot is pruned to what is open — so double-clicking a drawing
+  would have quietly discarded the rest of the session. Startup now restores the
+  session first and opens the command-line drawings on top, as extra tabs.
+- **`128x128@2x.png` is not in `bundle.icon`.** Tauri maps it to
+  `/usr/share/icons/hicolor/256x256@2/`, which is not a directory any icon theme
+  reads. The 32, 128 and 512 icons cover what is used.
+- **No `License` tag**, because the project has no LICENSE file. `rpm -qip`
+  shows it empty; add one if this is ever published.
+
+Verified without installing anything, by extracting the package and pointing
+`XDG_DATA_HOME` at a scratch directory:
+
+- `desktop-file-validate` passes; `Exec=excalidraw-desktop %F` and
+  `MimeType=application/vnd.excalidraw+json` are both present.
+- `gio info` resolves `drawing.excalidraw` to the type by glob, an
+  extensionless copy by magic, and a `excalidrawlib` file to `text/plain`.
+- `gio mime` names our entry the default handler (with a stub binary on `PATH`,
+  which GIO requires before it will consider a desktop entry at all).
+
+And by running the release binary against a scratch `XDG_CONFIG_HOME`:
+
+- launching it with a drawing opens that drawing;
+- a second launch with a *relative* path exits immediately (rc 0, no second
+  window) and the first window gains a second tab holding the resolved path;
+- killing it and relaunching with a third drawing yields three tabs — the two
+  restored plus the new one, which is the one focused.
+
+Still unverified: the installed package on the real system, i.e. double-clicking
+a file in Files and seeing the app's icon on it.
 
 ## Autosave & session restore (phase 4)
 
@@ -403,4 +491,9 @@ npm run check                  # theme + tab module assertions
 cargo test --lib --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path src-tauri/Cargo.toml
 npm run bundle                 # RPM
+
+# inspecting the package without installing it
+R="src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.4.0-1.x86_64.rpm"
+rpm -qip "$R"; rpm -qlp "$R"; rpm -qp --scripts "$R"
+rpm2cpio "$R" | (cd /tmp && cpio -idm)   # then read /tmp/usr/share/applications/*.desktop
 ```

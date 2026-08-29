@@ -6,18 +6,27 @@ mod session;
 mod settings;
 mod store;
 
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
-/// A drawing path handed to us on the command line (file-manager double click).
-/// Taken once, so a reload does not reopen it over the user's current work.
+/// Drawings named on the command line. A file-manager double click arrives this
+/// way, and the desktop entry's `%F` may name several at once.
+/// Taken once, so a reload does not reopen them over the user's current work.
 #[derive(Default)]
-struct StartupFile(Mutex<Option<String>>);
+struct StartupFiles(Mutex<Vec<String>>);
 
 #[tauri::command]
-fn startup_file(state: tauri::State<'_, StartupFile>) -> Option<String> {
-    state.0.lock().ok().and_then(|mut slot| slot.take())
+fn startup_files(state: tauri::State<'_, StartupFiles>) -> Vec<String> {
+    state
+        .0
+        .lock()
+        .map(|mut files| std::mem::take(&mut *files))
+        .unwrap_or_default()
 }
+
+/// Carries the drawings from a second launch to the window already open.
+const OPEN_FILES_EVENT: &str = "open-files";
 
 /// Sets the window title.
 ///
@@ -34,24 +43,65 @@ fn set_window_title(window: tauri::Window, title: String) -> Result<(), String> 
     window.set_title(&title).map_err(|e| e.to_string())
 }
 
-fn cli_drawing() -> Option<String> {
-    std::env::args()
-        .skip(1)
-        .find(|arg| !arg.starts_with('-'))
-        .filter(|arg| std::path::Path::new(arg).is_file())
+/// The drawings in an argument list, in the order they were given.
+///
+/// Relative paths resolve against `cwd` rather than ours, because a second
+/// launch hands its arguments to the instance already running, which may sit in
+/// a different directory entirely. Paths are canonicalised so that the same
+/// drawing reached two ways lands in one tab rather than two.
+fn cli_drawings(args: &[String], cwd: &Path) -> Vec<String> {
+    args.iter()
+        .skip(1) // the program itself
+        .filter(|arg| !arg.starts_with('-'))
+        .map(|arg| {
+            let path = Path::new(arg);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                cwd.join(path)
+            }
+        })
+        .filter(|path| path.is_file())
+        .map(|path| {
+            std::fs::canonicalize(&path)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+/// What this process was asked to open when it started.
+fn startup_drawings() -> Vec<String> {
+    let args: Vec<String> = std::env::args().collect();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    cli_drawings(&args, &cwd)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // First, as the plugin requires. Without it a double-clicked drawing
+        // would start a second app against the same config directory, and the
+        // two would prune each other's session snapshots.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let files = cli_drawings(&argv, Path::new(&cwd));
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            if !files.is_empty() {
+                let _ = app.emit(OPEN_FILES_EVENT, files);
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            app.manage(StartupFile(Mutex::new(cli_drawing())));
+            app.manage(StartupFiles(Mutex::new(startup_drawings())));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            startup_file,
+            startup_files,
             set_window_title,
             files::read_text_file,
             files::write_text_file,
@@ -75,4 +125,35 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Excalidraw Desktop");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drawings_are_picked_out_of_an_argument_list() {
+        let dir = std::env::temp_dir().join(format!("excalidraw-cli-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.excalidraw");
+        std::fs::write(&file, "{}").unwrap();
+        let expected = std::fs::canonicalize(&file)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+
+        let args = [
+            "/usr/bin/excalidraw-desktop", // the program itself is not a drawing
+            "--some-switch",               // nor is a switch
+            "a.excalidraw",                // relative to the caller's directory
+            &file.to_string_lossy(),       // absolute
+            &dir.join("gone.excalidraw").to_string_lossy(), // deleted since
+        ]
+        .map(String::from);
+
+        let found = cli_drawings(&args, &dir);
+        assert_eq!(found, vec![expected.clone(), expected], "both spellings resolve to one file");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

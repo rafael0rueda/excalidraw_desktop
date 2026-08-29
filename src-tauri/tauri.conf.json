@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Excalidraw Desktop",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "identifier": "dev.rafa.excalidraw-desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,19 +29,42 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["rpm"],
-    "category": "Graphics",
+    "targets": [
+      "rpm"
+    ],
+    "category": "Graphics and Design",
+    "publisher": "rafa",
+    "homepage": "https://github.com/rafael0rueda/excalidraw_desktop",
     "shortDescription": "Local-first Excalidraw",
     "longDescription": "A fully offline, themeable Excalidraw drawing application for Linux.",
+    "fileAssociations": [
+      {
+        "ext": [
+          "excalidraw"
+        ],
+        "name": "Excalidraw drawing",
+        "description": "Excalidraw drawing",
+        "mimeType": "application/vnd.excalidraw+json",
+        "role": "Editor"
+      }
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
-      "icons/128x128@2x.png",
       "icons/icon.png"
     ],
     "linux": {
       "rpm": {
-        "depends": ["webkit2gtk4.1", "gtk3"]
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3"
+        ],
+        "files": {
+          "/usr/share/mime/packages/excalidraw-desktop.xml": "../packaging/excalidraw-desktop.xml"
+        },
+        "postInstallScript": "../packaging/rpm-post-install.sh",
+        "postRemoveScript": "../packaging/rpm-post-remove.sh",
+        "desktopTemplate": "../packaging/excalidraw-desktop.desktop.hbs"
       }
     }
   }

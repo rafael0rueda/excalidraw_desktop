@@ -1,0 +1,20 @@
+# Installed as /usr/share/applications/Excalidraw Desktop.desktop.
+# This template exists for one line: Tauri's built-in one omits the Exec field
+# code, so a file manager could launch the app but never hand it the drawing the
+# user double-clicked. The rest matches what Tauri would have generated.
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name={{name}}
+{{#if comment}}Comment={{comment}}
+{{/if}}Categories={{categories}}
+Icon={{icon}}
+# %F rather than %f: several selected drawings arrive in one launch, and the
+# single running instance turns each into a tab.
+Exec={{exec}} %F
+MimeType={{mime_type}}
+Terminal=false
+# Ties a window back to this entry, and so to its icon: the binary name is what
+# the toolkit reports as the window class.
+StartupWMClass=excalidraw-desktop
+Keywords=drawing;diagram;sketch;whiteboard;excalidraw;

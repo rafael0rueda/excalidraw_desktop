@@ -92,8 +92,15 @@ export const saveUserTheme = (id: string, contents: string) =>
   invoke<string>("save_user_theme", { id, contents });
 export const deleteUserTheme = (id: string) => invoke<void>("delete_user_theme", { id });
 
-/** A path passed on the command line, e.g. from a file-manager double click. */
-export const startupFile = () => invoke<string | null>("startup_file");
+/**
+ * Paths passed on the command line, e.g. from a file-manager double click. The
+ * desktop entry's `%F` can hand over several drawings in one launch, and the
+ * list empties on the first call so a reload does not reopen them.
+ */
+export const startupFiles = () => invoke<string[]>("startup_files");
+
+/** Drawings sent over by a second launch; see the single-instance plugin. */
+export const OPEN_FILES_EVENT = "open-files";
 
 export const setWindowTitle = (title: string) => invoke<void>("set_window_title", { title });
 

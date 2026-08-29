@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { confirm, message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import {
@@ -9,7 +10,8 @@ import {
   readTextFile,
   saveSession,
   setWindowTitle,
-  startupFile,
+  startupFiles,
+  OPEN_FILES_EVENT,
   writeTextFile,
   type TabSnapshot,
 } from "./api";
@@ -598,19 +600,31 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     startupDone.current = true;
     void (async () => {
       try {
-        // A path from the command line is an explicit request, so it outranks
-        // whatever we happened to be doing last time.
-        const file = await startupFile().catch(() => null);
-        if (file) {
-          await openDrawing(file);
-          return;
-        }
+        // The session comes back first and the command line lands on top of it,
+        // as extra tabs. Opening only the named file would leave the other tabs
+        // out of the next snapshot, and the snapshot is pruned to what is open
+        // — so double-clicking a drawing would quietly discard the rest.
         await restoreSession();
+        for (const file of await startupFiles().catch(() => [])) {
+          await openDrawing(file);
+        }
       } finally {
         restored.current = true;
       }
     })();
   }, [api, openDrawing, restoreSession]);
+
+  // A second launch does not become a second app; its drawings arrive here
+  // instead, as tabs on the window already open.
+  useEffect(() => {
+    if (!api) return;
+    const pending = listen<string[]>(OPEN_FILES_EVENT, async ({ payload }) => {
+      for (const file of payload) await openDrawing(file);
+    });
+    return () => {
+      void pending.then((unlisten) => unlisten());
+    };
+  }, [api, openDrawing]);
 
   // ----------------------------------------------------------------- window
 
