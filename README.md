@@ -49,6 +49,7 @@ What lands on the system:
 | `/usr/share/applications/Excalidraw Desktop.desktop` | Menu entry and file handler |
 | `/usr/share/mime/packages/excalidraw-desktop.xml` | Teaches the desktop what a `.excalidraw` file is |
 | `/usr/share/icons/hicolor/*/apps/excalidraw-desktop.png` | Icons (32, 128, 512) |
+| `/usr/share/licenses/excalidraw-desktop/LICENSE` | The licence text |
 
 ## Opening drawings from the file manager
 
@@ -234,3 +235,11 @@ them out of the npm package into `public/`, and `index.html` sets
 
 **Config location.** `~/.config/excalidraw-desktop/` — currently `recent.json`;
 window geometry is persisted by `tauri-plugin-window-state`.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). The RPM carries the same identifier and installs
+the text to `/usr/share/licenses/excalidraw-desktop/`.
+
+The app bundles [Excalidraw](https://github.com/excalidraw/excalidraw) (MIT) and
+the font files that ship inside it, which keep their own upstream licences.

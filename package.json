@@ -4,6 +4,7 @@
   "version": "0.4.0",
   "type": "module",
   "description": "Local-first Excalidraw desktop app for Fedora Linux",
+  "license": "MIT",
   "scripts": {
     "assets": "node scripts/copy-assets.mjs",
     "dev": "npm run assets && vite",

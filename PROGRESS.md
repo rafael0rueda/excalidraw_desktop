@@ -368,8 +368,15 @@ Decisions worth keeping:
 - **`128x128@2x.png` is not in `bundle.icon`.** Tauri maps it to
   `/usr/share/icons/hicolor/256x256@2/`, which is not a directory any icon theme
   reads. The 32, 128 and 512 icons cover what is used.
-- **No `License` tag**, because the project has no LICENSE file. `rpm -qip`
-  shows it empty; add one if this is ever published.
+- **MIT**, matching Excalidraw's own licence, so the app and the library it
+  wraps say the same thing. `bundle.license` sets the rpm `License` tag;
+  `Cargo.toml` and `package.json` carry the identifier too, since each is the
+  canonical place for its own ecosystem. `bundle.licenseFile` is set but the rpm
+  bundler ignores it — verified by `rpm -qlp`, which showed no licence file —
+  so the text is delivered through `bundle.linux.rpm.files` instead, to
+  `/usr/share/licenses/excalidraw-desktop/LICENSE` where Fedora expects it. It
+  is an ordinary file rather than a `%license` one, which only matters to
+  `rpm --excludedocs`.
 
 Verified without installing anything, by extracting the package and pointing
 `XDG_DATA_HOME` at a scratch directory:

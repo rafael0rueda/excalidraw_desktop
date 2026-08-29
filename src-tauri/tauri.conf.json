@@ -35,6 +35,9 @@
     "category": "Graphics and Design",
     "publisher": "rafa",
     "homepage": "https://github.com/rafael0rueda/excalidraw_desktop",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "copyright": "Copyright (c) 2026 rafa",
     "shortDescription": "Local-first Excalidraw",
     "longDescription": "A fully offline, themeable Excalidraw drawing application for Linux.",
     "fileAssociations": [
@@ -60,6 +63,7 @@
           "gtk3"
         ],
         "files": {
+          "/usr/share/licenses/excalidraw-desktop/LICENSE": "../LICENSE",
           "/usr/share/mime/packages/excalidraw-desktop.xml": "../packaging/excalidraw-desktop.xml"
         },
         "postInstallScript": "../packaging/rpm-post-install.sh",
