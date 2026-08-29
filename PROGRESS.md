@@ -112,6 +112,26 @@ and silently at startup — a broken file should not greet the user with a dialo
 The pair is editable from the editor panel (phase 6) as well as in the file.
 Re-checked on window focus, so a desktop-wide light/dark flip follows.
 
+### The GTK chrome (added 2026-08-29)
+
+The menu bar and the menus that drop out of it are GTK widgets, not part of the
+page, so they kept the desktop's widget theme — a white strip above a dark
+canvas. `src-tauri/src/chrome.rs` paints them with a `gtk::CssProvider` on the
+default screen at `STYLE_PROVIDER_PRIORITY_APPLICATION` (600), which outranks
+the widget theme's own provider (200). `applyTheme` calls it, so a preview in
+the editor carries the menu bar with it.
+
+- The provider is held in a **thread-local** on the GTK main thread, not in
+  Tauri state: GTK types are `!Send`, and keeping it is what lets an update
+  reload the same provider instead of stacking another one on the screen.
+- Colours are **validated in Rust** before they reach the stylesheet
+  (`css_color`): a theme is a local file the user wrote, but a value out of a
+  file should not be able to write CSS rules.
+- `:backdrop` is spelled out, or the widget theme greys the bar out whenever the
+  window loses focus.
+- The same rules target `menu`, which is also what WebKit puts up for a
+  `<select>` — so the theme editor's dropdowns should follow too.
+
 ### Two things Excalidraw 0.18.1 will not let us theme
 
 Both verified by reading the shipped bundle, not guessed:

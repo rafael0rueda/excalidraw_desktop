@@ -20,6 +20,18 @@ export const writeBinaryFile = (path: string, data: string) =>
 export const copyImageToClipboard = (data: string) =>
   invoke<void>("copy_image_to_clipboard", { data });
 
+/** The six colours the GTK menu bar and its menus are painted in. */
+export interface MenuColors {
+  surface: string;
+  text: string;
+  muted: string;
+  accent: string;
+  accentText: string;
+  border: string;
+}
+
+export const setMenuColors = (colors: MenuColors) => invoke<void>("set_menu_colors", { colors });
+
 export const listRecent = () => invoke<RecentEntry[]>("list_recent");
 export const pushRecent = (path: string) => invoke<RecentEntry[]>("push_recent", { path });
 export const clearRecent = () => invoke<RecentEntry[]>("clear_recent");

@@ -98,7 +98,11 @@
   background-repeat: no-repeat;
 }
 
-/* The popup itself is a native menu; this is as much of it as WebKit exposes. */
+/*
+ * The popup itself is a native GTK menu rather than anything WebKit renders;
+ * these two properties are as much of it as WebKit exposes, and the rest is
+ * painted by the GTK style provider in src-tauri/src/chrome.rs.
+ */
 .theme-editor option {
   background-color: var(--ui-input);
   color: var(--ui-text);

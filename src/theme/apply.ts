@@ -1,9 +1,36 @@
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { setMenuColors } from "../lib/api";
 import type { Theme } from "./types";
 import { cssVariables } from "./variables";
 
 /** Properties set last time, so a theme with fewer of them cleans up after itself. */
 let applied: string[] = [];
+
+/** The colours the GTK chrome was last painted in, so a repaint is skipped. */
+let appliedMenu = "";
+
+/**
+ * The menu bar and its menus are GTK widgets rather than part of the page, so
+ * no stylesheet of ours reaches them; the backend paints them instead. Called
+ * from here so that a preview in the theme editor carries the menu bar with it.
+ */
+function paintMenuBar(theme: Theme): void {
+  const colors = {
+    surface: theme.colors.surface,
+    text: theme.colors.text,
+    muted: theme.colors.textMuted,
+    accent: theme.colors.accent,
+    accentText: theme.colors.accentText,
+    border: theme.colors.surfaceAlt,
+  };
+  // Applying a theme is per-keystroke while a colour is being typed; reloading
+  // a GTK style provider that often is not worth it.
+  const key = Object.values(colors).join(",");
+  if (key === appliedMenu) return;
+  appliedMenu = key;
+  // Cosmetic, and off the main path: a failure here must not stop the repaint.
+  setMenuColors(colors).catch(() => {});
+}
 
 /**
  * Excalidraw's factory defaults. A current colour still sitting on one of these
@@ -41,6 +68,7 @@ export function applyTheme(
 
   // The gutter around the canvas, briefly visible while Excalidraw mounts.
   document.body.style.backgroundColor = theme.colors.canvas;
+  paintMenuBar(theme);
 
   if (!api) return;
 

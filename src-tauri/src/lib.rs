@@ -1,3 +1,4 @@
+mod chrome;
 mod clipboard;
 mod files;
 mod recent;
@@ -55,6 +56,7 @@ pub fn run() {
             files::read_text_file,
             files::write_text_file,
             files::write_binary_file,
+            chrome::set_menu_colors,
             clipboard::copy_image_to_clipboard,
             recent::list_recent,
             recent::push_recent,

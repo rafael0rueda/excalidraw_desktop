@@ -76,6 +76,11 @@ does not update on GNOME/Wayland (see *Known limitations*).
 
 ## Theming
 
+A theme covers the whole window: the canvas and Excalidraw's panels, the tab
+bar, and the menu bar. That last one is a GTK widget rather than part of the
+page, so it is painted separately by the backend (`src-tauri/src/chrome.rs`)
+through a GTK style provider.
+
 **View → Theme** switches between the built-in themes: Light, Dark, Nord,
 Dracula, Gruvbox Dark, Solarized Light/Dark, Catppuccin Mocha, **Kanagawa Wave**
 and **Kanagawa Lotus**. *Follow system* tracks GNOME's light/dark preference and
@@ -180,6 +185,7 @@ src-tauri/src/          Rust backend
   settings.rs           Preferences, user themes, system colour scheme
   store.rs              Config-directory location and the id-to-filename rule
   clipboard.rs          GTK-native clipboard image copy
+  chrome.rs             Paints the GTK menu bar and menus in the theme's colours
 scripts/copy-assets.mjs Copies Excalidraw fonts into public/ for offline use
 scripts/check.mjs       Assertions over the pure modules (`npm run check`)
 ```
