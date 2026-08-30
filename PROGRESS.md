@@ -318,11 +318,12 @@ whatever the app turns out to want in use.
    pop-ups follow the theme. They are WebKit `menu` widgets and the same CSS
    provider targets them, but only the menu bar has actually been seen.
 
-Note for whoever reads the theme list and is surprised: this machine has a user
-theme at `~/.config/excalidraw-desktop/themes/dracula.json` that reuses the
-preset id `dracula`, so it replaces the shipped Dracula in place and shows as
-"Dracula\_alter" with a red surface. That is a leftover test of the override
-path, not a broken preset — delete the file to get the preset back.
+Already verified by hand, so don't re-do it: **the theme editor saves a working
+user theme.** Dracula was edited in the panel (`Ctrl+,`) and saved; that wrote
+`~/.config/excalidraw-desktop/themes/dracula.json`, and because a saved theme
+keeps the preset's `id`, it replaced the shipped Dracula in place — the View →
+Theme menu listed the edited name instead of a second entry, which is the
+intended behaviour. The test file has since been removed and the preset is back.
 
 ## Packaging (phase 8, built)
 
