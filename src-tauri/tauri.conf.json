@@ -30,7 +30,8 @@
   "bundle": {
     "active": true,
     "targets": [
-      "rpm"
+      "rpm",
+      "deb"
     ],
     "category": "Graphics and Design",
     "publisher": "rafa",
@@ -58,16 +59,21 @@
     ],
     "linux": {
       "rpm": {
-        "depends": [
-          "webkit2gtk4.1",
-          "gtk3"
-        ],
         "files": {
           "/usr/share/licenses/excalidraw-desktop/LICENSE": "../LICENSE",
           "/usr/share/mime/packages/excalidraw-desktop.xml": "../packaging/excalidraw-desktop.xml"
         },
-        "postInstallScript": "../packaging/rpm-post-install.sh",
-        "postRemoveScript": "../packaging/rpm-post-remove.sh",
+        "postInstallScript": "../packaging/post-install.sh",
+        "postRemoveScript": "../packaging/post-remove.sh",
+        "desktopTemplate": "../packaging/excalidraw-desktop.desktop.hbs"
+      },
+      "deb": {
+        "files": {
+          "/usr/share/doc/excalidraw-desktop/copyright": "../LICENSE",
+          "/usr/share/mime/packages/excalidraw-desktop.xml": "../packaging/excalidraw-desktop.xml"
+        },
+        "postInstallScript": "../packaging/post-install.sh",
+        "postRemoveScript": "../packaging/post-remove.sh",
         "desktopTemplate": "../packaging/excalidraw-desktop.desktop.hbs"
       }
     }

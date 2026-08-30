@@ -327,9 +327,15 @@ intended behaviour. The test file has since been removed and the preset is back.
 
 ## Packaging (phase 8, built)
 
-`npm run bundle` produces `src-tauri/target/release/bundle/rpm/Excalidraw
-Desktop-<version>-1.x86_64.rpm` — package name `excalidraw-desktop`, ~17 MB.
-Everything the package installs beyond the binary lives in `packaging/`.
+`npm run bundle` produces **both** an `.rpm` and a `.deb` under
+`src-tauri/target/release/bundle/` — package name `excalidraw-desktop`, ~17 MB
+each. Everything they install beyond the binary lives in `packaging/`, and the
+two formats share the desktop template and the maintainer scripts, because
+nothing in them is format-specific.
+
+Neither bundler shells out to `rpmbuild` or `dpkg-deb` — both are Rust, and
+neither name appears in the Tauri CLI binary — so this Fedora machine builds the
+`.deb` as readily as the `.rpm`. Only the `.rpm` has ever been installed.
 
 What a working file association actually needs, in order:
 
@@ -342,19 +348,42 @@ What a working file association actually needs, in order:
    Tauri gets wrong: its built-in template writes `Exec=excalidraw-desktop` with
    no field code, so the file manager launches the app and the drawing is never
    passed. `packaging/excalidraw-desktop.desktop.hbs` (wired up as
-   `bundle.linux.rpm.desktopTemplate`) is a copy of Tauri's output plus
+   `desktopTemplate` under both `bundle.linux.rpm` and `bundle.linux.deb`) is a
+   copy of Tauri's output plus
    `Exec={{exec}} %F`, `Keywords`, and `Version=1.0`. The template variables the
    bundler actually provides were established by probing: `name`, `comment`,
    `categories`, `exec`, `icon` and `mime_type` render; `exec_arg`,
    `file_associations` and `identifier` come out empty.
-3. **The caches must be rebuilt.** `%post` and `%postun` run
+3. **The caches must be rebuilt.** `packaging/post-install.sh` and
+   `post-remove.sh` — the same two files for both formats — run
    `update-mime-database`, `update-desktop-database` and `gtk-update-icon-cache`.
-   Fedora runs all three from its own rpm file triggers, so on Fedora these are
-   belt and braces; they are what makes the package work on other RPM
-   distributions.
+   Fedora runs all three from rpm file triggers and Debian from dpkg triggers,
+   so on those they are belt and braces; they are what makes the packages work
+   on distributions that ship neither.
 
 Decisions worth keeping:
 
+- **Dependencies are declared as sonames, not package names.** The rpm asks for
+  `libwebkit2gtk-4.1.so.0()(64bit)` and `libgtk-3.so.0()(64bit)` and nothing
+  else: `bundle.linux.rpm.depends` was *removed*, because naming Fedora's
+  `webkit2gtk4.1` and `gtk3` would have made the package refuse to install on
+  openSUSE or Mageia, where those packages are called something different. The
+  soname requires are generated automatically and every RPM distribution
+  resolves them — `dnf repoquery --whatprovides` maps both straight back to
+  `webkit2gtk4.1` and `gtk3` here, so Fedora loses nothing.
+- **`bundle.linux.deb.depends` was removed for a different reason.** Tauri
+  appends its own `libwebkit2gtk-4.1-0, libgtk-3-0` to whatever is listed, so
+  spelling them out produced a `Depends:` line with each name twice. Letting
+  Tauri supply them alone gives a clean one.
+- **The deb puts the licence at `/usr/share/doc/excalidraw-desktop/copyright`**,
+  not `/usr/share/licenses/`, which is where Debian policy wants it. Same file,
+  different `files` mapping per format.
+- **No AppImage.** `npx tauri build --bundles appimage` gets as far as
+  `linuxdeploy`'s GTK plugin and fails there: the plugin wants `librsvg-2.0.pc`
+  (`librsvg2-devel`, not installed here), and on Fedora 44 linuxdeploy's own
+  bundled `strip` is too old for the `.relr.dyn` sections in current system
+  libraries, so it also needs `NO_STRIP=1`. Both are fixable; nothing has been
+  verified, so the README does not offer an AppImage.
 - **`sub-class-of application/json` stays.** It is accurate, and the worry that
   it would let a JSON-handling app outrank us proved wrong: with our entry
   installed, `gio mime application/vnd.excalidraw+json` reports us as both
