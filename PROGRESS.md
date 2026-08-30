@@ -1,6 +1,6 @@
 # Project state & how to resume
 
-Last updated: 2026-08-29
+Last updated: 2026-08-30
 
 ## Decisions already made (do not re-litigate)
 
@@ -23,7 +23,7 @@ Last updated: 2026-08-29
 | 5 | Theme engine + presets | **Done** |
 | 6 | Theme editor UI | **Done** |
 | 7 | Tabs / multiple drawings | **Built, not yet checked by eye** |
-| 8 | RPM + .desktop + MIME association | **Done** (installed package not yet tried on the system) |
+| 8 | RPM + .desktop + MIME association | **Done** (installed and launched on this machine) |
 
 ## Engine findings (verified by experiment, keep these)
 
@@ -295,13 +295,18 @@ carries the theme's canvas colour — so startup, restore and autosave all ran.
 
 ## Next steps
 
-All eight phases are built. What is left is verification by a human at the
-machine, and then whatever the app turns out to want in use.
+All eight phases are built. The RPM is **installed on this machine** (0.4.0):
+the app appears in the GNOME app grid with its icon, launches from there, and
+the GTK menu bar and its drop-down menus come up in the theme's colours — so
+the chrome work of phase 7 is confirmed on a real desktop, not just under
+`tauri dev`. What is left is verification by a human at the machine, and then
+whatever the app turns out to want in use.
 
-1. Install the RPM (`sudo dnf install "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.4.0-1.x86_64.rpm"`)
-   and double-click a `.excalidraw` file in Files: it should open in the app,
-   with the app's icon on it. Then select two and open them together, and
+1. Double-click a `.excalidraw` file in Files: it should open in the app, with
+   the app's icon on it. Then select two and open them together, and
    double-click a third while the app is running — one window, three tabs.
+   (Launching from the app grid works; the *file association* is the untested
+   half.)
 2. Look at the tab bar in a running window: open two files, switch, check each
    tab keeps its own viewport and dirty dot, close a dirty tab, close the last
    tab (should leave an empty one, not quit), then `kill -9` with two dirty tabs
@@ -309,8 +314,15 @@ machine, and then whatever the app turns out to want in use.
 3. Verify by hand what is still unproven: open, save, export, clipboard, and the
    clean-quit path (quit normally, relaunch, expect *no* recovery prompt).
    Crash recovery itself is already verified, but only for a single drawing.
-4. Check the menu bar and the theme editor's dropdowns follow the theme
-   (phase 7's GTK chrome — see "The GTK chrome").
+4. Still open from the theme chrome: whether the theme editor's `<select>`
+   pop-ups follow the theme. They are WebKit `menu` widgets and the same CSS
+   provider targets them, but only the menu bar has actually been seen.
+
+Note for whoever reads the theme list and is surprised: this machine has a user
+theme at `~/.config/excalidraw-desktop/themes/dracula.json` that reuses the
+preset id `dracula`, so it replaces the shipped Dracula in place and shows as
+"Dracula\_alter" with a red surface. That is a leftover test of the override
+path, not a broken preset — delete the file to get the preset back.
 
 ## Packaging (phase 8, built)
 
