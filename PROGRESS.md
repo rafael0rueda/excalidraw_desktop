@@ -484,6 +484,80 @@ intact, still marked dirty.
 
 `cargo test --lib` covers the snapshot file lifecycle.
 
+## Code review, verified against a running instance (2026-08-31)
+
+Twelve review findings were checked empirically, not just read. GUI input
+injection is impossible on this box (GNOME/Wayland refuses XTEST to Xwayland
+clients), so the frontend ones were driven through a throwaway Tauri-IPC
+harness: the real, unmodified renderer running in a browser against a fake
+`window.__TAURI_INTERNALS__.invoke` over an in-memory filesystem. The harness
+files were deleted afterwards; rebuild them if these need re-testing.
+
+Two harness lessons worth keeping:
+
+- `_unlisten` calls `window.__TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener`
+  *before* invoking `plugin:event|unlisten`. A fake IPC layer that omits that
+  global makes every unlisten throw, and `void pending.then(...)` swallows it —
+  which looks exactly like a listener leak that is not there.
+- `confirm()` from `@tauri-apps/plugin-dialog` invokes `plugin:dialog|message`
+  and compares the result to `okLabel`. The backend returns the *button label*,
+  not a boolean, so a fake that answers `true` silently takes the cancel path.
+
+Confirmed, in severity order:
+
+1. **Save race loses work.** `writeTo` (`src/lib/document.ts`) recomputes
+   `savedVersion` from the live scene *after* awaiting the disk write. With a
+   1.2 s write latency, an element drawn during the write ended up
+   `sceneHasIt:true, diskHasIt:false, tabShowsDirty:false`; quitting asked
+   nothing, marked a clean exit, and the next launch came back without it.
+2. **Export selection drops bound text and frame children.** `sceneFor` in
+   `src/lib/exports.ts` filters on raw `selectedElementIds`, which by Excalidraw's
+   design excludes bound labels. Select-all then export selection: 4230 bytes
+   full vs 1049 selection-only, label absent.
+3. **`saveAsNew` overwrites its source.** `taken.delete(draft.id)` means an
+   unedited name re-derives the *same* id; the "new" theme wrote `light.json`.
+   Renaming first gave the expected `light-copy`.
+4. **Unsaved-changes prompt has no Cancel.** Buttons are
+   `{"OkCancelCustom":["Save","Discard"]}`; Escape resolves to the cancel label
+   and is treated as Discard, closing a dirty tab with zero writes.
+5. **`endSession` marks a clean exit even when the snapshot is suppressed.**
+   Quitting while `load_session` is still pending gave `saveSessionCalls:0,
+   markCleanExitCalls:1` on a session whose `clean_exit` was `false`. Next
+   launch: no recovery prompt, unsaved work gone.
+6. **`writeTo` is the only mutation site that does not also write
+   `tabsRef.current`.** Save-then-quit wrote the file but snapshotted
+   `{path:null, dirty:true}`. Worse, the re-render schedules a *late* snapshot
+   that lands after `mark_clean_exit` and flips `clean_exit` back to `false` —
+   observed directly. Whichever side wins the race against `window.destroy()`,
+   the next launch is wrong: a saved file reopened as an untitled dirty tab, or
+   a spurious recovery prompt.
+7. **Non-canonical dialog paths open one file twice.** `cli_drawings()`
+   canonicalises; the dialog path does not. Opening a file and then a symlink to
+   it went from 1 tab to 2.
+8. **`adopt.current` stays armed.** Changing the *dark* pair while the desktop
+   is light leaves `theme.chosen` identity unchanged, so the effect never
+   consumes the flag. Editing a colour and then letting the desktop flip to dark
+   replaced the unsaved draft with no discard prompt. Control run without the
+   arming step kept the draft — so the flag, not the flip, is the cause.
+9. **`write_atomic` drops permissions and breaks links.** Reproduced with the
+   exact function: a `600` target came back `644`; a symlink was replaced by a
+   regular file leaving the target untouched; a hard link was broken (link count
+   1, the other name kept the old content).
+10. **Invalid theme JSON is unreportable.** `list_user_themes` drops it with
+    `.ok()`, so the renderer's `errors[]` path in `readUserThemes` — which exists
+    precisely to report rejects — can only ever see files that already parsed.
+11. **`"csp": null`** in `tauri.conf.json` alongside unrestricted
+    `read_text_file`/`write_text_file`.
+
+Downgraded — do not fix what is not broken:
+
+- The `onCloseRequested` effect depending on the unstable `actions` object was
+  reported as leaving a gap where a close is not intercepted, plus a listener
+  leak. **Neither happens.** Measured sequence `LLULLUULULLUU...` with
+  `minAfterStart:1`: the new listener always registers before the old one
+  unlistens, and listens/unlistens balanced 8/8. Only the per-render IPC churn
+  is real, and that is a performance nit.
+
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that
