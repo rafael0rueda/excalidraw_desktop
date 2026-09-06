@@ -10,6 +10,7 @@ import {
   systemColorScheme,
   themesDirPath,
   type Settings,
+  type ThemeFile,
 } from "../lib/api";
 import { applyTheme } from "./apply";
 import { FALLBACK_THEME_ID, PRESET_THEMES } from "./presets";
@@ -60,11 +61,18 @@ function merge(user: Theme[]): Theme[] {
 }
 
 async function readUserThemes(): Promise<{ themes: Theme[]; errors: string[] }> {
-  const raw = await listUserThemes().catch(() => [] as unknown[]);
+  const raw = await listUserThemes().catch(() => [] as ThemeFile[]);
   const themes: Theme[] = [];
   const errors: string[] = [];
-  for (const value of raw) {
-    const parsed = parseTheme(value);
+  for (const file of raw) {
+    // A file that never reached valid JSON has no parsed value to validate —
+    // report the read/parse error itself rather than feeding `null` through
+    // `parseTheme`, which would just say "not a JSON object" with no filename.
+    if (file.error !== null) {
+      errors.push(file.error);
+      continue;
+    }
+    const parsed = parseTheme(file.value);
     if ("theme" in parsed) themes.push(parsed.theme);
     else errors.push(parsed.error);
   }

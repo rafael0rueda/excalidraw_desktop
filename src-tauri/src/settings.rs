@@ -54,11 +54,23 @@ pub fn themes_dir_path() -> String {
     themes_dir().to_string_lossy().into_owned()
 }
 
-/// Every `*.json` under the themes directory, returned raw — the renderer owns
-/// the schema, so it does the validating and reports what it rejected.
-#[tauri::command]
-pub fn list_user_themes() -> Vec<serde_json::Value> {
-    let Ok(entries) = std::fs::read_dir(themes_dir()) else {
+/// One theme file: either the JSON it held, or why it could not even be read
+/// or parsed. The renderer owns *schema* validation (a missing key, say) and
+/// reports that itself; this covers the layer beneath it, which used to be
+/// dropped with a silent `.ok()` — a file that was not valid JSON at all had
+/// no way to reach the renderer's own error reporting.
+#[derive(Serialize)]
+pub struct ThemeFile {
+    pub value: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+/// Every `*.json` under `dir`. The renderer validates the schema of whatever
+/// parses; this only reports what stops a file from reaching that point.
+/// Split out from the command so a test can point it at a scratch directory
+/// instead of `config_dir()`'s process-wide `XDG_CONFIG_HOME`.
+fn list_theme_files_at(dir: &std::path::Path) -> Vec<ThemeFile> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut paths: Vec<PathBuf> = entries
@@ -70,9 +82,28 @@ pub fn list_user_themes() -> Vec<serde_json::Value> {
 
     paths
         .iter()
-        .filter_map(|p| std::fs::read_to_string(p).ok())
-        .filter_map(|text| serde_json::from_str(&text).ok())
+        .map(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("<unknown>");
+            let result = std::fs::read_to_string(p)
+                .map_err(|e| e.to_string())
+                .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()));
+            match result {
+                Ok(value) => ThemeFile {
+                    value: Some(value),
+                    error: None,
+                },
+                Err(e) => ThemeFile {
+                    value: None,
+                    error: Some(format!("{name}: {e}")),
+                },
+            }
+        })
         .collect()
+}
+
+#[tauri::command]
+pub fn list_user_themes() -> Vec<ThemeFile> {
+    list_theme_files_at(&themes_dir())
 }
 
 /// The desktop's light/dark preference. GNOME exposes it through gsettings;
@@ -126,12 +157,41 @@ pub fn delete_user_theme(id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::theme_file;
+    use super::{list_theme_files_at, theme_file};
 
     /// The rule itself is covered in `store`; this is the theme layer applying it.
     #[test]
     fn theme_ids_stay_inside_the_themes_directory() {
         assert!(theme_file("solarized-light-2").is_ok());
         assert!(theme_file("../escape").is_err());
+    }
+
+    /// A file that is not valid JSON must still surface as *something* the
+    /// renderer's `errors[]` reporting can show — `.ok()` used to drop it
+    /// with no trace, silently at startup and even on an explicit reload.
+    #[test]
+    fn a_file_that_is_not_valid_json_is_reported_rather_than_dropped() {
+        let dir = std::env::temp_dir().join(format!(
+            "excalidraw-theme-files-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("good.json"), r#"{"id":"good"}"#).unwrap();
+        std::fs::write(dir.join("broken.json"), "{ not json").unwrap();
+
+        let files = list_theme_files_at(&dir);
+
+        let good = files
+            .iter()
+            .find(|f| f.error.is_none())
+            .expect("the valid file still parses");
+        assert_eq!(good.value.as_ref().unwrap()["id"], "good");
+
+        let broken = files
+            .iter()
+            .find(|f| f.value.is_none())
+            .expect("the broken file is reported, not dropped");
+        assert!(broken.error.as_ref().unwrap().starts_with("broken.json: "));
     }
 }

@@ -83,8 +83,17 @@ export interface Settings {
 export const loadSettings = () => invoke<Settings>("load_settings");
 export const saveSettings = (settings: Settings) => invoke<void>("save_settings", { settings });
 export const themesDirPath = () => invoke<string>("themes_dir_path");
-/** Raw JSON from ~/.config/excalidraw-desktop/themes; the caller validates. */
-export const listUserThemes = () => invoke<unknown[]>("list_user_themes");
+
+/**
+ * One file from ~/.config/excalidraw-desktop/themes: the raw JSON it held, or
+ * why it could not even be read or parsed as JSON. The caller validates the
+ * schema of `value` itself.
+ */
+export interface ThemeFile {
+  value: unknown | null;
+  error: string | null;
+}
+export const listUserThemes = () => invoke<ThemeFile[]>("list_user_themes");
 export const systemColorScheme = () => invoke<"light" | "dark">("system_color_scheme");
 /**
  * Writes `<id>.json` into the themes directory; resolves to the file written.

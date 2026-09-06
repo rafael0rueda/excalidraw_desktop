@@ -585,11 +585,64 @@ Confirmed, in severity order:
    not fixed: preserving one would mean writing into the existing inode
    in place, which gives up the atomicity (`write` then `rename`) the
    function exists for — not attempted.
-10. **Invalid theme JSON is unreportable.** `list_user_themes` drops it with
-    `.ok()`, so the renderer's `errors[]` path in `readUserThemes` — which exists
-    precisely to report rejects — can only ever see files that already parsed.
-11. **`"csp": null`** in `tauri.conf.json` alongside unrestricted
-    `read_text_file`/`write_text_file`.
+10. **Invalid theme JSON is unreportable. Fixed 2026-09-06.** `list_user_themes`
+    drops it with `.ok()`, so the renderer's `errors[]` path in `readUserThemes`
+    — which exists precisely to report rejects — can only ever see files that
+    already parsed. Fix: `list_user_themes` now returns `ThemeFile { value,
+    error }` per file instead of a bare `Vec<serde_json::Value>`; a read or JSON
+    parse failure becomes `{value: null, error: "<filename>: <reason>"}` instead
+    of vanishing. The listing logic moved to `list_theme_files_at(dir)` so a test
+    can point it at a scratch directory rather than fight `config_dir()`'s
+    process-wide `XDG_CONFIG_HOME` — `snapshot_lifecycle` in `session.rs` already
+    has a comment about exactly that hazard. Covered by a new test in
+    `settings.rs`.
+11. **`"csp": null` in `tauri.conf.json` alongside unrestricted
+    `read_text_file`/`write_text_file`. Fixed 2026-09-06.** Set a real policy:
+    `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self';
+    img-src 'self' data:; font-src 'self' data:; worker-src 'self' blob: data:;
+    connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'`.
+    Every directive traces to something actually found, not guessed:
+    - `connect-src ipc: http://ipc.localhost` is Tauri's own documented
+      requirement for IPC (`tauri-utils-2.9.3/src/config.rs`, the `HeaderConfig`
+      doc comment) — omitting it would have broken every `invoke()` call, i.e.
+      the entire app.
+    - `worker-src 'self' blob: data:` and `script-src 'wasm-unsafe-eval'` come
+      from reading `dist/assets/pica-*.js` (the image-paste resizer): it does
+      `new Worker("data:text/javascript;base64,...")`, `new
+      Worker(URL.createObjectURL(...))`, and `WebAssembly.compile`/`new
+      WebAssembly.Instance` for a SIMD fast path. Without these, pasting a large
+      image would silently fall back to a slower path or throw, depending on
+      pica's own feature detection — never tested by hand, since GUI input
+      injection is impossible on this box (see the phase-6 note).
+    - `img-src`/`font-src ... data:` come from `data:image`/`data:font` hits in
+      the built CSS and JS — the offline-fonts and icon setup already relies on
+      base64-embedded assets.
+    - No `frame-src` allowance for embeddable content (YouTube/Figma links
+      Excalidraw can render as iframes): the README's very first line is "no
+      network access at runtime", and an iframe embed needs exactly that. Blocked
+      deliberately, not by oversight — revisit only if embeds are ever wanted.
+    - The one inline `<script>` in `index.html` (`window.EXCALIDRAW_ASSET_PATH =
+      "./"`, which must run before Excalidraw's own module evaluates) moved to
+      its own file, `src/bootstrap.ts`, loaded via a second `<script
+      type="module">` tag ahead of `main.tsx`'s — an inline script has no `src`
+      for `script-src 'self'` to allow without `'unsafe-inline'`, and Tauri only
+      auto-nonces `style` tags and `script[src^='http']`, not plain inline
+      scripts (checked `tauri-utils-2.9.3/src/html.rs`). Verified after `vite
+      build` folds both into one chunk: the assignment lands at byte offset 1210
+      of a 1.38 MB bundle, i.e. before essentially all of React/Excalidraw's own
+      code, so the ordering guarantee survived the bundling.
+    - **Not verified by eye.** Screenshotting the running release build to
+      confirm the page still renders was attempted and abandoned: `import`
+      (ImageMagick 7.1.2-27, this machine) fails identically on every syntax
+      tried, and `ffmpeg -f x11grab` against `:0` only ever captured an empty
+      root window with a cursor — this desktop's real content is native
+      Wayland, not the X11 screen `DISPLAY=:0` names (a second X socket,
+      `GNOME_SETUP_DISPLAY=unix:/tmp/.X11-unix/X1`, showed up in the process
+      environment; grabbing `:1` hung instead of erroring and was killed).
+      Forcing `GDK_BACKEND=x11` did not change the result. Whoever looks at
+      this next should confirm the app still renders and that pasting a large
+      image still resizes normally, ideally from a real logged-in session
+      rather than this sandbox.
 
 Downgraded — do not fix what is not broken:
 
