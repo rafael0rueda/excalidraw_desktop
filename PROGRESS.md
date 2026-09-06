@@ -505,11 +505,14 @@ Two harness lessons worth keeping:
 
 Confirmed, in severity order:
 
-1. **Save race loses work.** `writeTo` (`src/lib/document.ts`) recomputes
-   `savedVersion` from the live scene *after* awaiting the disk write. With a
-   1.2 s write latency, an element drawn during the write ended up
-   `sceneHasIt:true, diskHasIt:false, tabShowsDirty:false`; quitting asked
+1. **Save race loses work. Fixed 2026-09-06.** `writeTo` (`src/lib/document.ts`)
+   recomputes `savedVersion` from the live scene *after* awaiting the disk
+   write. With a 1.2 s write latency, an element drawn during the write ended
+   up `sceneHasIt:true, diskHasIt:false, tabShowsDirty:false`; quitting asked
    nothing, marked a clean exit, and the next launch came back without it.
+   Fix: the version being written is now captured in the same tick as
+   `capture()`, before the await, and `dirty` is recomputed against the live
+   scene afterward instead of forced to `false`.
 2. **Export selection drops bound text and frame children.** `sceneFor` in
    `src/lib/exports.ts` filters on raw `selectedElementIds`, which by Excalidraw's
    design excludes bound labels. Select-all then export selection: 4230 bytes
@@ -517,20 +520,32 @@ Confirmed, in severity order:
 3. **`saveAsNew` overwrites its source.** `taken.delete(draft.id)` means an
    unedited name re-derives the *same* id; the "new" theme wrote `light.json`.
    Renaming first gave the expected `light-copy`.
-4. **Unsaved-changes prompt has no Cancel.** Buttons are
+4. **Unsaved-changes prompt has no Cancel. Fixed 2026-09-06.** Buttons are
    `{"OkCancelCustom":["Save","Discard"]}`; Escape resolves to the cancel label
-   and is treated as Discard, closing a dirty tab with zero writes.
-5. **`endSession` marks a clean exit even when the snapshot is suppressed.**
-   Quitting while `load_session` is still pending gave `saveSessionCalls:0,
-   markCleanExitCalls:1` on a session whose `clean_exit` was `false`. Next
-   launch: no recovery prompt, unsaved work gone.
+   and is treated as Discard, closing a dirty tab with zero writes. Fix:
+   `confirmTab` now shows a `YesNoCancelCustom`-style dialog via `message()`
+   with an explicit `{yes: "Save", no: "Discard", cancel: "Cancel"}`. Traced
+   through `tauri-plugin-dialog`'s desktop backend
+   (`~/.cargo/registry/src/.../tauri-plugin-dialog-2.7.2/src/desktop.rs`):
+   with a real third button present, GTK's Escape/close routes to
+   `rfd::MessageDialogResult::Cancel`, which that backend maps to
+   `Custom(cancel)` — now genuinely distinct from clicking Discard.
+5. **`endSession` marks a clean exit even when the snapshot is suppressed.
+   Fixed 2026-09-06.** Quitting while `load_session` is still pending gave
+   `saveSessionCalls:0, markCleanExitCalls:1` on a session whose `clean_exit`
+   was `false`. Next launch: no recovery prompt, unsaved work gone. Fix:
+   `endSession` now returns immediately if `restored.current` is still false,
+   leaving the previous run's snapshot and `clean_exit` untouched.
 6. **`writeTo` is the only mutation site that does not also write
-   `tabsRef.current`.** Save-then-quit wrote the file but snapshotted
-   `{path:null, dirty:true}`. Worse, the re-render schedules a *late* snapshot
-   that lands after `mark_clean_exit` and flips `clean_exit` back to `false` —
-   observed directly. Whichever side wins the race against `window.destroy()`,
-   the next launch is wrong: a saved file reopened as an untitled dirty tab, or
-   a spurious recovery prompt.
+   `tabsRef.current`. Fixed 2026-09-06.** Save-then-quit wrote the file but
+   snapshotted `{path:null, dirty:true}`. Worse, the re-render schedules a
+   *late* snapshot that lands after `mark_clean_exit` and flips `clean_exit`
+   back to `false` — observed directly. Whichever side wins the race against
+   `window.destroy()`, the next launch is wrong: a saved file reopened as an
+   untitled dirty tab, or a spurious recovery prompt. Fix: `writeTo` now sets
+   `tabsRef.current = next` synchronously, matching every other mutation site
+   in the file, instead of relying on React to re-render before the ref is
+   read again.
 7. **Non-canonical dialog paths open one file twice.** `cli_drawings()`
    canonicalises; the dialog path does not. Opening a file and then a symlink to
    it went from 1 tab to 2.

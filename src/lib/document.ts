@@ -278,6 +278,13 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       capture();
       const content = store.current.get(id);
       if (!content) return false;
+      // The version `content.scene` actually holds, taken now — in the same
+      // tick as `capture()` above, before the write below awaits. Recomputing
+      // this from the live scene *after* the await would let a stroke drawn
+      // while the write is in flight pass as having reached disk, when only
+      // the version captured here actually did.
+      const activeAndCommitted = id === activeRef.current && committed.current && !!api;
+      const writtenVersion = activeAndCommitted ? sceneVersion(api!.getSceneElements()) : null;
       try {
         await writeTextFile(target, content.scene);
         await pushRecent(target);
@@ -285,19 +292,28 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         await message(String(err), { title: "Could not save", kind: "error" });
         return false;
       }
+      let dirty = tabsRef.current.find((tab) => tab.id === id)?.dirty ?? false;
       if (id === activeRef.current) {
-        // `committed` false means nothing has been drawn since this tab came on
-        // screen, so the version recorded then still describes what we wrote.
-        if (committed.current && api) savedVersion.current = sceneVersion(api.getSceneElements());
+        if (writtenVersion !== null) savedVersion.current = writtenVersion;
         store.current.set(id, { ...content, savedVersion: savedVersion.current });
+        // Recomputed against the scene as it stands *now*, not assumed clean:
+        // an edit that landed during the write above must still show dirty,
+        // since disk only ever received `writtenVersion`.
+        if (activeAndCommitted) dirty = sceneVersion(api!.getSceneElements()) !== savedVersion.current;
       } else {
         // Worked out the next time the tab is shown, which is the only moment
         // its elements exist as anything but text.
         store.current.set(id, { ...content, savedVersion: UNPARSED });
+        dirty = false;
       }
-      setTabs((prev) =>
-        prev.map((tab) => (tab.id === id ? { ...tab, path: target, dirty: false } : tab)),
+      const next = tabsRef.current.map((tab) =>
+        tab.id === id ? { ...tab, path: target, dirty } : tab,
       );
+      // Written through the ref immediately, not left to the next render: a
+      // quit can call `endSession` right after this resolves, and that reads
+      // `tabsRef.current` directly rather than waiting for React to catch up.
+      tabsRef.current = next;
+      setTabs(next);
       return true;
     },
     [api, capture],
@@ -337,13 +353,21 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     async (id: string) => {
       const tab = tabsRef.current.find((t) => t.id === id);
       if (!tab || !tab.dirty) return true;
-      const keep = await confirm(`${tabTitle(tab)} has unsaved changes. Save before continuing?`, {
-        title: "Unsaved changes",
-        kind: "warning",
-        okLabel: "Save",
-        cancelLabel: "Discard",
-      });
-      return keep ? await saveTab(id) : true;
+      // A real third button, not just two: with only Save/Discard, Escape (or
+      // the dialog's own close button) resolves to whichever one is wired as
+      // "cancel" at the toolkit level — which was Discard, so dismissing the
+      // dialog silently threw the tab away. Naming Cancel explicitly gives it
+      // that response instead, distinguishable from actually clicking Discard.
+      const outcome = await message(
+        `${tabTitle(tab)} has unsaved changes. Save before continuing?`,
+        {
+          title: "Unsaved changes",
+          kind: "warning",
+          buttons: { yes: "Save", no: "Discard", cancel: "Cancel" },
+        },
+      );
+      if (outcome === "Cancel") return false;
+      return outcome === "Save" ? await saveTab(id) : true;
     },
     [saveTab],
   );
@@ -464,6 +488,11 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
 
   const endSession = useCallback(async () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
+    // Startup hasn't decided what to restore yet, so there is nothing on
+    // screen worth persisting — leave the previous run's snapshot and
+    // `clean_exit` flag untouched rather than overwriting real crash evidence
+    // with the placeholder initial tab.
+    if (!restored.current) return;
     await snapshot();
     await markCleanExit().catch(() => {});
   }, [snapshot]);
