@@ -105,6 +105,7 @@ pub fn run() {
             set_window_title,
             files::read_text_file,
             files::write_text_file,
+            files::canonicalize_path,
             files::write_binary_file,
             chrome::set_menu_colors,
             clipboard::copy_image_to_clipboard,

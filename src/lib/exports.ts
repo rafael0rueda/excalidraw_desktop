@@ -1,5 +1,6 @@
 import { exportToBlob, exportToSvg } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import { blobToBase64, copyImageToClipboard, writeBinaryFile, writeTextFile } from "./api";
 
 export interface ExportOptions {
@@ -9,11 +10,31 @@ export interface ExportOptions {
   scale?: number;
 }
 
+/**
+ * Expands a raw `selectedElementIds` filter with what Excalidraw's own
+ * selection deliberately leaves out of it: a bound text label (selected via
+ * its container, `containerId`, never by its own id) and the children of a
+ * selected frame (`frameId`). Without this, exporting "selection" after
+ * select-all silently drops labels and everything inside a selected frame.
+ */
+function expandSelection(all: readonly ExcalidrawElement[], selectedIds: Record<string, boolean>) {
+  const included = new Set(all.filter((el) => selectedIds[el.id]).map((el) => el.id));
+  for (const el of all) {
+    if (el.frameId && included.has(el.frameId)) included.add(el.id);
+  }
+  // A second pass: a label bound to a container that a selected frame just
+  // pulled in above is not itself selected or framed, only bound.
+  for (const el of all) {
+    if ("containerId" in el && el.containerId && included.has(el.containerId)) included.add(el.id);
+  }
+  return included;
+}
+
 function sceneFor(api: ExcalidrawImperativeAPI, opts: ExportOptions) {
   const all = api.getSceneElements();
   const appState = api.getAppState();
   const elements = opts.selectionOnly
-    ? all.filter((el) => appState.selectedElementIds[el.id])
+    ? all.filter((el) => expandSelection(all, appState.selectedElementIds).has(el.id))
     : all;
   return { elements, appState, files: api.getFiles() };
 }

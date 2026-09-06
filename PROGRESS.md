@@ -513,13 +513,22 @@ Confirmed, in severity order:
    Fix: the version being written is now captured in the same tick as
    `capture()`, before the await, and `dirty` is recomputed against the live
    scene afterward instead of forced to `false`.
-2. **Export selection drops bound text and frame children.** `sceneFor` in
-   `src/lib/exports.ts` filters on raw `selectedElementIds`, which by Excalidraw's
-   design excludes bound labels. Select-all then export selection: 4230 bytes
-   full vs 1049 selection-only, label absent.
-3. **`saveAsNew` overwrites its source.** `taken.delete(draft.id)` means an
-   unedited name re-derives the *same* id; the "new" theme wrote `light.json`.
-   Renaming first gave the expected `light-copy`.
+2. **Export selection drops bound text and frame children. Fixed
+   2026-09-06.** `sceneFor` in `src/lib/exports.ts` filters on raw
+   `selectedElementIds`, which by Excalidraw's design excludes bound labels.
+   Select-all then export selection: 4230 bytes full vs 1049 selection-only,
+   label absent. Fix: a new `expandSelection` walks the raw selection twice —
+   once to pull in a selected frame's children by `frameId`, once more to pull
+   in a label bound (`containerId`) to whatever the first pass just included,
+   which also covers a label on a container that only got in because its
+   frame was selected. `getSelectedElements`, Excalidraw's own version of
+   this, is not part of the package's public export surface (checked
+   `dist/types/excalidraw/index.d.ts`), hence the local reimplementation.
+3. **`saveAsNew` overwrites its source. Fixed 2026-09-06.** `taken.delete(draft.id)`
+   means an unedited name re-derives the *same* id; the "new" theme wrote
+   `light.json`. Renaming first gave the expected `light-copy`. Fix: the
+   `.delete` had no legitimate purpose — "save as new" only ever needs a
+   fresh id, so the draft's own current id now stays in `taken` too.
 4. **Unsaved-changes prompt has no Cancel. Fixed 2026-09-06.** Buttons are
    `{"OkCancelCustom":["Save","Discard"]}`; Escape resolves to the cancel label
    and is treated as Discard, closing a dirty tab with zero writes. Fix:
@@ -546,18 +555,36 @@ Confirmed, in severity order:
    `tabsRef.current = next` synchronously, matching every other mutation site
    in the file, instead of relying on React to re-render before the ref is
    read again.
-7. **Non-canonical dialog paths open one file twice.** `cli_drawings()`
-   canonicalises; the dialog path does not. Opening a file and then a symlink to
-   it went from 1 tab to 2.
-8. **`adopt.current` stays armed.** Changing the *dark* pair while the desktop
-   is light leaves `theme.chosen` identity unchanged, so the effect never
-   consumes the flag. Editing a colour and then letting the desktop flip to dark
-   replaced the unsaved draft with no discard prompt. Control run without the
-   arming step kept the draft — so the flag, not the flip, is the cause.
-9. **`write_atomic` drops permissions and breaks links.** Reproduced with the
-   exact function: a `600` target came back `644`; a symlink was replaced by a
-   regular file leaving the target untouched; a hard link was broken (link count
-   1, the other name kept the old content).
+7. **Non-canonical dialog paths open one file twice. Fixed 2026-09-06.**
+   `cli_drawings()` canonicalises; the dialog path does not. Opening a file
+   and then a symlink to it went from 1 tab to 2. Fix: a new
+   `canonicalize_path` Rust command (`files.rs`), the same normalisation
+   `cli_drawings` already did, called from `openDrawing` on whatever the
+   native Open dialog returns before the existing-tab check and before the
+   path is stored. The CLI and single-instance paths already arrive
+   canonical, so they are left alone.
+8. **`adopt.current` stays armed. Fixed 2026-09-06.** Changing the *dark* pair
+   while the desktop is light leaves `theme.chosen` identity unchanged, so the
+   effect never consumes the flag. Editing a colour and then letting the
+   desktop flip to dark replaced the unsaved draft with no discard prompt.
+   Control run without the arming step kept the draft — so the flag, not the
+   flip, is the cause. Fix: the consuming effect in `ThemeEditor.tsx` dropped
+   its `[theme.chosen]` dependency array, so it runs after every render
+   instead of only when that one reference changes, and always disarms on the
+   render right after `apply()` — whether or not `chosen` actually moved.
+9. **`write_atomic` drops permissions and breaks links. Permissions and
+   symlinks fixed 2026-09-06; hard links are an accepted trade-off.**
+   Reproduced with the exact function: a `600` target came back `644`; a
+   symlink was replaced by a regular file leaving the target untouched; a
+   hard link was broken (link count 1, the other name kept the old content).
+   Fix: `write_atomic` now resolves the target through `std::fs::canonicalize`
+   before writing, so a symlink's own directory entry is never the rename
+   target — its content updates, the link itself is untouched — and carries
+   the existing file's permission bits onto the replacement before the
+   rename. Covered by two new tests in `files.rs`. Breaking a hard link is
+   not fixed: preserving one would mean writing into the existing inode
+   in place, which gives up the atomicity (`write` then `rename`) the
+   function exists for — not attempted.
 10. **Invalid theme JSON is unreportable.** `list_user_themes` drops it with
     `.ok()`, so the renderer's `errors[]` path in `readUserThemes` — which exists
     precisely to report rejects — can only ever see files that already parsed.

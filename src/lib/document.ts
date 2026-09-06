@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import {
+  canonicalizePath,
   loadSession,
   markCleanExit,
   pushRecent,
@@ -518,7 +519,11 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
           filters: [FILE_FILTER],
         });
         if (typeof picked !== "string") return;
-        chosen = picked;
+        // The CLI and the single-instance path both canonicalise before this
+        // function ever sees a path; the native Open dialog does not, so a
+        // file and a symlink to it would otherwise open as two tabs instead
+        // of the one `findByPath` below is meant to catch.
+        chosen = await canonicalizePath(picked).catch(() => picked);
       }
 
       // Already open: go to it rather than making a second copy of the same

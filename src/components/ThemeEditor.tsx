@@ -47,13 +47,22 @@ export default function ThemeEditor({ theme, onClose }: ThemeEditorProps) {
   // Changing what the app *uses* reloads the editor onto it, so the panel and
   // the screen never disagree. Saving deliberately does not: you stay on the
   // theme you were editing. The flag distinguishes the two.
+  //
+  // No dependency array: keying this on `[theme.chosen]` left the flag armed
+  // forever when a change did not move `theme.chosen` itself — e.g. editing
+  // the *inactive* half of the light/dark pair while the desktop follows the
+  // other one. A later, unrelated flip of `theme.chosen` (the desktop
+  // actually changing appearance) would then consume the stale flag and
+  // silently replace an unsaved draft. Running after every render instead
+  // means the one render that follows `apply()` always disarms it, whether or
+  // not it actually changed anything.
   const adopt = useRef(false);
   useEffect(() => {
     if (!adopt.current) return;
     adopt.current = false;
     setSource(theme.chosen);
     setDraft(theme.chosen);
-  }, [theme.chosen]);
+  });
 
   const confirmDiscard = useCallback(async () => {
     if (!modified) return true;
@@ -128,8 +137,10 @@ export default function ThemeEditor({ theme, onClose }: ThemeEditorProps) {
   );
 
   const saveAsNew = useCallback(() => {
+    // The whole point is a fresh id: the draft's own current id must stay in
+    // `taken`, or an unedited name re-derives it and "new" overwrites the
+    // theme it was copied from.
     const taken = new Set(theme.themes.map((t) => t.id));
-    taken.delete(draft.id);
     void commit({ ...draft, id: uniqueId(slugify(draft.name), taken) });
   }, [commit, draft, theme.themes]);
 

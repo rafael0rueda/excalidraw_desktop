@@ -10,6 +10,9 @@ export interface RecentEntry {
 
 export const readTextFile = (path: string) => invoke<string>("read_text_file", { path });
 
+/** Resolves symlinks and `..`/`.`, so the same file reached two ways compares equal. */
+export const canonicalizePath = (path: string) => invoke<string>("canonicalize_path", { path });
+
 export const writeTextFile = (path: string, contents: string) =>
   invoke<void>("write_text_file", { path, contents });
 
