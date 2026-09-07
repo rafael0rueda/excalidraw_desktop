@@ -6,8 +6,45 @@ import { cssVariables } from "./variables";
 /** Properties set last time, so a theme with fewer of them cleans up after itself. */
 let applied: string[] = [];
 
+/** The vars the running theme resolves to, for repainting a root the moment it appears. */
+let currentVars: Record<string, string> = {};
+
 /** The colours the GTK chrome was last painted in, so a repaint is skipped. */
 let appliedMenu = "";
+
+function paintRoot(root: HTMLElement, vars: Record<string, string>): void {
+  for (const key of applied) {
+    if (!(key in vars)) root.style.removeProperty(key);
+  }
+  for (const [key, value] of Object.entries(vars)) {
+    root.style.setProperty(key, value, "important");
+  }
+}
+
+/**
+ * A Help, export or command-palette dialog is not nested inside the main
+ * `.excalidraw` element: `Modal.tsx` portals it straight onto `<body>` as a
+ * sibling carrying the `.excalidraw` class itself (see `useCreatePortalContainer`
+ * in Excalidraw's source). Custom properties don't reach a sibling, and that div
+ * matching `.excalidraw` on its own means Excalidraw's stylesheet reasserts its
+ * own (light) defaults directly on it too — inheriting from a shared ancestor
+ * can't beat a rule that targets the element itself. So each new one needs the
+ * same inline override the main root gets, applied the moment it appears.
+ */
+let observer: MutationObserver | null = null;
+function ensureObserver(): void {
+  if (observer) return;
+  observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (!(node instanceof HTMLElement)) continue;
+        if (node.classList.contains("excalidraw")) paintRoot(node, currentVars);
+        for (const el of node.querySelectorAll<HTMLElement>(".excalidraw")) paintRoot(el, currentVars);
+      }
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
 
 /**
  * The menu bar and its menus are GTK widgets rather than part of the page, so
@@ -52,19 +89,13 @@ export function applyTheme(
   api: ExcalidrawImperativeAPI | null,
   previous: Theme | null,
 ): void {
-  const root = document.querySelector<HTMLElement>(".excalidraw");
-  if (root) {
-    // Inline + !important is the only thing that beats Excalidraw's own
-    // `.excalidraw { ... }` block; a stylesheet of ours loses on specificity.
-    const vars = cssVariables(theme);
-    for (const key of applied) {
-      if (!(key in vars)) root.style.removeProperty(key);
-    }
-    for (const [key, value] of Object.entries(vars)) {
-      root.style.setProperty(key, value, "important");
-    }
-    applied = Object.keys(vars);
-  }
+  // Inline + !important is the only thing that beats Excalidraw's own
+  // `.excalidraw { ... }` block; a stylesheet of ours loses on specificity.
+  const vars = cssVariables(theme);
+  currentVars = vars;
+  ensureObserver();
+  for (const root of document.querySelectorAll<HTMLElement>(".excalidraw")) paintRoot(root, vars);
+  applied = Object.keys(vars);
 
   // The gutter around the canvas, briefly visible while Excalidraw mounts.
   document.body.style.backgroundColor = theme.colors.canvas;

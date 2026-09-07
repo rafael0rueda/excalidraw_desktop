@@ -631,18 +631,42 @@ Confirmed, in severity order:
       build` folds both into one chunk: the assignment lands at byte offset 1210
       of a 1.38 MB bundle, i.e. before essentially all of React/Excalidraw's own
       code, so the ordering guarantee survived the bundling.
-    - **Not verified by eye.** Screenshotting the running release build to
-      confirm the page still renders was attempted and abandoned: `import`
-      (ImageMagick 7.1.2-27, this machine) fails identically on every syntax
-      tried, and `ffmpeg -f x11grab` against `:0` only ever captured an empty
-      root window with a cursor — this desktop's real content is native
-      Wayland, not the X11 screen `DISPLAY=:0` names (a second X socket,
-      `GNOME_SETUP_DISPLAY=unix:/tmp/.X11-unix/X1`, showed up in the process
-      environment; grabbing `:1` hung instead of erroring and was killed).
-      Forcing `GDK_BACKEND=x11` did not change the result. Whoever looks at
-      this next should confirm the app still renders and that pasting a large
-      image still resizes normally, ideally from a real logged-in session
-      rather than this sandbox.
+    - **Screenshotting the release build was attempted and abandoned** (`import`
+      from ImageMagick 7.1.2-27 fails identically on every syntax tried;
+      `ffmpeg -f x11grab` against `:0` only ever captured an empty root window
+      with a cursor, since this desktop's real content is native Wayland, not
+      the X11 screen `DISPLAY=:0` names). **Superseded 2026-09-07**: the app
+      *was* verified rendering correctly, just not via a screenshot — see
+      finding 12, which drove the real renderer through the Tauri-IPC harness
+      under this CSP and confirmed both the base UI and a themed dialog paint
+      correctly. Still outstanding: actually pasting a large image to confirm
+      pica's WASM/worker path (`worker-src`/`'wasm-unsafe-eval'`) works under
+      this CSP, which needs a real logged-in session with clipboard access,
+      not this harness.
+
+12. **Every Excalidraw dialog (Help, export, command palette, ...) ignores the
+    active theme. Fixed 2026-09-07.** `applyTheme` (`src/theme/apply.ts`) only
+    ever painted `document.querySelector(".excalidraw")` — the *first* match.
+    A dialog is not nested inside that element: Excalidraw's `Modal.tsx`
+    portals it straight onto `<body>` as a sibling carrying the `.excalidraw`
+    class itself (`useCreatePortalContainer` in Excalidraw's source, confirmed
+    by reading `dist/dev/index.js`). Two things follow from that: custom
+    properties set on the main root don't reach a sibling by inheritance, and
+    the dialog's own `.excalidraw` class means Excalidraw's stylesheet
+    reasserts its stock (light) variable values directly on it too — a rule
+    that targets an element beats one merely inherited from an ancestor,
+    however that ancestor's value was set. So even inheriting the variables
+    wouldn't have been enough. Fix: `applyTheme` now paints every `.excalidraw`
+    element present (`querySelectorAll`, not `querySelector`), and a
+    `MutationObserver` on `<body>` paints each new one — e.g. a Modal's portal
+    container — the instant it's added. Verified live: rebuilt the
+    throwaway Tauri-IPC harness from the note at the top of this section,
+    forced the dark `kanagawa-wave` theme, opened Help, and read
+    `getComputedStyle` on the dialog's `.Island` — `background-color: rgb(42,
+    42, 55)` (`#2A2A37`, the theme's `surface`) with light text, where it was
+    previously the stock white/black regardless of theme. This same harness
+    run is also the first actual visual confirmation that the app renders
+    correctly under the CSP from finding 11 — see the note there.
 
 Downgraded — do not fix what is not broken:
 
