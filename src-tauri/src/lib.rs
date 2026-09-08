@@ -108,6 +108,7 @@ pub fn run() {
             files::canonicalize_path,
             files::write_binary_file,
             chrome::set_menu_colors,
+            chrome::set_prefer_dark_theme,
             clipboard::copy_image_to_clipboard,
             recent::list_recent,
             recent::push_recent,

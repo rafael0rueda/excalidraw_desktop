@@ -35,6 +35,14 @@ export interface MenuColors {
 
 export const setMenuColors = (colors: MenuColors) => invoke<void>("set_menu_colors", { colors });
 
+/**
+ * Sets GTK's own dark/light preference to match the active theme, so a native
+ * dialog (the file chooser Library's "Load from file" raises most of all)
+ * renders correctly the first time rather than racing GTK's own portal query.
+ */
+export const setPreferDarkTheme = (dark: boolean) =>
+  invoke<void>("set_prefer_dark_theme", { dark });
+
 export const listRecent = () => invoke<RecentEntry[]>("list_recent");
 export const pushRecent = (path: string) => invoke<RecentEntry[]>("push_recent", { path });
 export const clearRecent = () => invoke<RecentEntry[]>("clear_recent");

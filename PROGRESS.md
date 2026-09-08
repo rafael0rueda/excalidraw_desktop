@@ -694,6 +694,34 @@ Confirmed, in severity order:
     reinstall` the user runs themselves, then a few cold restarts to confirm
     the white canvas no longer appears.
 
+14. **Native file chooser (Library → "Load from file") sometimes opens light
+    instead of dark — the same shape of race as finding 13, but external to
+    our code. Fixed 2026-09-08.** User confirmed this dialog (screenshot:
+    GTK's own "Select File" chooser) is intermittently light on launch, GTK
+    dark theme other times, matching the OS's actual `prefer-dark` setting
+    inconsistently. This dialog is raised by Excalidraw's own Library UI via a
+    plain `<input type="file">` — no code of ours is on that path at all (`grep
+    -rn library src` turns up nothing), so it's WebKitGTK handing off to a real
+    native `GtkFileChooserDialog`. We never set GTK's own
+    `gtk-application-prefer-dark-theme`; GTK decides it by itself, the first
+    time anything touches `GtkSettings`, via an async desktop-portal query over
+    D-Bus. A dialog raised before that query resolves gets GTK's light default,
+    regardless of the desktop's real preference — same shape as finding 13
+    (an early consumer racing an async resolution) but happening entirely
+    inside GTK, invisible to our own effects. Fix: new Rust command
+    `set_prefer_dark_theme` (`src-tauri/src/chrome.rs`) sets
+    `gtk-application-prefer-dark-theme` directly via `GtkSettingsExt`, driven
+    by the theme's own `dark` flag — the value `system_color_scheme` (a
+    synchronous `gsettings get` shell-out, not the portal) already resolves.
+    Called from `paintMenuBar` (`src/theme/apply.ts`) on every theme
+    application, deduped against the last value set. Since this runs every
+    time the active theme is (re)computed — including the startup resolution —
+    GTK's own dark preference is pinned to our already-correct answer well
+    before the user could ever reach the Library menu to raise the dialog.
+    Verified with `cargo check`, `cargo test` (9/9) and `npm run check`
+    (14/14); not yet re-verified by eye — same pending rebuild/install as
+    finding 13 (bundled together as 0.4.2).
+
 Downgraded — do not fix what is not broken:
 
 - The `onCloseRequested` effect depending on the unstable `actions` object was

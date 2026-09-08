@@ -1,5 +1,5 @@
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { setMenuColors } from "../lib/api";
+import { setMenuColors, setPreferDarkTheme } from "../lib/api";
 import type { Theme } from "./types";
 import { cssVariables } from "./variables";
 
@@ -11,6 +11,9 @@ let currentVars: Record<string, string> = {};
 
 /** The colours the GTK chrome was last painted in, so a repaint is skipped. */
 let appliedMenu = "";
+
+/** Whether GTK's own dark preference was last set to match, so it isn't redone. */
+let appliedPreferDark: boolean | null = null;
 
 function paintRoot(root: HTMLElement, vars: Record<string, string>): void {
   for (const key of applied) {
@@ -63,10 +66,16 @@ function paintMenuBar(theme: Theme): void {
   // Applying a theme is per-keystroke while a colour is being typed; reloading
   // a GTK style provider that often is not worth it.
   const key = Object.values(colors).join(",");
-  if (key === appliedMenu) return;
-  appliedMenu = key;
-  // Cosmetic, and off the main path: a failure here must not stop the repaint.
-  setMenuColors(colors).catch(() => {});
+  if (key !== appliedMenu) {
+    appliedMenu = key;
+    // Cosmetic, and off the main path: a failure here must not stop the repaint.
+    setMenuColors(colors).catch(() => {});
+  }
+
+  if (theme.dark !== appliedPreferDark) {
+    appliedPreferDark = theme.dark;
+    setPreferDarkTheme(theme.dark).catch(() => {});
+  }
 }
 
 /**

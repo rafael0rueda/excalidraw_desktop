@@ -108,6 +108,44 @@ pub fn set_menu_colors(app: tauri::AppHandle, colors: MenuColors) -> Result<(), 
     }
 }
 
+/// Sets GTK's own dark-theme preference, so any native widget the app spawns
+/// — a file chooser most of all — picks a dark or light variant deterministically.
+///
+/// GTK normally works this out itself, by asking the desktop portal over D-Bus
+/// the first time a `Settings` object is touched. That query is asynchronous,
+/// and a dialog raised before it resolves — the file chooser under Library's
+/// "Load from file", which goes through a plain `<input type=file>` rather
+/// than our own dialog calls — renders with whatever GTK's default happened to
+/// be at that moment: light, regardless of the desktop's actual preference.
+/// Driving the same setting from here, with the answer `system_color_scheme`
+/// already has, replaces that race with a value that is simply always current.
+#[tauri::command]
+pub fn set_prefer_dark_theme(app: tauri::AppHandle, dark: bool) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let _ = tx.send(install_prefer_dark(dark));
+        })
+        .map_err(|e| e.to_string())?;
+        return rx.recv().map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, dark);
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn install_prefer_dark(dark: bool) -> Result<(), String> {
+    use gtk::prelude::GtkSettingsExt;
+    let settings = gtk::Settings::default().ok_or("no default GtkSettings")?;
+    settings.set_gtk_application_prefer_dark_theme(dark);
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn install(css: String) -> Result<(), String> {
     use gtk::prelude::CssProviderExt;
