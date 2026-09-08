@@ -1,7 +1,7 @@
 {
   "name": "excalidraw-desktop",
   "private": true,
-  "version": "0.4.4",
+  "version": "0.4.5",
   "type": "module",
   "description": "Local-first Excalidraw desktop app for Fedora Linux",
   "license": "MIT",
