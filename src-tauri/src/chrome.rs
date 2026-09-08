@@ -116,17 +116,23 @@ filechooser scrolledwindow, filechooser viewport {{
    a separate widget in the same window, so it needs its own selector rather
    than inheriting from the rule above. `:not(...)` leaves GTK's built-in
    accent colour on the suggested-action button (Open, once a file is picked)
-   alone, since that one already reads fine against a dark header. */
+   alone, since that one already reads fine against a dark header.
+   `background-image: none` matters here specifically: Adwaita paints these
+   buttons with a gradient image, which paints over a plain background-color
+   and left them looking untouched the first time this was tried. */
 headerbar button:not(.suggested-action):not(.destructive-action) {{
   background-color: {surface};
+  background-image: none;
   color: {text};
   border-color: {border};
 }}
 headerbar button:not(.suggested-action):not(.destructive-action):hover {{
   background-color: {accent};
+  background-image: none;
   color: {accent_text};
 }}
 headerbar button:disabled {{
+  background-image: none;
   color: {muted};
 }}
 "

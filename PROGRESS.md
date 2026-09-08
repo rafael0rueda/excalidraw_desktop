@@ -779,6 +779,18 @@ Confirmed, in severity order:
     with `cargo check` and `cargo test` (9/9); not yet re-verified by eye —
     needs the 0.4.5 rebuild installed.
 
+17. **0.4.5 had no visible effect on the header-bar buttons at all — pixel
+    values were exactly unchanged. Fixed 2026-09-08.** Root cause of finding
+    16's fix not working: Adwaita paints `GtkButton` with a
+    `background-image` (a gradient), and CSS background-image paints over
+    background-color rather than being replaced by it — setting only
+    `background-color` in finding 16's rule left the original gradient fully
+    visible on top, so the change was applied but invisible. Fix: added
+    `background-image: none` to all three `headerbar button` rules from
+    finding 16, alongside the existing `background-color`. Verified with
+    `cargo check` and `cargo test` (9/9); not yet re-verified by eye — needs
+    the 0.4.6 rebuild installed.
+
 Downgraded — do not fix what is not broken:
 
 - The `onCloseRequested` effect depending on the unstable `actions` object was
