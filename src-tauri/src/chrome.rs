@@ -110,6 +110,25 @@ filechooser treeview header button {{
 filechooser scrolledwindow, filechooser viewport {{
   background-color: {surface};
 }}
+
+/* The dialog's own Cancel/Open/search buttons sit in a GtkHeaderBar, which is
+   the window's titlebar widget rather than a descendant of `filechooser` —
+   a separate widget in the same window, so it needs its own selector rather
+   than inheriting from the rule above. `:not(...)` leaves GTK's built-in
+   accent colour on the suggested-action button (Open, once a file is picked)
+   alone, since that one already reads fine against a dark header. */
+headerbar button:not(.suggested-action):not(.destructive-action) {{
+  background-color: {surface};
+  color: {text};
+  border-color: {border};
+}}
+headerbar button:not(.suggested-action):not(.destructive-action):hover {{
+  background-color: {accent};
+  color: {accent_text};
+}}
+headerbar button:disabled {{
+  color: {muted};
+}}
 "
     ))
 }

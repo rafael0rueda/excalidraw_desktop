@@ -762,6 +762,23 @@ Confirmed, in severity order:
     case needs the dialog open and a live process/window inspection, not yet
     done.
 
+16. **0.4.4 confirmed in-process (finding 15's caveat resolved): list and
+    sidebar went dark, but the Cancel/Open/search buttons stayed near-white.
+    Fixed 2026-09-08.** User installed 0.4.4 and confirmed "the rest is good"
+    — meaning the CSS provider does reach this dialog, settling finding 15's
+    open question about a possible portal boundary. The one remaining light
+    spot, pixel-sampled the same way (`(235,233,220)`, `(250,249,248)`,
+    `(241,240,238)` — all near-white): the dialog's own header-bar buttons.
+    These live in a `GtkHeaderBar`, which is the window's titlebar widget, a
+    *sibling* of `filechooser` in the widget tree rather than a descendant —
+    so `filechooser`-scoped selectors never had a chance of reaching them,
+    independent of the treeview/sidebar issue findings 14/15 were chasing.
+    Fix: added `headerbar button` selectors to the same provider, excluding
+    `.suggested-action`/`.destructive-action` so GTK's own accent styling on
+    the primary button (Open, once a file is picked) is left alone. Verified
+    with `cargo check` and `cargo test` (9/9); not yet re-verified by eye —
+    needs the 0.4.5 rebuild installed.
+
 Downgraded — do not fix what is not broken:
 
 - The `onCloseRequested` effect depending on the unstable `actions` object was
