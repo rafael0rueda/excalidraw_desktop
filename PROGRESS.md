@@ -719,8 +719,48 @@ Confirmed, in severity order:
     GTK's own dark preference is pinned to our already-correct answer well
     before the user could ever reach the Library menu to raise the dialog.
     Verified with `cargo check`, `cargo test` (9/9) and `npm run check`
-    (14/14); not yet re-verified by eye — same pending rebuild/install as
-    finding 13 (bundled together as 0.4.2).
+    (14/14). Shipped as 0.4.3. **Turned out insufficient — see finding 15**:
+    `gsettings` already reported `gtk-theme: 'Adwaita-dark'` and
+    `color-scheme: 'prefer-dark'` on this machine, so GTK's own binding to
+    those settings was already in effect regardless of this fix; the portal-race
+    theory doesn't hold up as the explanation for what the user was actually
+    seeing. This fix is harmless and still correct as a defensive pin, but it
+    was not the fix that mattered.
+
+15. **The real cause of finding 14's symptom: GTK3's "dark" flag does not
+    reach a `GtkTreeView`/`GtkPlacesSidebar`'s content, only its chrome. Fixed
+    2026-09-08.** After 0.4.3, the user reported the file chooser "looks
+    better, but still has white parts" and pinned it down: the file *list* and
+    the *sidebar* specifically. Pixel-sampling the screenshot with PIL
+    confirmed it precisely — the dialog's own titlebar was already the correct
+    dark colour (`rgb(42,42,55)`), but the list background, row background and
+    sidebar were flat `rgb(255,255,255)`. Checking the system explained why:
+    `gtk-theme` resolves to `Adwaita-dark`, but `/usr/share/themes/Adwaita-dark`
+    on this machine only ships a `gtk-2.0/` directory (from the legacy
+    `adwaita-gtk2-theme` package) — there is no GTK3 theme by that name
+    installed. GTK3 falls back to its own built-in Adwaita and applies
+    `gtk-application-prefer-dark-theme` to it, which is a long-standing,
+    widely-documented GTK3 limitation: that flag darkens headerbars, buttons
+    and menus, but was never extended to `.view`-class content — treeview,
+    iconview and `GtkPlacesSidebar` all keep Adwaita's light background no
+    matter what. This is orthogonal to finding 14's portal-race theory, which
+    is why 0.4.3 alone didn't fix it. Fix: extended the same screen-wide CSS
+    provider from finding 14/`chrome.rs` (already proven to reach native
+    dialogs in-process, at `STYLE_PROVIDER_PRIORITY_APPLICATION`) with
+    selectors for `filechooser .view`, `treeview.view` (+ `:selected` and
+    header buttons), and `placessidebar`'s `list`/`row`, reusing the same
+    `MenuColors` already sent for the menu bar rather than adding a new IPC
+    round trip. Verified with `cargo check` and `cargo test` (9/9); not yet
+    re-verified by eye against the real dialog — needs the 0.4.4 rebuild
+    installed and the Library file chooser reopened. **Caveat**: this only
+    reaches a dialog created in our own process. `xdg-desktop-portal-gtk` and
+    `xdg-desktop-portal-gnome` are both running on this machine; if WebKitGTK
+    turns out to route this specific `<input type="file">` through the portal
+    rather than an in-process `GtkFileChooserNative`, this CSS provider — being
+    process-local — cannot reach it, and the white content would persist as a
+    platform limitation outside this app's control. Confirming which is the
+    case needs the dialog open and a live process/window inspection, not yet
+    done.
 
 Downgraded — do not fix what is not broken:
 

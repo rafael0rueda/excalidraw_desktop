@@ -80,6 +80,36 @@ menu separator {{
 menu menuitem check, menu menuitem radio {{
   color: {text};
 }}
+
+/* Native dialogs — the file chooser Library's \"Load from file\" raises most
+   of all. GTK3's own dark preference darkens headerbars, buttons and menus,
+   but famously never extended that to a GtkTreeView/GtkIconView/
+   GtkPlacesSidebar's actual content: those keep Adwaita's light background
+   regardless, which is why a chooser can show a dark titlebar over a white
+   file list. Painted the same way as the menu bar above, at the same
+   application-priority provider, since nothing else reaches them either. */
+filechooser, filechooser .view, filechooser .sidebar-row,
+placessidebar, placessidebar .view, placessidebar list, placessidebar row {{
+  background-color: {surface};
+  color: {text};
+}}
+filechooser treeview.view row, filechooser treeview.view {{
+  background-color: {surface};
+  color: {text};
+}}
+filechooser treeview.view:selected, filechooser treeview.view row:selected,
+placessidebar row:selected {{
+  background-color: {accent};
+  color: {accent_text};
+}}
+filechooser treeview header button {{
+  background-color: {surface};
+  color: {muted};
+  border-color: {border};
+}}
+filechooser scrolledwindow, filechooser viewport {{
+  background-color: {surface};
+}}
 "
     ))
 }
