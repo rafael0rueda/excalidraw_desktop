@@ -668,6 +668,32 @@ Confirmed, in severity order:
     run is also the first actual visual confirmation that the app renders
     correctly under the CSP from finding 11 — see the note there.
 
+13. **Canvas is white on some launches, themed correctly on others — a startup
+    race. Fixed 2026-09-08.** Reported by the user against the real installed
+    app (dark GTK toolbar, pure white canvas), non-deterministic across
+    restarts. Root cause: `restoreSession` (`src/lib/document.ts`) returns
+    early — without ever calling `show()` — whenever there is nothing to
+    restore: no session file, an empty one, or (the common case) a session
+    whose only tab is an untitled one, since the "reopen quietly" loop skips
+    any tab with `path: null` and then bails out on `!opened.length`. Skipping
+    `show()` means the default tab never goes through `applyScene`, which is
+    the *only* place that merges the theme into the same `updateScene` call as
+    the scene content — a design called out explicitly in the doc comment on
+    `ThemedDefaults`, because doing it afterward, from a separate effect, loses
+    to Excalidraw's own initial-mount commit landing after ours. With
+    `restoreSession` bailing out, the canvas was left to be coloured only by
+    `useTheme`'s independent `applyTheme` effect (`src/theme/apply.ts`), which
+    is exactly that racy "afterward" case — it sometimes wins against
+    Excalidraw's own mount commit and sometimes loses, depending on IPC/disk
+    timing, which is why it was intermittent rather than constant. Fix: both
+    early-return points in `restoreSession` now call
+    `await show(activeRef.current)` before returning, so the default tab is
+    always pushed through the race-safe path. Verified with `npx tsc --noEmit`
+    and `npm run check` (14/14); not yet re-verified by eye against the real
+    installed app — needs a rebuild (`npm run bundle`) and a `sudo dnf
+    reinstall` the user runs themselves, then a few cold restarts to confirm
+    the white canvas no longer appears.
+
 Downgraded — do not fix what is not broken:
 
 - The `onCloseRequested` effect depending on the unstable `actions` object was

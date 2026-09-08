@@ -566,7 +566,17 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   const restoreSession = useCallback(async () => {
     if (!api) return;
     const session = await loadSession().catch(() => null);
-    if (!session || !session.tabs.length) return;
+    if (!session || !session.tabs.length) {
+      // Nothing to restore: still route the default tab through `show()`
+      // rather than leaving it un-applied. `applyScene` merges the theme into
+      // the same `updateScene` call as the (empty) content, which is the only
+      // way that survives Excalidraw's own initial-mount commit landing after
+      // ours — see the note on `ThemedDefaults` above. Skipping this leaves
+      // the canvas coloured only by the theme effect's standalone call, which
+      // loses that race unpredictably and shows Excalidraw's factory white.
+      await show(activeRef.current);
+      return;
+    }
 
     // Changes the files on disk do not have only survive an unclean exit —
     // after an orderly one the user already chose to save or discard them.
@@ -620,7 +630,15 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       opened.push({ id: tab.id, path: tab.path, dirty: false });
       store.current.set(tab.id, { scene: text, view: null, savedVersion: UNPARSED, rev: 1 });
     }
-    if (!opened.length) return;
+    if (!opened.length) {
+      // Every tab in the session was untitled (nothing had a path to reopen).
+      // Same reasoning as the empty-session case above: still push the default
+      // tab through `show()` so the canvas gets its themed background from the
+      // race-safe path instead of relying solely on the theme effect's own
+      // standalone `updateScene` call.
+      await show(activeRef.current);
+      return;
+    }
     const active = opened.some((t) => t.id === session.active) ? session.active! : opened[0].id;
     replaceTabs(opened, active);
     await show(active);
