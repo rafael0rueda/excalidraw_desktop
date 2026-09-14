@@ -1,6 +1,11 @@
 //! Native dialogs whose outcome the renderer cannot be trusted to finish.
+//!
+//! Both pickers run here rather than in the page because the path they return
+//! is what `scope::Allowed` lets the renderer read or write afterwards.
 
+use crate::scope::Allowed;
 use std::path::{Path, PathBuf};
+use tauri::State;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
 
 /// What is being saved, which fixes the extension the file has to end in.
@@ -54,6 +59,31 @@ fn with_extension(path: PathBuf, extension: &str) -> (PathBuf, bool) {
     (path.with_file_name(name), true)
 }
 
+/// Asks for a drawing to open. Resolves to its canonical path — the same
+/// spelling the command line produces, so a file and a symlink to it find
+/// the one tab — or None if the user cancelled.
+#[tauri::command]
+pub async fn pick_open_path(
+    window: tauri::WebviewWindow,
+    allowed: State<'_, Allowed>,
+) -> Result<Option<String>, String> {
+    let Some(picked) = window
+        .dialog()
+        .file()
+        .set_title("Open drawing")
+        .add_filter(SaveKind::Drawing.label(), &[SaveKind::Drawing.extension()])
+        .set_parent(&window)
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let picked = picked.into_path().map_err(|e| e.to_string())?;
+    let path = allowed
+        .allow(&picked)
+        .ok_or_else(|| format!("{}: cannot be opened", picked.display()))?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
 /// Asks where to save, and returns a path that already carries the extension.
 ///
 /// The dialog's own "replace this file?" check only ever sees the name as
@@ -64,6 +94,7 @@ fn with_extension(path: PathBuf, extension: &str) -> (PathBuf, bool) {
 #[tauri::command]
 pub async fn pick_save_path(
     window: tauri::WebviewWindow,
+    allowed: State<'_, Allowed>,
     kind: SaveKind,
     suggested: String,
 ) -> Result<Option<String>, String> {
@@ -116,6 +147,9 @@ pub async fn pick_save_path(
                 continue;
             }
         }
+        let path = allowed
+            .allow(&path)
+            .ok_or_else(|| format!("{}: cannot be saved to", path.display()))?;
         return Ok(Some(path.to_string_lossy().into_owned()));
     }
 }

@@ -10,8 +10,11 @@ export interface RecentEntry {
 
 export const readTextFile = (path: string) => invoke<string>("read_text_file", { path });
 
-/** Resolves symlinks and `..`/`.`, so the same file reached two ways compares equal. */
-export const canonicalizePath = (path: string) => invoke<string>("canonicalize_path", { path });
+/**
+ * The native Open dialog, run in Rust because the backend only reads files the
+ * user chose. Resolves to the canonical path, or null if the user cancelled.
+ */
+export const pickOpenPath = () => invoke<string | null>("pick_open_path");
 
 export const writeTextFile = (path: string, contents: string) =>
   invoke<void>("write_text_file", { path, contents });

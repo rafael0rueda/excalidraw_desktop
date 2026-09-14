@@ -3,13 +3,15 @@ mod clipboard;
 mod dialogs;
 mod files;
 mod recent;
+mod scope;
 mod session;
 mod settings;
 mod store;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, Url};
+use tauri_plugin_opener::OpenerExt;
 
 /// Drawings named on the command line. A file-manager double click arrives this
 /// way, and the desktop entry's `%F` may name several at once.
@@ -79,6 +81,56 @@ fn startup_drawings() -> Vec<String> {
     cli_drawings(&args, &cwd)
 }
 
+/// Whether a navigation stays on the app's own page: the bundled `tauri://`
+/// origin, or Vite's dev server under `npm start`. A query string is refused
+/// even there — an Excalidraw element link is the app's own URL plus
+/// `?element=`, and following it would reload the page and every tab with it.
+fn is_app_page(url: &Url, dev_url: Option<&Url>) -> bool {
+    let ours = url.scheme() == "tauri" || dev_url.is_some_and(|dev| dev.origin() == url.origin());
+    ours && url.query().is_none()
+}
+
+/// Hands a web or mail link to the desktop's own handler. Anything else — a
+/// `file:` URL, a custom scheme — is dropped.
+fn open_externally(app: &tauri::AppHandle, url: &Url) {
+    if matches!(url.scheme(), "http" | "https" | "mailto") {
+        let _ = app.opener().open_url(url.as_str(), None::<&str>);
+    }
+}
+
+/// Builds the main window from its `tauri.conf.json` entry (`create: false`
+/// there) so that it can refuse to leave the app. Excalidraw follows links in
+/// the webview itself: a link in a drawing someone sent, or one in the Help
+/// dialog, would otherwise replace the app with a web page — unsaved work and
+/// the close guard along with it.
+fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .cloned()
+        .ok_or("tauri.conf.json has no main window")?;
+    let dev_url = app.config().build.dev_url.clone();
+    let navigating = app.handle().clone();
+    let opening = app.handle().clone();
+    tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+        .on_navigation(move |url| {
+            if is_app_page(url, dev_url.as_ref()) {
+                return true;
+            }
+            open_externally(&navigating, url);
+            false
+        })
+        .on_new_window(move |url, _features| {
+            open_externally(&opening, &url);
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .build()?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -87,6 +139,11 @@ pub fn run() {
         // two would prune each other's session snapshots.
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let files = cli_drawings(&argv, Path::new(&cwd));
+            if let Some(allowed) = app.try_state::<scope::Allowed>() {
+                for file in &files {
+                    allowed.allow(Path::new(file));
+                }
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
@@ -96,9 +153,18 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            app.manage(StartupFiles(Mutex::new(startup_drawings())));
+            // Named on the command line by the user, so the renderer may read them.
+            let files = startup_drawings();
+            let allowed = scope::Allowed::default();
+            for file in &files {
+                allowed.allow(Path::new(file));
+            }
+            app.manage(allowed);
+            app.manage(StartupFiles(Mutex::new(files)));
+            create_main_window(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -106,8 +172,8 @@ pub fn run() {
             set_window_title,
             files::read_text_file,
             files::write_text_file,
-            files::canonicalize_path,
             files::write_binary_file,
+            dialogs::pick_open_path,
             dialogs::pick_save_path,
             chrome::set_menu_colors,
             chrome::set_prefer_dark_theme,
@@ -160,5 +226,18 @@ mod tests {
         assert_eq!(found, vec![expected.clone(), expected], "both spellings resolve to one file");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_the_app_page_itself_may_be_navigated_to() {
+        let dev = Url::parse("http://localhost:1420").unwrap();
+        let page = |s: &str| is_app_page(&Url::parse(s).unwrap(), Some(&dev));
+        assert!(page("tauri://localhost/"));
+        assert!(page("http://localhost:1420/"));
+        assert!(!page("tauri://localhost/?element=abc"), "an element link would reload the app");
+        assert!(!page("https://example.com/"));
+        assert!(!page("http://localhost:8080/"));
+        let dev_page = Url::parse("http://localhost:1420/").unwrap();
+        assert!(!is_app_page(&dev_page, None), "no dev server in a release build");
     }
 }

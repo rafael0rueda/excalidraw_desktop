@@ -8,6 +8,7 @@ import { useDocument } from "./lib/document";
 import { buildMenu, type MenuHandlers, type TabsMenu, type ThemeMenu } from "./lib/menu";
 import { useTheme } from "./theme/useTheme";
 import { copyToClipboard, exportPng, exportSvg } from "./lib/exportActions";
+import { openLink } from "./lib/links";
 
 export default function App() {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
@@ -149,6 +150,11 @@ export default function App() {
           // themes are built from dark colours on the light base instead.
           theme="light"
           onChange={actions.onSceneChange}
+          onLinkOpen={(element, event) => {
+            // Followed by us rather than in the webview; see `openLink`.
+            event.preventDefault();
+            if (api && element.link) openLink(api, element.link);
+          }}
           UIOptions={{
             canvasActions: {
               loadScene: false,

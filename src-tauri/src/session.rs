@@ -6,9 +6,11 @@
 //! user's own files behind their back.
 
 use crate::files::write_atomic;
+use crate::scope::Allowed;
 use crate::store::{config_dir, now, safe_id};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use tauri::State;
 
 /// Id given to the one drawing recovered from a session written before tabs
 /// existed. Chosen rather than generated because it has to be a valid file name
@@ -99,6 +101,18 @@ fn meta_path() -> PathBuf {
     session_dir().join("meta.json")
 }
 
+/// Snapshots are whole drawings, so the directory holding them is the user's
+/// alone rather than whatever the umask makes it.
+fn ensure_private_dir(dir: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+        .and_then(|()| std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)))
+        .map_err(|e| format!("{}: {e}", dir.display()))
+}
+
 fn read_meta() -> Option<SessionMeta> {
     let text = std::fs::read_to_string(meta_path()).ok()?;
     serde_json::from_str(&text).ok()
@@ -134,11 +148,20 @@ fn prune(keep: &[TabInput]) {
 }
 
 #[tauri::command]
-pub fn save_session(tabs: Vec<TabInput>, active: Option<String>) -> Result<(), String> {
+pub fn save_session(
+    allowed: State<'_, Allowed>,
+    tabs: Vec<TabInput>,
+    active: Option<String>,
+) -> Result<(), String> {
+    save(&allowed, tabs, active)
+}
+
+fn save(allowed: &Allowed, tabs: Vec<TabInput>, active: Option<String>) -> Result<(), String> {
     // Checked up front: a bad id must not leave half a session behind.
     for tab in &tabs {
         safe_id(&tab.id)?;
     }
+    ensure_private_dir(&session_dir())?;
     for tab in &tabs {
         if let Some(scene) = &tab.scene {
             write_atomic(&scene_path(&tab.id), scene.as_bytes())?;
@@ -150,7 +173,9 @@ pub fn save_session(tabs: Vec<TabInput>, active: Option<String>) -> Result<(), S
             .iter()
             .map(|t| TabMeta {
                 id: t.id.clone(),
-                path: t.path.clone(),
+                // `load` allows every path it reads back, so only a path that
+                // is already allowed may be written here.
+                path: t.path.clone().filter(|p| allowed.check(p).is_ok()),
                 dirty: t.dirty,
             })
             .collect(),
@@ -162,7 +187,11 @@ pub fn save_session(tabs: Vec<TabInput>, active: Option<String>) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn load_session() -> Option<Session> {
+pub fn load_session(allowed: State<'_, Allowed>) -> Option<Session> {
+    load(&allowed)
+}
+
+fn load(allowed: &Allowed) -> Option<Session> {
     let meta = read_meta()?;
 
     let mut tabs: Vec<SessionTab> = meta
@@ -194,6 +223,10 @@ pub fn load_session() -> Option<Session> {
 
     if tabs.is_empty() {
         return None;
+    }
+    // These drawings were open last time, so reopening them may read them.
+    for path in tabs.iter().filter_map(|t| t.path.as_deref()) {
+        allowed.allow(Path::new(path));
     }
     let active = meta
         .active
@@ -248,6 +281,7 @@ pub fn keep_unreadable_snapshot(id: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn tab(id: &str, path: Option<&str>, scene: Option<&str>) -> TabInput {
         TabInput {
@@ -265,8 +299,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("excalidraw-session-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::env::set_var("XDG_CONFIG_HOME", &dir);
+        let allowed = Allowed::default();
 
-        assert!(load_session().is_none(), "nothing saved yet");
+        assert!(load(&allowed).is_none(), "nothing saved yet");
         // Marking a clean exit with no snapshot is a no-op, not an error.
         mark_clean_exit().unwrap();
 
@@ -279,15 +314,18 @@ mod tests {
             br#"{"path":"/tmp/old.excalidraw","dirty":true,"saved_at":1,"clean_exit":false}"#,
         )
         .unwrap();
-        let s = load_session().expect("a pre-tabs session still loads");
+        let s = load(&allowed).expect("a pre-tabs session still loads");
         assert_eq!(s.tabs.len(), 1);
         assert_eq!(s.tabs[0].id, LEGACY_TAB_ID);
         assert_eq!(s.tabs[0].path.as_deref(), Some("/tmp/old.excalidraw"));
         assert_eq!(s.tabs[0].scene, "{\"scene\":0}");
         assert_eq!(s.active.as_deref(), Some(LEGACY_TAB_ID));
+        assert!(allowed.check("/tmp/old.excalidraw").is_ok(), "a reloaded tab may be reopened");
 
         // --- two tabs
-        save_session(
+        allowed.allow(Path::new("/tmp/a.excalidraw")).unwrap();
+        save(
+            &allowed,
             vec![
                 tab("aaa", Some("/tmp/a.excalidraw"), Some("{\"scene\":1}")),
                 tab("bbb", None, Some("{\"scene\":2}")),
@@ -296,8 +334,10 @@ mod tests {
         )
         .unwrap();
         assert!(!legacy_scene_path().exists(), "the migrated snapshot is pruned");
+        let mode = std::fs::metadata(session_dir()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "snapshots are private to the user");
 
-        let s = load_session().expect("snapshot readable");
+        let s = load(&allowed).expect("snapshot readable");
         assert_eq!(s.tabs.len(), 2);
         assert_eq!(s.tabs[0].path.as_deref(), Some("/tmp/a.excalidraw"));
         assert_eq!(s.tabs[1].scene, "{\"scene\":2}");
@@ -306,41 +346,46 @@ mod tests {
         assert_eq!(s.active.as_deref(), Some("bbb"));
 
         // --- an omitted scene keeps the file it already has
-        save_session(
+        save(
+            &allowed,
             vec![tab("aaa", Some("/tmp/a.excalidraw"), None), tab("bbb", None, None)],
             Some("aaa".into()),
         )
         .unwrap();
-        let s = load_session().unwrap();
+        let s = load(&allowed).unwrap();
         assert_eq!(s.tabs[0].scene, "{\"scene\":1}");
         assert_eq!(s.tabs[1].scene, "{\"scene\":2}");
 
         mark_clean_exit().unwrap();
-        let s = load_session().expect("still readable after a clean exit");
+        let s = load(&allowed).expect("still readable after a clean exit");
         assert!(s.clean_exit);
         assert_eq!(s.tabs.len(), 2, "a clean exit must not disturb the scenes");
 
         // --- closing a tab takes its snapshot with it
-        save_session(vec![tab("bbb", None, None)], Some("bbb".into())).unwrap();
+        save(&allowed, vec![tab("bbb", None, None)], Some("bbb".into())).unwrap();
         assert!(!scene_path("aaa").exists());
-        let s = load_session().unwrap();
+        let s = load(&allowed).unwrap();
         assert_eq!(s.tabs.len(), 1);
         assert!(!s.clean_exit, "a fresh snapshot reopens the recovery window");
 
         // --- an id that would escape the directory is refused outright
-        assert!(save_session(vec![tab("../escape", None, Some("x"))], None).is_err());
+        assert!(save(&allowed, vec![tab("../escape", None, Some("x"))], None).is_err());
         assert!(!dir.join("escape.excalidraw").exists());
 
+        // --- a path nothing allowed is not recorded, so a restart cannot allow it
+        save(&allowed, vec![tab("ddd", Some("/etc/passwd"), Some("{}"))], None).unwrap();
+        assert_eq!(load(&Allowed::default()).unwrap().tabs[0].path, None);
+
         // --- an unreadable snapshot is moved aside, where pruning cannot reach it
-        save_session(vec![tab("bbb", None, Some("not a drawing"))], Some("bbb".into())).unwrap();
-        let kept = std::path::PathBuf::from(keep_unreadable_snapshot("bbb".into()).unwrap());
+        save(&allowed, vec![tab("bbb", None, Some("not a drawing"))], Some("bbb".into())).unwrap();
+        let kept = PathBuf::from(keep_unreadable_snapshot("bbb".into()).unwrap());
         assert!(!scene_path("bbb").exists());
-        save_session(vec![tab("ccc", None, Some("{}"))], Some("ccc".into())).unwrap();
+        save(&allowed, vec![tab("ccc", None, Some("{}"))], Some("ccc".into())).unwrap();
         assert_eq!(std::fs::read_to_string(&kept).unwrap(), "not a drawing");
         assert!(keep_unreadable_snapshot("../escape".into()).is_err());
 
         clear_session().unwrap();
-        assert!(load_session().is_none());
+        assert!(load(&allowed).is_none());
         clear_session().expect("clearing twice is not an error");
 
         let _ = std::fs::remove_dir_all(&dir);

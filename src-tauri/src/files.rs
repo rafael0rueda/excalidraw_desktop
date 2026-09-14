@@ -1,34 +1,51 @@
+use crate::scope::Allowed;
 use base64::Engine;
+use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tauri::State;
 
 #[tauri::command]
-pub fn read_text_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))
-}
-
-/// Resolves symlinks and `..`/`.` so the same drawing reached two ways (a
-/// path and a symlink to it, say) compares equal. `cli_drawings` already does
-/// this for the command line; this is the same normalisation for a path the
-/// renderer got from the native Open dialog. Falls back to the input
-/// unchanged if the path cannot be resolved (broken symlink, since removed).
-#[tauri::command]
-pub fn canonicalize_path(path: String) -> String {
-    std::fs::canonicalize(&path)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or(path)
+pub fn read_text_file(allowed: State<'_, Allowed>, path: String) -> Result<String, String> {
+    let path = allowed.check(&path)?;
+    std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 #[tauri::command]
-pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
-    write_atomic(Path::new(&path), contents.as_bytes())
+pub fn write_text_file(allowed: State<'_, Allowed>, path: String, contents: String) -> Result<(), String> {
+    write_atomic(&allowed.check(&path)?, contents.as_bytes())
 }
 
 #[tauri::command]
-pub fn write_binary_file(path: String, data: String) -> Result<(), String> {
+pub fn write_binary_file(allowed: State<'_, Allowed>, path: String, data: String) -> Result<(), String> {
+    let target = allowed.check(&path)?;
+    // Only a PNG export is binary. Without this, an allowed drawing could be
+    // overwritten with image bytes.
+    let png = target
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+    if !png {
+        return Err(format!("{path}: not a PNG file"));
+    }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
         .map_err(|e| format!("bad image payload: {e}"))?;
-    write_atomic(Path::new(&path), &bytes)
+    write_atomic(&target, &bytes)
+}
+
+/// Unique within this process, and across processes by the pid.
+fn temp_suffix() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    format!(
+        "{}-{nanos}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// Writes to a sibling temp file and renames, so an interrupted save can never
@@ -44,18 +61,37 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if !parent.as_os_str().is_empty() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
-    let tmp = target.with_extension(format!(
-        "{}.tmp",
-        target.extension().and_then(|e| e.to_str()).unwrap_or("out")
-    ));
-    std::fs::write(&tmp, bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    // The rename below hands the new inode the temp file's own permissions
-    // (governed by umask), silently loosening a more restrictive mode set on
-    // the file it is replacing — carry the existing mode over instead.
-    if let Ok(meta) = std::fs::metadata(&target) {
-        let _ = std::fs::set_permissions(&tmp, meta.permissions());
+    let name = target
+        .file_name()
+        .ok_or_else(|| "invalid path".to_string())?
+        .to_string_lossy();
+    // A fresh name per write, so two writes to one file cannot share a temp
+    // file, and `create_new` besides: a fixed, guessable name could be planted
+    // in a shared directory as a symlink, which a plain write would follow.
+    let tmp = parent.join(format!(".{name}.{}.tmp", temp_suffix()));
+
+    let written = (|| {
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        // The rename hands the new inode the temp file's own permissions
+        // (governed by umask), silently loosening a more restrictive mode set
+        // on the file it replaces — carry the existing mode over instead.
+        if let Ok(meta) = std::fs::metadata(&target) {
+            file.set_permissions(meta.permissions())?;
+        }
+        file.write_all(bytes)?;
+        // Otherwise the rename can reach the disk before the data does, and a
+        // power cut in between leaves an empty file where the drawing was.
+        file.sync_all()?;
+        std::fs::rename(&tmp, &target)
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("{}: {e}", target.display()));
     }
-    std::fs::rename(&tmp, &target).map_err(|e| format!("{}: {e}", target.display()))
+    if let Ok(dir) = std::fs::File::open(parent) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -95,5 +131,17 @@ mod tests {
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn no_temp_file_is_left_behind() {
+        let dir = scratch_dir("tidy");
+        let path = dir.join("plan.excalidraw");
+        write_atomic(&path, b"one").unwrap();
+        write_atomic(&path, b"two").unwrap();
+
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("plan.excalidraw")]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "two");
     }
 }

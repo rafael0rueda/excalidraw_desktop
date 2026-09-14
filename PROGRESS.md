@@ -875,6 +875,35 @@ seen by eye):
 To check by hand: type a Save As name without extension over an existing file;
 `kill -9` with unsaved work and press Escape on the prompt.
 
+**Phase 2 done 2026-09-14** (`tsc`, `check` 14/14, `cargo test` 13/13,
+`vite build`, `npm audit` 0; not yet seen by eye):
+- S1 `scope.rs`: `read_text_file`/`write_text_file`/`write_binary_file` only
+  accept paths in `Allowed`, compared canonically. Paths get in from
+  `pick_open_path`/`pick_save_path` (dialogs now run in Rust; the
+  `canonicalize_path` command is gone), the command line, a second launch,
+  `load_session` and `list_recent`. `save_session` and `push_recent` drop paths
+  that are not allowed, since those lists allow on the way back in.
+  `write_binary_file` also requires `.png`.
+- S2 the main window is built in `setup` (`create: false` in the config) with
+  `on_navigation` (only `tauri://` or `devUrl`, and no query string — an
+  element link is the app URL plus `?element=`) and `on_new_window` (always
+  Deny). Refused http/https/mailto URLs go to `tauri-plugin-opener`.
+  `onLinkOpen` → `lib/links.ts`: element links scroll to the element (key
+  `element`, host-checked, confirmed in the bundle), anything else goes to
+  `openUrl` (capability `opener:allow-open-url` + `allow-default-urls`).
+- S3 `write_atomic`: a new temp name per write, `create_new`, fsync of file and
+  directory, and the temp file removed on failure.
+- S4 `overrides`: lodash-es 4.18.1; nanoid 3.3.19 under Excalidraw (same major)
+  and 5.1.16 under mermaid-to-excalidraw (major bump — build fine, the
+  text-to-diagram dialog not yet tried by eye).
+- S5 `session/` is created and kept 0700. Capability-gating the app's own
+  commands was not done: one local origin, little to gain.
+- P5 `recent.json` is written through `write_atomic` (recent.rs was rewritten
+  here anyway).
+To check by hand: Open, Open Recent, Save, Save As, both exports; a https link
+on an element opens the browser; an element link scrolls; Help dialog links;
+Mermaid text-to-diagram.
+
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that

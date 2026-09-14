@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { message, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { message } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import {
-  canonicalizePath,
   keepUnreadableSnapshot,
   loadSession,
   markCleanExit,
+  pickOpenPath,
   pickSavePath,
   pushRecent,
   readTextFile,
@@ -19,7 +19,6 @@ import {
   type TabSnapshot,
 } from "./api";
 import {
-  FILE_FILTER,
   currentView,
   emptyScene,
   parseScene,
@@ -567,17 +566,18 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       if (!api) return;
       let chosen = target;
       if (!chosen) {
-        const picked = await openDialog({
-          title: "Open drawing",
-          multiple: false,
-          filters: [FILE_FILTER],
-        });
-        if (typeof picked !== "string") return;
-        // The CLI and the single-instance path both canonicalise before this
-        // function ever sees a path; the native Open dialog does not, so a
-        // file and a symlink to it would otherwise open as two tabs instead
-        // of the one `findByPath` below is meant to catch.
-        chosen = await canonicalizePath(picked).catch(() => picked);
+        // Picked in Rust, which is what lets the backend read the file at all,
+        // and returned canonical like a command-line path, so a file and a
+        // symlink to it find the one tab `findByPath` below is meant to catch.
+        let picked: string | null;
+        try {
+          picked = await pickOpenPath();
+        } catch (err) {
+          await message(String(err), { title: "Could not open file", kind: "error" });
+          return;
+        }
+        if (!picked) return;
+        chosen = picked;
       }
 
       // Already open: go to it rather than making a second copy of the same

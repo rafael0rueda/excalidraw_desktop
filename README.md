@@ -317,6 +317,7 @@ src/                    Renderer — React 19 + Excalidraw. No filesystem access
   lib/document.ts       Tabs, open/save, dirty tracking, autosave (useDocument hook)
   lib/exports.ts        PNG/SVG/clipboard rendering
   lib/exportActions.ts  Dialog-driven export flows
+  lib/links.ts          Follows element links: scroll within the drawing, or the system browser
   lib/menu.ts           Native menu construction
   lib/scene.ts          Excalidraw (de)serialisation helpers
   lib/tabs.ts           The tab model and its pure helpers
@@ -330,7 +331,9 @@ src/                    Renderer — React 19 + Excalidraw. No filesystem access
   components/TabBar.tsx       The open drawings
   components/ThemeEditor.tsx  The theme editor panel
 src-tauri/src/          Rust backend
-  files.rs              Atomic file reads/writes
+  files.rs              Atomic file reads/writes, for allowed paths only
+  scope.rs              Which paths the renderer may use: from dialogs, CLI, session, recent
+  dialogs.rs            Open/Save pickers, run in Rust so their result can be trusted
   recent.rs             Recent-files list in ~/.config/excalidraw-desktop/
   session.rs            Autosave snapshots (one per tab) + crash recovery
   settings.rs           Preferences, user themes, system colour scheme

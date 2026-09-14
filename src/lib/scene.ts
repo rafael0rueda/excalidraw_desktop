@@ -3,9 +3,6 @@ import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/t
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { TabView } from "./tabs";
 
-export const FILE_EXTENSION = "excalidraw";
-export const FILE_FILTER = { name: "Excalidraw drawing", extensions: [FILE_EXTENSION] };
-
 /**
  * Excalidraw's scene version is a cheap running hash of element versions, which
  * is exactly what we need to know whether the document is dirty.

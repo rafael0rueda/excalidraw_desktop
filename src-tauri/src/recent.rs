@@ -1,6 +1,9 @@
+use crate::files::write_atomic;
+use crate::scope::Allowed;
 use crate::store::{config_dir, now};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use tauri::State;
 
 const MAX_RECENT: usize = 10;
 
@@ -23,25 +26,36 @@ fn load() -> Vec<RecentEntry> {
 }
 
 fn store(entries: &[RecentEntry]) {
-    let _ = std::fs::create_dir_all(config_dir());
     if let Ok(json) = serde_json::to_string_pretty(entries) {
-        let _ = std::fs::write(recent_path(), json);
+        // Atomic like every other file here: a crash mid-write would leave a
+        // file that no longer parses, and so an empty list.
+        let _ = write_atomic(&recent_path(), json.as_bytes());
     }
 }
 
 #[tauri::command]
-pub fn list_recent() -> Vec<RecentEntry> {
+pub fn list_recent(allowed: State<'_, Allowed>) -> Vec<RecentEntry> {
     // Drop entries whose files have since been deleted or moved.
     let entries: Vec<_> = load()
         .into_iter()
-        .filter(|e| std::path::Path::new(&e.path).exists())
+        .filter(|e| Path::new(&e.path).exists())
         .collect();
+    // Every entry got onto the list through `push_recent`, which takes only
+    // allowed paths, so choosing one from the menu may open it.
+    for entry in &entries {
+        allowed.allow(Path::new(&entry.path));
+    }
     entries
 }
 
 #[tauri::command]
-pub fn push_recent(path: String) -> Vec<RecentEntry> {
-    let name = std::path::Path::new(&path)
+pub fn push_recent(allowed: State<'_, Allowed>, path: String) -> Vec<RecentEntry> {
+    // The list is what `list_recent` allows, so the renderer must not be able
+    // to put just any path on it.
+    if allowed.check(&path).is_err() {
+        return load();
+    }
+    let name = Path::new(&path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(&path)
