@@ -3,9 +3,14 @@ use crate::scope::Allowed;
 use crate::store::{config_dir, now};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tauri::State;
 
 const MAX_RECENT: usize = 10;
+
+/// Held across each read-change-write of the list. Commands run on a thread
+/// pool, and two pushes interleaving would drop one of the entries.
+static RECENT: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RecentEntry {
@@ -33,7 +38,7 @@ fn store(entries: &[RecentEntry]) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_recent(allowed: State<'_, Allowed>) -> Vec<RecentEntry> {
     // Drop entries whose files have since been deleted or moved.
     let entries: Vec<_> = load()
@@ -48,8 +53,9 @@ pub fn list_recent(allowed: State<'_, Allowed>) -> Vec<RecentEntry> {
     entries
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn push_recent(allowed: State<'_, Allowed>, path: String) -> Vec<RecentEntry> {
+    let _recent = RECENT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     // The list is what `list_recent` allows, so the renderer must not be able
     // to put just any path on it.
     if allowed.check(&path).is_err() {
@@ -76,8 +82,9 @@ pub fn push_recent(allowed: State<'_, Allowed>, path: String) -> Vec<RecentEntry
     entries
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_recent() -> Vec<RecentEntry> {
+    let _recent = RECENT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     store(&[]);
     Vec::new()
 }

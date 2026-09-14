@@ -147,12 +147,33 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
 
   // -------------------------------------------------------------- the scene
 
-  /** Files what is on screen under the active tab, so the tab can be left. */
-  const capture = useCallback(() => {
+  /**
+   * The active tab, scene version (deleted elements included, so it only ever
+   * grows), background and file count at the last capture. Serialising embeds
+   * every image in the drawing, so autosave skips it while this stands still.
+   */
+  const capturedMark = useRef("");
+
+  /**
+   * Files what is on screen under the active tab, so the tab can be left.
+   * `onlyIfChanged` is for autosave alone: some appState edits (the grid, say)
+   * do not move the mark, and saving or switching tabs must never miss one.
+   */
+  const capture = useCallback((opts: { onlyIfChanged?: boolean } = {}) => {
     if (!api || !committed.current) return;
     const id = activeRef.current;
-    const scene = serializeScene(api);
     const prev = store.current.get(id);
+    const all = api.getSceneElementsIncludingDeleted();
+    const mark = [
+      id,
+      sceneVersion(all),
+      all.length,
+      api.getAppState().viewBackgroundColor,
+      Object.keys(api.getFiles()).length,
+    ].join(":");
+    if (opts.onlyIfChanged && prev && mark === capturedMark.current) return;
+    capturedMark.current = mark;
+    const scene = serializeScene(api);
     store.current.set(id, {
       scene,
       view: currentView(api),
@@ -363,6 +384,15 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         return false;
       }
       if (!target) return false;
+      // Two tabs on one file would each save over the other's changes.
+      const other = findByPath(tabsRef.current, target);
+      if (other && other.id !== id) {
+        await message(
+          `${tabTitle(other)} is open in another tab. Close that tab first, or save under a different name.`,
+          { title: "Could not save", kind: "error" },
+        );
+        return false;
+      }
       return writeTo(id, target);
     },
     [writeTo],
@@ -472,30 +502,60 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   /** Revision of each tab as the session file last saw it. */
   const written = useRef(new Map<string, number>());
 
-  const snapshot = useCallback(async () => {
-    if (!api || !restored.current) return;
-    capture();
-    const payload: TabSnapshot[] = tabsRef.current.map((tab) => {
-      const content = store.current.get(tab.id);
-      const snap: TabSnapshot = { id: tab.id, path: tab.path, dirty: tab.dirty };
-      // A drawing nobody has touched since the last snapshot is already on disk;
-      // sending it again would rewrite every open tab on every keystroke.
-      if (content && written.current.get(tab.id) !== content.rev) snap.scene = content.scene;
-      return snap;
-    });
-    try {
-      await saveSession(payload, activeRef.current);
-      for (const snap of payload) {
-        const rev = store.current.get(snap.id)?.rev;
-        if (snap.scene !== undefined && rev !== undefined) written.current.set(snap.id, rev);
-      }
-      for (const id of [...written.current.keys()]) {
-        if (!tabsRef.current.some((tab) => tab.id === id)) written.current.delete(id);
-      }
-    } catch {
-      // Autosave is best effort; a failure here must never interrupt drawing.
-    }
-  }, [api, capture]);
+  /** The snapshot being written; the next one queues behind it rather than racing it to disk. */
+  const inFlight = useRef<Promise<void>>(Promise.resolve());
+  /**
+   * Set once `endSession` starts. A snapshot reaching disk after
+   * `mark_clean_exit` would mark the exit unclean again, so from then on only
+   * the final one is let through.
+   */
+  const ending = useRef(false);
+  /** The tab list and active tab as the session file last saw them. */
+  const writtenMeta = useRef("");
+
+  const snapshot = useCallback(
+    (final = false): Promise<void> => {
+      // Queued: two snapshots in flight could reach disk in either order, and
+      // an older tab list landing last would prune the snapshot of a tab opened
+      // in between — one that `written` already records as sent.
+      const run = inFlight.current.then(async () => {
+        if (!api || !restored.current || (ending.current && !final)) return;
+        try {
+          capture({ onlyIfChanged: !final });
+          // The revision each scene was sent at, taken now: the tab may be
+          // captured again while the write is in flight.
+          const sent = new Map<string, number>();
+          const payload: TabSnapshot[] = tabsRef.current.map((tab) => {
+            const content = store.current.get(tab.id);
+            const snap: TabSnapshot = { id: tab.id, path: tab.path, dirty: tab.dirty };
+            // A drawing nobody has touched since the last snapshot is already on disk;
+            // sending it again would rewrite every open tab on every keystroke.
+            if (content && written.current.get(tab.id) !== content.rev) {
+              snap.scene = content.scene;
+              sent.set(tab.id, content.rev);
+            }
+            return snap;
+          });
+          const active = activeRef.current;
+          const meta = JSON.stringify([payload.map(({ id, path, dirty }) => [id, path, dirty]), active]);
+          // Excalidraw reports pointer movement as a change as well. With nothing
+          // new to record, the session file is not rewritten and synced again.
+          if (!sent.size && meta === writtenMeta.current) return;
+          await saveSession(payload, active);
+          writtenMeta.current = meta;
+          for (const [id, rev] of sent) written.current.set(id, rev);
+          for (const id of [...written.current.keys()]) {
+            if (!tabsRef.current.some((tab) => tab.id === id)) written.current.delete(id);
+          }
+        } catch {
+          // Autosave is best effort; a failure here must never interrupt drawing.
+        }
+      });
+      inFlight.current = run;
+      return run;
+    },
+    [api, capture],
+  );
 
   const scheduleSnapshot = useCallback(() => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -547,7 +607,8 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     // `clean_exit` flag untouched rather than overwriting real crash evidence
     // with the placeholder initial tab.
     if (!restored.current) return;
-    await snapshot();
+    ending.current = true;
+    await snapshot(true);
     await markCleanExit().catch(() => {});
   }, [snapshot]);
 
@@ -762,17 +823,22 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     path: active?.path ?? null,
     dirty: active?.dirty ?? false,
   };
-  const actions: DocumentActions = {
-    newTab,
-    openDrawing,
-    closeTab,
-    selectTab,
-    selectRelative,
-    save,
-    saveAs,
-    onSceneChange,
-    confirmDiscard,
-    endSession,
-  };
+  // One object for as long as its callbacks last, which is from the moment
+  // Excalidraw is ready: App registers the window's close listener against it.
+  const actions = useMemo<DocumentActions>(
+    () => ({
+      newTab,
+      openDrawing,
+      closeTab,
+      selectTab,
+      selectRelative,
+      save,
+      saveAs,
+      onSceneChange,
+      confirmDiscard,
+      endSession,
+    }),
+    [newTab, openDrawing, closeTab, selectTab, selectRelative, save, saveAs, onSceneChange, confirmDiscard, endSession],
+  );
   return { state, actions };
 }

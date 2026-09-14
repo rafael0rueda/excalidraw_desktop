@@ -109,6 +109,8 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
   // Load persisted state once. Guarded by a ref rather than a cleanup flag
   // because StrictMode double-invokes effects in development.
   const loaded = useRef(false);
+  /** The settings as read from disk, which there is no point writing straight back. */
+  const fromDisk = useRef<Settings | null>(null);
   useEffect(() => {
     if (loaded.current) return;
     void (async () => {
@@ -118,7 +120,10 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
         readUserThemes(),
         themesDirPath().catch(() => ""),
       ]);
-      setSettings(stored);
+      fromDisk.current = stored;
+      // A theme picked in the moment before this resolved wins over the file,
+      // and is copied so that the effect below sees a change and saves it.
+      setSettings((prev) => (prev === DEFAULT_SETTINGS ? stored : { ...prev }));
       setSystemDark(scheme === "dark");
       setUserThemes(user.themes);
       setThemesDir(dir);
@@ -128,10 +133,13 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
     })();
   }, []);
 
-  // Persist on change, but not the value we just read back from disk.
+  // Persist on change, but not the value just read back — which also leaves a
+  // settings file that did not parse alone until the user changes something.
+  // Queued, so two quick changes cannot reach disk in the wrong order.
+  const saving = useRef(Promise.resolve());
   useEffect(() => {
-    if (!loaded.current) return;
-    saveSettings(settings).catch(() => {});
+    if (!loaded.current || settings === fromDisk.current) return;
+    saving.current = saving.current.then(() => saveSettings(settings)).catch(() => {});
   }, [settings]);
 
   const previous = useRef<Theme | null>(null);

@@ -197,8 +197,7 @@ open the same way, as extra tabs on top of the session being restored.
 | `Ctrl+O` | Open |
 | `Ctrl+S` | Save |
 | `Ctrl+Shift+S` | Save As |
-| `Ctrl+Shift+P` | Export PNG |
-| `Ctrl+Shift+G` | Export SVG |
+| `Ctrl+Shift+E` | Export PNG |
 | `Ctrl+Shift+C` | Copy image to clipboard |
 | `Ctrl+,` | Customise themes |
 

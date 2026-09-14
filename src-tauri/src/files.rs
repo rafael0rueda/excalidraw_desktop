@@ -5,18 +5,21 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::State;
 
-#[tauri::command]
+// File commands run on Tauri's thread pool rather than inline in the IPC
+// handler, which is the GTK main thread: a large drawing read or written there
+// froze the whole window for as long as it took.
+#[tauri::command(async)]
 pub fn read_text_file(allowed: State<'_, Allowed>, path: String) -> Result<String, String> {
     let path = allowed.check(&path)?;
     std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_text_file(allowed: State<'_, Allowed>, path: String, contents: String) -> Result<(), String> {
     write_atomic(&allowed.check(&path)?, contents.as_bytes())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_binary_file(allowed: State<'_, Allowed>, path: String, data: String) -> Result<(), String> {
     let target = allowed.check(&path)?;
     // Only a PNG export is binary. Without this, an allowed drawing could be

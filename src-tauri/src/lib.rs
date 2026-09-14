@@ -81,11 +81,19 @@ fn startup_drawings() -> Vec<String> {
     cli_drawings(&args, &cwd)
 }
 
-/// Whether a navigation stays on the app's own page: the bundled `tauri://`
-/// origin, or Vite's dev server under `npm start`. A query string is refused
-/// even there — an Excalidraw element link is the app's own URL plus
-/// `?element=`, and following it would reload the page and every tab with it.
-fn is_app_page(url: &Url, dev_url: Option<&Url>) -> bool {
+/// Whether the webview may follow a navigation: to the app's own page — the
+/// bundled `tauri://` origin, or Vite's dev server under `npm start` — or to a
+/// `blob:` URL. A query string is refused even on the app's origin: an
+/// Excalidraw element link is the app's own URL plus `?element=`, and
+/// following it would reload the page and every tab with it.
+///
+/// `blob:` is let through because WebKitGTK routes a download link through
+/// here too, and Excalidraw's "Export library" is one: `<a download>` on a
+/// blob URL. Only the page itself can create one.
+fn allowed_navigation(url: &Url, dev_url: Option<&Url>) -> bool {
+    if url.scheme() == "blob" {
+        return true;
+    }
     let ours = url.scheme() == "tauri" || dev_url.is_some_and(|dev| dev.origin() == url.origin());
     ours && url.query().is_none()
 }
@@ -117,7 +125,7 @@ fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
     let opening = app.handle().clone();
     tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
         .on_navigation(move |url| {
-            if is_app_page(url, dev_url.as_ref()) {
+            if allowed_navigation(url, dev_url.as_ref()) {
                 return true;
             }
             open_externally(&navigating, url);
@@ -231,13 +239,15 @@ mod tests {
     #[test]
     fn only_the_app_page_itself_may_be_navigated_to() {
         let dev = Url::parse("http://localhost:1420").unwrap();
-        let page = |s: &str| is_app_page(&Url::parse(s).unwrap(), Some(&dev));
+        let page = |s: &str| allowed_navigation(&Url::parse(s).unwrap(), Some(&dev));
         assert!(page("tauri://localhost/"));
         assert!(page("http://localhost:1420/"));
+        assert!(page("blob:tauri://localhost/2f6c0e1a"), "a library export is a blob download");
         assert!(!page("tauri://localhost/?element=abc"), "an element link would reload the app");
         assert!(!page("https://example.com/"));
         assert!(!page("http://localhost:8080/"));
+        assert!(!page("file:///home/rafa/.bashrc"));
         let dev_page = Url::parse("http://localhost:1420/").unwrap();
-        assert!(!is_app_page(&dev_page, None), "no dev server in a release build");
+        assert!(!allowed_navigation(&dev_page, None), "no dev server in a release build");
     }
 }

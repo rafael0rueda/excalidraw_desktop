@@ -10,6 +10,7 @@ use crate::scope::Allowed;
 use crate::store::{config_dir, now, safe_id};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use tauri::State;
 
 /// Id given to the one drawing recovered from a session written before tabs
@@ -82,6 +83,15 @@ pub struct TabInput {
     pub scene: Option<String>,
 }
 
+/// Held by everything that touches the session directory. Commands run on a
+/// thread pool, so a snapshot, `mark_clean_exit` and a prune could otherwise
+/// interleave.
+static SESSION: Mutex<()> = Mutex::new(());
+
+fn session_lock() -> MutexGuard<'static, ()> {
+    SESSION.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn session_dir() -> PathBuf {
     config_dir().join("session")
 }
@@ -147,7 +157,7 @@ fn prune(keep: &[TabInput]) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_session(
     allowed: State<'_, Allowed>,
     tabs: Vec<TabInput>,
@@ -157,6 +167,7 @@ pub fn save_session(
 }
 
 fn save(allowed: &Allowed, tabs: Vec<TabInput>, active: Option<String>) -> Result<(), String> {
+    let _session = session_lock();
     // Checked up front: a bad id must not leave half a session behind.
     for tab in &tabs {
         safe_id(&tab.id)?;
@@ -186,12 +197,13 @@ fn save(allowed: &Allowed, tabs: Vec<TabInput>, active: Option<String>) -> Resul
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_session(allowed: State<'_, Allowed>) -> Option<Session> {
     load(&allowed)
 }
 
 fn load(allowed: &Allowed) -> Option<Session> {
+    let _session = session_lock();
     let meta = read_meta()?;
 
     let mut tabs: Vec<SessionTab> = meta
@@ -241,8 +253,9 @@ fn load(allowed: &Allowed) -> Option<Session> {
 
 /// Records that we are shutting down on purpose, so the next launch reopens the
 /// last drawings instead of offering to recover from them.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mark_clean_exit() -> Result<(), String> {
+    let _session = session_lock();
     let Some(mut meta) = read_meta() else {
         return Ok(());
     };
@@ -250,8 +263,9 @@ pub fn mark_clean_exit() -> Result<(), String> {
     write_meta(&meta)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_session() -> Result<(), String> {
+    let _session = session_lock();
     let mut paths = snapshot_files();
     paths.push(meta_path());
     for path in paths {
@@ -267,9 +281,10 @@ pub fn clear_session() -> Result<(), String> {
 /// Moves a snapshot the renderer could not parse out of `prune`'s way, so that
 /// closing its tab does not delete what may be the only copy. It keeps its
 /// extension, for trying it in another tool. Returns where it went.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn keep_unreadable_snapshot(id: String) -> Result<String, String> {
     safe_id(&id)?;
+    let _session = session_lock();
     let from = scene_path(&id);
     let dir = session_dir().join("unreadable");
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;

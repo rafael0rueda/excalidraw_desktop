@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import TabBar from "./components/TabBar";
 import ThemeEditor from "./components/ThemeEditor";
 import { useDocument } from "./lib/document";
-import { buildMenu, type MenuHandlers, type TabsMenu, type ThemeMenu } from "./lib/menu";
+import { buildMenu, updateTabMarks, type MenuHandlers, type TabsMenu, type ThemeMenu } from "./lib/menu";
 import { useTheme } from "./theme/useTheme";
 import { copyToClipboard, exportPng, exportSvg } from "./lib/exportActions";
 import { openLink } from "./lib/links";
@@ -20,6 +20,11 @@ export default function App() {
     currentItemBackgroundColor: theme.active.colors.fill,
   });
 
+  // The menu is not rebuilt on a tab switch, so the active drawing's path is
+  // read when an export runs rather than captured when the menu was built.
+  const activePath = useRef(state.path);
+  activePath.current = state.path;
+
   const handlers: MenuHandlers = {
     newTab: () => void actions.newTab(),
     closeTab: () => void actions.closeTab(),
@@ -27,9 +32,9 @@ export default function App() {
     openRecent: (path) => void actions.openDrawing(path),
     save: () => void actions.save(),
     saveAs: () => void actions.saveAs(),
-    exportPng: () => api && void exportPng(api, state.path),
-    exportPngSelection: () => api && void exportPng(api, state.path, { selectionOnly: true }),
-    exportSvg: () => api && void exportSvg(api, state.path),
+    exportPng: () => api && void exportPng(api, activePath.current),
+    exportPngSelection: () => api && void exportPng(api, activePath.current, { selectionOnly: true }),
+    exportSvg: () => api && void exportSvg(api, activePath.current),
     copyImage: () => api && void copyToClipboard(api),
     quit: () => void closeWindow(),
   };
@@ -66,21 +71,29 @@ export default function App() {
     }
   }, [actions]);
 
-  // Rebuild the native menu whenever the bound state changes, so Save targets
-  // the current path and Open Recent and Tabs stay current.
+  // Rebuild the native menu when an item has to appear, go or be renamed: a
+  // tab opened, closed or saved under a new name, or the themes changing.
+  const tabShape = state.tabs.map((tab) => `${tab.id}:${tab.path ?? ""}`).join("\n");
   useEffect(() => {
     if (!api) return;
     void buildMenu(handlers, themeMenu, tabsMenu);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     api,
-    state.tabs,
-    state.activeId,
+    tabShape,
     theme.selection,
     theme.themes,
     theme.systemPair.light?.id,
     theme.systemPair.dark?.id,
   ]);
+
+  // Unsaved marks and the active tab change far more often, and are updated in place.
+  const tabMarks = `${state.activeId}:${state.tabs.map((tab) => (tab.dirty ? "1" : "0")).join("")}`;
+  useEffect(() => {
+    if (!api) return;
+    void updateTabMarks(tabsMenu);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, tabMarks]);
 
   // Guard the window-manager close button (menu Quit routes here too).
   useEffect(() => {
@@ -93,6 +106,10 @@ export default function App() {
     };
   }, [closeWindow]);
 
+  // Read through a ref, so the listener below is added once rather than on every render.
+  const keys = useRef({ handlers, actions, tabs: state.tabs });
+  keys.current = { handlers, actions, tabs: state.tabs };
+
   // Excalidraw captures many keystrokes on the canvas, so mirror the menu
   // accelerators at the window level to keep them dependable.
   useEffect(() => {
@@ -101,6 +118,7 @@ export default function App() {
       // The editor's own inputs handle their keystrokes; the menu accelerators
       // would otherwise fire while the user is typing a colour.
       if ((e.target as HTMLElement | null)?.closest(".theme-editor")) return;
+      const { handlers, actions, tabs } = keys.current;
       const key = e.key.toLowerCase();
       const shift = e.shiftKey;
       const fire = (fn: () => void) => {
@@ -115,21 +133,21 @@ export default function App() {
       else if (key === "o" && !shift) fire(handlers.open);
       else if (key === "s" && !shift) fire(handlers.save);
       else if (key === "s" && shift) fire(handlers.saveAs);
-      else if (key === "p" && shift) fire(handlers.exportPng);
-      else if (key === "g" && shift) fire(handlers.exportSvg);
+      // Ctrl+Shift+P and Ctrl+Shift+G stay Excalidraw's: command palette, ungroup.
+      else if (key === "e" && shift) fire(handlers.exportPng);
       else if (key === "c" && shift) fire(handlers.copyImage);
       else if (key === "," && !shift) fire(() => setEditingTheme(true));
       else if (e.key === "Tab" || e.key === "PageDown" || e.key === "PageUp") {
         const back = e.key === "PageUp" || (e.key === "Tab" && shift);
         fire(() => void actions.selectRelative(back ? -1 : 1));
       } else if (/^[1-9]$/.test(e.key) && !shift) {
-        const tab = state.tabs[Number(e.key) - 1];
+        const tab = tabs[Number(e.key) - 1];
         if (tab) fire(() => void actions.selectTab(tab.id));
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  });
+  }, []);
 
   return (
     <div style={{ height: "100vh", width: "100vw", display: "flex", flexDirection: "column" }}>

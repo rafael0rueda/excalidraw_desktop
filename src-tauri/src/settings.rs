@@ -33,7 +33,7 @@ pub fn themes_dir() -> PathBuf {
     config_dir().join("themes")
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_settings() -> Settings {
     // A corrupt or half-written file must not stop the app from starting, and
     // `#[serde(default)]` means a file from an older version still loads.
@@ -43,7 +43,7 @@ pub fn load_settings() -> Settings {
         .unwrap_or_default()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_settings(settings: Settings) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     write_atomic(&settings_path(), json.as_bytes())
@@ -101,14 +101,15 @@ fn list_theme_files_at(dir: &std::path::Path) -> Vec<ThemeFile> {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_user_themes() -> Vec<ThemeFile> {
     list_theme_files_at(&themes_dir())
 }
 
 /// The desktop's light/dark preference. GNOME exposes it through gsettings;
-/// anything else falls back to light rather than guessing.
-#[tauri::command]
+/// anything else falls back to light rather than guessing. Off the main thread:
+/// it starts a process, and runs on every window focus.
+#[tauri::command(async)]
 pub fn system_color_scheme() -> String {
     let out = std::process::Command::new("gsettings")
         .args(["get", "org.gnome.desktop.interface", "color-scheme"])
@@ -131,7 +132,7 @@ fn theme_file(id: &str) -> Result<PathBuf, String> {
 /// these files are meant to be read and edited by hand, and the renderer holds
 /// the keys in the order the schema documents them, which round-tripping
 /// through `serde_json::Value` would sort alphabetically.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_user_theme(id: String, contents: String) -> Result<String, String> {
     let path = theme_file(&id)?;
     // Parsed only to check it, never re-emitted.
@@ -145,7 +146,7 @@ pub fn save_user_theme(id: String, contents: String) -> Result<String, String> {
 }
 
 /// Removes a user theme. A missing file is success: the caller wanted it gone.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_user_theme(id: String) -> Result<(), String> {
     let path = theme_file(&id)?;
     match std::fs::remove_file(&path) {

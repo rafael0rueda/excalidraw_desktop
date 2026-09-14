@@ -903,6 +903,51 @@ To check by hand: type a Save As name without extension over an existing file;
 To check by hand: Open, Open Recent, Save, Save As, both exports; a https link
 on an element opens the browser; an element link scrolls; Help dialog links;
 Mermaid text-to-diagram.
+Follow-up found while checking phase 3: wry sends *every* WebKitGTK
+`NavigationAction` through `on_navigation`, downloads included, so the guard
+also blocked Excalidraw's "Export library" (`<a download>` on a `blob:` URL).
+`allowed_navigation` now lets `blob:` through; only the page can create one.
+
+**Phase 3 done 2026-09-14** (`tsc`, `check` 14/14, `cargo test` 13/13,
+`vite build`; not yet seen by eye):
+- Snapshots are queued (`inFlight`), so two never race to disk. `endSession`
+  sets `ending` and only its own final snapshot gets through after that, so
+  none lands after `mark_clean_exit`. Also fixed while there: `written` recorded
+  the tab's revision *after* the await, which could mark an unsent scene as sent.
+- P1 file, session, recent, settings/theme and clipboard commands are
+  `#[tauri::command(async)]` (a sync command runs inline in the IPC handler,
+  i.e. on the GTK main thread; checked in `tauri-macros` `wrapper.rs`). Session
+  and recent commands take a Rust `Mutex`, since the thread pool no longer
+  serialises them.
+- P2 autosave skips serialising when a mark (tab, version including deleted
+  elements, element count, background, file count) has not moved, and skips
+  `save_session` when there is no scene to send and the tab list is unchanged.
+  Pointer movement fires `onChange`, and every write now fsyncs. Save, tab
+  switches and quit still capture in full.
+- B5 Export PNG is `Ctrl+Shift+E`, Export SVG is menu-only; Excalidraw's
+  palette and ungroup keys work again.
+- B7 Save As refuses a path already open in another tab.
+- B8 `buildMenu` runs only when tabs, paths or themes change; dirty/active marks
+  go through `updateTabMarks` (`setText`/`setChecked`). Every item a build
+  creates is closed when the next build replaces it, including the handle
+  `setAsAppMenu` returns. A generation counter drops a build that finishes late.
+  Exports read the active path through a ref, since a tab switch no longer rebuilds.
+- B9 `expandSelection` runs once per export.
+- B11 settings read from disk are not written straight back (a corrupt file is
+  left alone until the user changes a theme). A pick made before the load
+  finishes wins over the file and is saved. Saves are queued.
+- P4 `actions` is memoised, so the close listener registers once; the keydown
+  listener reads through a ref.
+Smoke-tested 2026-09-14 via `npm start` with `XDG_CONFIG_HOME`/`DATA`/`CACHE`
+pointed at `/tmp/excalidraw-smoke`, seeding a clean-exit session whose one tab
+had a path. Within seconds the app had rewritten `meta.json` with the same tab
+id and path, `clean_exit: false`, and a re-serialised snapshot, and `session/`
+was `drwx------`. That proves the page loads through the navigation guard, and
+that `load_session` → allowlist → `read_text_file` → `save_session` works
+end to end (a refused read would have dropped the tab). Not proven: anything
+needing clicks.
+Not in scope (phase 4): P3 raw binary IPC, library persistence, startup flash,
+export options, portal colour scheme, `e.code` shortcuts.
 
 ## Gotchas
 

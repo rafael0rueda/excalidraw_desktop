@@ -33,9 +33,10 @@ function expandSelection(all: readonly ExcalidrawElement[], selectedIds: Record<
 function sceneFor(api: ExcalidrawImperativeAPI, opts: ExportOptions) {
   const all = api.getSceneElements();
   const appState = api.getAppState();
-  const elements = opts.selectionOnly
-    ? all.filter((el) => expandSelection(all, appState.selectedElementIds).has(el.id))
-    : all;
+  // Worked out once, not per element: inside the filter it made a selection
+  // export quadratic in the size of the drawing.
+  const included = opts.selectionOnly ? expandSelection(all, appState.selectedElementIds) : null;
+  const elements = included ? all.filter((el) => included.has(el.id)) : all;
   return { elements, appState, files: api.getFiles() };
 }
 

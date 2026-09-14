@@ -3,7 +3,9 @@ use base64::Engine;
 /// Copies a PNG to the system clipboard through GTK rather than the web
 /// clipboard API: WebKitGTK gates `navigator.clipboard.write()` behind user
 /// activation that an app-initiated copy does not reliably carry.
-#[tauri::command]
+// Off the main thread, so decoding a large base64 payload does not stall the
+// window; the GTK half still hops back onto the main loop below.
+#[tauri::command(async)]
 pub fn copy_image_to_clipboard(app: tauri::AppHandle, data: String) -> Result<(), String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
