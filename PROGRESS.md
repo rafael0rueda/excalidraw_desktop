@@ -856,6 +856,25 @@ correctness/perf (snapshot serialisation, P1, B5, B7–B9, B11, P2, P4, P5) →
 phase 4 features (library persistence + ER library, startup flash, export
 options, portal). Each item: tests, `tsc`/`check`/`cargo test`, own commit.
 
+Decisions (user, 2026-09-14): implement phases 1–3 only; Export PNG moves to
+`Ctrl+Shift+E` (Excalidraw's own image-export key, unused here) and Export SVG
+becomes menu-only; add `tauri-plugin-opener` so links open in the browser.
+
+**Phase 1 done 2026-09-14** (`tsc`, `check` 14/14, `cargo test` 10/10; not yet
+seen by eye):
+- B1 recovery prompt is Restore / Discard / Cancel; anything but Discard restores.
+- B2 an unparseable tab is closed, not emptied. A file-backed one leaves the
+  file alone; a snapshot-only one is moved to `session/unreadable/` first
+  (`keep_unreadable_snapshot`), outside `prune`'s reach.
+- B3 Save As and both exports go through Rust `dialogs::pick_save_path`, which
+  adds the extension and asks before replacing a file the dialog never saw;
+  declining reopens the dialog. Exports now default beside the drawing.
+- B4 `open-files` events are queued until startup has restored the session.
+- B6 `closeWindow` (menu, Ctrl+Q and the window's X all route there) and
+  `closeTab`/`confirmDiscard` refuse to run twice at once.
+To check by hand: type a Save As name without extension over an existing file;
+`kill -9` with unsaved work and press Escape on the prompt.
+
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that

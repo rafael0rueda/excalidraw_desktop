@@ -20,6 +20,17 @@ export const writeTextFile = (path: string, contents: string) =>
 export const writeBinaryFile = (path: string, data: string) =>
   invoke<void>("write_binary_file", { path, data });
 
+export type SaveKind = "drawing" | "png" | "svg";
+
+/**
+ * The native save dialog. Resolves to a path that already ends in the kind's
+ * extension, or null if the user cancelled. When the extension had to be
+ * added, an existing file of that name has been asked about first — the
+ * dialog itself only checked the name as typed.
+ */
+export const pickSavePath = (kind: SaveKind, suggested: string) =>
+  invoke<string | null>("pick_save_path", { kind, suggested });
+
 export const copyImageToClipboard = (data: string) =>
   invoke<void>("copy_image_to_clipboard", { data });
 
@@ -79,6 +90,9 @@ export const saveSession = (tabs: TabSnapshot[], active: string | null) =>
 export const loadSession = () => invoke<Session | null>("load_session");
 export const markCleanExit = () => invoke<void>("mark_clean_exit");
 export const clearSession = () => invoke<void>("clear_session");
+/** Moves an unparseable snapshot out of the way of pruning; resolves to where it went. */
+export const keepUnreadableSnapshot = (id: string) =>
+  invoke<string>("keep_unreadable_snapshot", { id });
 
 /** Mirrors the Rust `Settings` struct, snake_case included. */
 export interface Settings {

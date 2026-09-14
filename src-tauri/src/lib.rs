@@ -1,5 +1,6 @@
 mod chrome;
 mod clipboard;
+mod dialogs;
 mod files;
 mod recent;
 mod session;
@@ -107,6 +108,7 @@ pub fn run() {
             files::write_text_file,
             files::canonicalize_path,
             files::write_binary_file,
+            dialogs::pick_save_path,
             chrome::set_menu_colors,
             chrome::set_prefer_dark_theme,
             clipboard::copy_image_to_clipboard,
@@ -117,6 +119,7 @@ pub fn run() {
             session::load_session,
             session::mark_clean_exit,
             session::clear_session,
+            session::keep_unreadable_snapshot,
             settings::load_settings,
             settings::save_settings,
             settings::themes_dir_path,

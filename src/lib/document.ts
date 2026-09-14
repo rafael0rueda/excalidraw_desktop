@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { confirm, message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { message, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import {
   canonicalizePath,
+  keepUnreadableSnapshot,
   loadSession,
   markCleanExit,
+  pickSavePath,
   pushRecent,
   readTextFile,
   saveSession,
@@ -204,30 +206,6 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     [api],
   );
 
-  /** Brings tab `id` on screen from its stored text. */
-  const show = useCallback(
-    async (id: string) => {
-      if (!api) return;
-      const content = contentOf(id);
-      let scene: ParsedScene;
-      try {
-        scene = await parseScene(content.scene);
-      } catch (err) {
-        // Only reachable if a snapshot on disk is corrupt; an empty canvas is a
-        // better answer than a tab that cannot be opened at all.
-        await message(String(err), { title: "Could not open tab", kind: "error" });
-        scene = await parseScene(emptyScene(themedRef.current));
-      }
-      applyScene(id, content.scene, scene, {
-        view: content.view,
-        // A tab restored from a session has not been parsed yet, so its saved
-        // version is worked out here rather than at startup.
-        savedVersion: content.savedVersion === UNPARSED ? undefined : content.savedVersion,
-      });
-    },
-    [api, applyScene, contentOf],
-  );
-
   /** Replaces the whole tab set, dropping the content of tabs that have gone. */
   const replaceTabs = useCallback((next: TabMeta[], active: string) => {
     for (const id of [...store.current.keys()]) {
@@ -238,6 +216,61 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     setTabs(next);
     setActiveId(active);
   }, []);
+
+  /** A new untitled tab with its empty content in place; not yet in the tab set. */
+  const blankTab = useCallback((): TabMeta => {
+    const tab: TabMeta = { id: newTabId(), path: null, dirty: false };
+    store.current.set(tab.id, emptyContent());
+    return tab;
+  }, [emptyContent]);
+
+  /** Brings tab `id` on screen from its stored text. */
+  const show = useCallback(
+    async (id: string): Promise<void> => {
+      if (!api) return;
+      const content = contentOf(id);
+      let scene: ParsedScene;
+      try {
+        scene = await parseScene(content.scene);
+      } catch (err) {
+        // Not shown as an empty canvas: the tab would keep its path, and the
+        // next Save would write that empty canvas over the user's file. The
+        // tab is closed instead. A drawing with a file leaves the file as it
+        // is; an autosave-only one has its snapshot moved aside first, since
+        // the next snapshot would otherwise prune the only copy.
+        const tab = tabsRef.current.find((t) => t.id === id);
+        let note = "";
+        if (tab?.path) {
+          note = "\n\nThe file on disk has not been changed.";
+        } else {
+          const kept = await keepUnreadableSnapshot(id).catch(() => null);
+          if (kept) note = `\n\nIts autosave was kept at ${kept}.`;
+        }
+        await message(
+          `${tab ? tabTitle(tab) : "A drawing"} could not be read and was closed.${note}\n\n${String(err)}`,
+          { title: "Could not open tab", kind: "error" },
+        );
+        const remaining = tabsRef.current.filter((t) => t.id !== id);
+        const next = successorId(tabsRef.current, id);
+        if (remaining.length && next) {
+          replaceTabs(remaining, next);
+          await show(next);
+        } else {
+          const fresh = blankTab();
+          replaceTabs([fresh], fresh.id);
+          await show(fresh.id);
+        }
+        return;
+      }
+      applyScene(id, content.scene, scene, {
+        view: content.view,
+        // A tab restored from a session has not been parsed yet, so its saved
+        // version is worked out here rather than at startup.
+        savedVersion: content.savedVersion === UNPARSED ? undefined : content.savedVersion,
+      });
+    },
+    [api, applyScene, blankTab, contentOf, replaceTabs],
+  );
 
   // --------------------------------------------------------------- switching
 
@@ -262,15 +295,14 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
 
   const newTab = useCallback(async () => {
     capture();
-    const tab: TabMeta = { id: newTabId(), path: null, dirty: false };
-    store.current.set(tab.id, emptyContent());
+    const tab = blankTab();
     const next = [...tabsRef.current, tab];
     tabsRef.current = next;
     activeRef.current = tab.id;
     setTabs(next);
     setActiveId(tab.id);
     await show(tab.id);
-  }, [capture, emptyContent, show]);
+  }, [blankTab, capture, show]);
 
   // ------------------------------------------------------------------ saving
 
@@ -324,13 +356,15 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     async (id: string) => {
       const tab = tabsRef.current.find((t) => t.id === id);
       if (!tab) return false;
-      const target = await saveDialog({
-        title: "Save drawing as",
-        defaultPath: tab.path ?? "Untitled.excalidraw",
-        filters: [FILE_FILTER],
-      });
+      let target: string | null;
+      try {
+        target = await pickSavePath("drawing", tab.path ?? "Untitled.excalidraw");
+      } catch (err) {
+        await message(String(err), { title: "Could not save", kind: "error" });
+        return false;
+      }
       if (!target) return false;
-      return writeTo(id, target.endsWith(".excalidraw") ? target : `${target}.excalidraw`);
+      return writeTo(id, target);
     },
     [writeTo],
   );
@@ -373,39 +407,59 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     [saveTab],
   );
 
+  /**
+   * Held while a close or quit is asking about unsaved changes. A second one
+   * arriving meanwhile (Ctrl+W again, the window's X) would stack another
+   * prompt about the same drawing and could save it twice.
+   */
+  const prompting = useRef(false);
+
   const closeTab = useCallback(
     async (id?: string) => {
-      const target = id ?? activeRef.current;
-      if (!tabsRef.current.some((tab) => tab.id === target)) return;
-      // Show a drawing before asking about it: a prompt naming a tab the user
-      // cannot see is a prompt they cannot answer.
-      if (target !== activeRef.current) await selectTab(target);
-      if (!(await confirmTab(target))) return;
+      if (prompting.current) return;
+      prompting.current = true;
+      try {
+        const target = id ?? activeRef.current;
+        if (!tabsRef.current.some((tab) => tab.id === target)) return;
+        // Show a drawing before asking about it: a prompt naming a tab the user
+        // cannot see is a prompt they cannot answer.
+        if (target !== activeRef.current) await selectTab(target);
+        // Showing it may have closed it already, if it could not be read.
+        if (!tabsRef.current.some((tab) => tab.id === target)) return;
+        if (!(await confirmTab(target))) return;
 
-      const next = successorId(tabsRef.current, target);
-      const remaining = tabsRef.current.filter((tab) => tab.id !== target);
-      if (!remaining.length || !next) {
-        // Closing the last tab empties the canvas rather than quitting: closing
-        // a drawing and closing the app are different requests.
-        const fresh: TabMeta = { id: newTabId(), path: null, dirty: false };
-        store.current.set(fresh.id, emptyContent());
-        replaceTabs([fresh], fresh.id);
-        await show(fresh.id);
-        return;
+        const next = successorId(tabsRef.current, target);
+        const remaining = tabsRef.current.filter((tab) => tab.id !== target);
+        if (!remaining.length || !next) {
+          // Closing the last tab empties the canvas rather than quitting: closing
+          // a drawing and closing the app are different requests.
+          const fresh = blankTab();
+          replaceTabs([fresh], fresh.id);
+          await show(fresh.id);
+          return;
+        }
+        replaceTabs(remaining, next);
+        await show(next);
+      } finally {
+        prompting.current = false;
       }
-      replaceTabs(remaining, next);
-      await show(next);
     },
-    [confirmTab, emptyContent, replaceTabs, selectTab, show],
+    [blankTab, confirmTab, replaceTabs, selectTab, show],
   );
 
   const confirmDiscard = useCallback(async () => {
-    for (const tab of [...tabsRef.current]) {
-      if (!tab.dirty) continue;
-      if (tab.id !== activeRef.current) await selectTab(tab.id);
-      if (!(await confirmTab(tab.id))) return false;
+    if (prompting.current) return false;
+    prompting.current = true;
+    try {
+      for (const tab of [...tabsRef.current]) {
+        if (!tab.dirty) continue;
+        if (tab.id !== activeRef.current) await selectTab(tab.id);
+        if (!(await confirmTab(tab.id))) return false;
+      }
+      return true;
+    } finally {
+      prompting.current = false;
     }
-    return true;
   }, [confirmTab, selectTab]);
 
   // ---------------------------------------------------------------- autosave
@@ -586,16 +640,20 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         unsaved.length === 1
           ? `${unsaved[0].path ? basename(unsaved[0].path) : "An unsaved drawing"} was`
           : `${unsaved.length} drawings were`;
-      const recover = await confirm(
-        `${subject} left with unsaved changes when the app last closed. Restore them?`,
+      // Three buttons, and only an explicit Discard discards. With two, Escape
+      // or closing the dialog resolved to Discard, and the next snapshot then
+      // pruned work that existed nowhere else. Restoring loses nothing — the
+      // tabs come back dirty and can still be closed one by one.
+      const choice = await message(
+        `${subject} left with unsaved changes when the app last closed. Restore them?\n\n` +
+          "Only Discard throws them away.",
         {
           title: "Recover unsaved changes",
           kind: "warning",
-          okLabel: "Restore",
-          cancelLabel: "Discard",
+          buttons: { yes: "Restore", no: "Discard", cancel: "Cancel" },
         },
       );
-      if (recover) {
+      if (choice !== "Discard") {
         for (const tab of session.tabs) {
           store.current.set(tab.id, {
             scene: tab.scene,
@@ -647,6 +705,8 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   // Guarded rather than cancelled on cleanup: StrictMode runs effects twice in
   // development, and startup must not ask the user to recover twice.
   const startupDone = useRef(false);
+  /** Drawings a second launch sent before startup finished, opened once it has. */
+  const queued = useRef<string[]>([]);
   useEffect(() => {
     if (!api || startupDone.current) return;
     startupDone.current = true;
@@ -660,6 +720,9 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         for (const file of await startupFiles().catch(() => [])) {
           await openDrawing(file);
         }
+        // Checked again after every await, so a drawing arriving while these
+        // open is not left behind in the queue.
+        while (queued.current.length) await openDrawing(queued.current.shift()!);
       } finally {
         restored.current = true;
       }
@@ -671,6 +734,13 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   useEffect(() => {
     if (!api) return;
     const pending = listen<string[]>(OPEN_FILES_EVENT, async ({ payload }) => {
+      // Opened now, during startup, a tab would be thrown away again when
+      // `restoreSession` replaces the whole tab set — while the recovery
+      // prompt is up, say.
+      if (!restored.current) {
+        queued.current.push(...payload);
+        return;
+      }
       for (const file of payload) await openDrawing(file);
     });
     return () => {

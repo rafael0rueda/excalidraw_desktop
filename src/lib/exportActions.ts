@@ -1,19 +1,11 @@
-import { message, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { message } from "@tauri-apps/plugin-dialog";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { pickSavePath } from "./api";
 import { copyPngToClipboard, savePng, saveSvg, type ExportOptions } from "./exports";
-import { basename } from "./tabs";
 
-function suggestedName(path: string | null, ext: string) {
-  const stem = path ? basename(path).replace(/\.excalidraw$/, "") : "Untitled";
-  return `${stem}.${ext}`;
-}
-
-async function pick(path: string | null, ext: string, label: string) {
-  return saveDialog({
-    title: `Export as ${label}`,
-    defaultPath: suggestedName(path, ext),
-    filters: [{ name: label, extensions: [ext] }],
-  });
+/** Beside the drawing when it has a file, so an export lands next to its source. */
+function suggestedPath(path: string | null, ext: string) {
+  return path ? `${path.replace(/\.excalidraw$/, "")}.${ext}` : `Untitled.${ext}`;
 }
 
 async function report(err: unknown) {
@@ -28,10 +20,9 @@ export async function exportPng(
   path: string | null,
   opts: ExportOptions = {},
 ) {
-  const target = await pick(path, "png", "PNG image");
-  if (!target) return;
   try {
-    await savePng(api, target.endsWith(".png") ? target : `${target}.png`, opts);
+    const target = await pickSavePath("png", suggestedPath(path, "png"));
+    if (target) await savePng(api, target, opts);
   } catch (err) {
     await report(err);
   }
@@ -42,10 +33,9 @@ export async function exportSvg(
   path: string | null,
   opts: ExportOptions = {},
 ) {
-  const target = await pick(path, "svg", "SVG image");
-  if (!target) return;
   try {
-    await saveSvg(api, target.endsWith(".svg") ? target : `${target}.svg`, opts);
+    const target = await pickSavePath("svg", suggestedPath(path, "svg"));
+    if (target) await saveSvg(api, target, opts);
   } catch (err) {
     await report(err);
   }

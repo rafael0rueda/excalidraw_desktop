@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Excalidraw } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -50,10 +50,19 @@ export default function App() {
     previous: () => void actions.selectRelative(-1),
   };
 
+  // One quit at a time: Ctrl+Q again, or the window's X while the first quit's
+  // prompt is still up, would otherwise run a second one alongside it.
+  const quitting = useRef(false);
   const closeWindow = useCallback(async () => {
-    if (!(await actions.confirmDiscard())) return;
-    await actions.endSession();
-    await getCurrentWindow().destroy();
+    if (quitting.current) return;
+    quitting.current = true;
+    try {
+      if (!(await actions.confirmDiscard())) return;
+      await actions.endSession();
+      await getCurrentWindow().destroy();
+    } finally {
+      quitting.current = false;
+    }
   }, [actions]);
 
   // Rebuild the native menu whenever the bound state changes, so Save targets
@@ -74,17 +83,14 @@ export default function App() {
 
   // Guard the window-manager close button (menu Quit routes here too).
   useEffect(() => {
-    const win = getCurrentWindow();
-    const pending = win.onCloseRequested(async (event) => {
+    const pending = getCurrentWindow().onCloseRequested((event) => {
       event.preventDefault();
-      if (!(await actions.confirmDiscard())) return;
-      await actions.endSession();
-      await win.destroy();
+      void closeWindow();
     });
     return () => {
       void pending.then((unlisten) => unlisten());
     };
-  }, [actions]);
+  }, [closeWindow]);
 
   // Excalidraw captures many keystrokes on the canvas, so mirror the menu
   // accelerators at the window level to keep them dependable.

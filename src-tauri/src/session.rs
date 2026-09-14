@@ -231,6 +231,20 @@ pub fn clear_session() -> Result<(), String> {
     Ok(())
 }
 
+/// Moves a snapshot the renderer could not parse out of `prune`'s way, so that
+/// closing its tab does not delete what may be the only copy. It keeps its
+/// extension, for trying it in another tool. Returns where it went.
+#[tauri::command]
+pub fn keep_unreadable_snapshot(id: String) -> Result<String, String> {
+    safe_id(&id)?;
+    let from = scene_path(&id);
+    let dir = session_dir().join("unreadable");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let to = dir.join(format!("{id}-{}.excalidraw", now()));
+    std::fs::rename(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+    Ok(to.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +330,14 @@ mod tests {
         // --- an id that would escape the directory is refused outright
         assert!(save_session(vec![tab("../escape", None, Some("x"))], None).is_err());
         assert!(!dir.join("escape.excalidraw").exists());
+
+        // --- an unreadable snapshot is moved aside, where pruning cannot reach it
+        save_session(vec![tab("bbb", None, Some("not a drawing"))], Some("bbb".into())).unwrap();
+        let kept = std::path::PathBuf::from(keep_unreadable_snapshot("bbb".into()).unwrap());
+        assert!(!scene_path("bbb").exists());
+        save_session(vec![tab("ccc", None, Some("{}"))], Some("ccc".into())).unwrap();
+        assert_eq!(std::fs::read_to_string(&kept).unwrap(), "not a drawing");
+        assert!(keep_unreadable_snapshot("../escape".into()).is_err());
 
         clear_session().unwrap();
         assert!(load_session().is_none());
