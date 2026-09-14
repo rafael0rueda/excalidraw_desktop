@@ -800,6 +800,62 @@ Downgraded — do not fix what is not broken:
   unlistens, and listens/unlistens balanced 8/8. Only the per-render IPC churn
   is real, and that is a performance nit.
 
+## Review 2026-09-14 — findings, not yet implemented
+
+Baseline at review time: `tsc` clean, `npm run check` 14/14, `cargo test` 9/9.
+Checked against the installed sources, not guessed: Excalidraw 0.18.1 binds
+`Ctrl+Shift+G` (ungroup) and `Ctrl+Shift+P` (command palette); it opens element
+links itself with `window.open(void 0, "_self" | "_blank")` unless `onLinkOpen`
+prevents it; the package does not persist the library on its own.
+
+Security
+- S1 `read_text_file`/`write_text_file`/`write_binary_file` take any path, so a
+  renderer compromise is arbitrary read/write in `$HOME`. Scope them in Rust.
+- S2 Element links open inside the webview (no `onLinkOpen`, no
+  `on_navigation`/`on_new_window` guard). Route to the system browser, deny
+  navigation away from the app.
+- S3 `write_atomic`: fixed `.tmp` name, follows a planted symlink, no
+  `create_new`, no fsync, temp left behind on error, concurrent writers collide.
+- S4 `npm audit`: high (lodash-es via mermaid-to-excalidraw), transitive fix.
+- S5 Snapshots/config written with umask perms; app commands not capability-gated.
+
+Bugs
+- B1 Recovery prompt: Escape = Discard, and the next snapshot prunes the
+  untitled work for good (`restoreSession`). Same class as finding 4.
+- B2 Unparseable tab becomes an empty drawing still bound to its path (`show`);
+  a later Save overwrites the user's file.
+- B3 Save As / exports append the extension after the dialog, bypassing its
+  overwrite confirmation.
+- B4 Files from a second launch during startup are dropped by `replaceTabs`.
+- B5 Export PNG/SVG shortcuts steal Excalidraw's command palette and ungroup.
+- B6 No re-entrancy guard on quit/close: double prompts, double saves.
+- B7 Save As can put one path in two tabs (not canonicalised / not checked).
+- B8 Native menu rebuilt on each dirty flip, old resources never closed (leak);
+  out-of-order rebuilds can install a stale menu.
+- B9 Export selection is O(n²) (`expandSelection` inside `filter`).
+- B10 Library is not persisted across launches.
+- B11 A theme picked before settings load is overwritten; a corrupt
+  settings.json is silently replaced with defaults.
+
+Performance
+- P1 Sync commands run on the main thread (file I/O, base64, `gsettings` spawn on
+  every focus). Make them async — only after snapshots are serialised and
+  blocked once `endSession` starts, or ordering races appear.
+- P2 Every capture serialises the whole scene (images included) even if unchanged.
+- P3 PNG bytes go through base64 JSON IPC; raw binary IPC exists.
+- P4 Close and keydown listeners re-register every render.
+- P5 `recent.json` is written non-atomically.
+
+Improvements: white startup flash on dark themes; XDG portal colour scheme
+(non-GNOME, change signal); export options (scale, transparency, embed scene,
+default dir next to the drawing); bundle the ER library; `e.code` for
+shortcuts on non-US layouts; `cargo audit`.
+
+Plan: phase 1 data loss (B1–B4, B6) → phase 2 security (S1–S5) → phase 3
+correctness/perf (snapshot serialisation, P1, B5, B7–B9, B11, P2, P4, P5) →
+phase 4 features (library persistence + ER library, startup flash, export
+options, portal). Each item: tests, `tsc`/`check`/`cargo test`, own commit.
+
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that
