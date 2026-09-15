@@ -19,9 +19,15 @@ export const pickOpenPath = () => invoke<string | null>("pick_open_path");
 export const writeTextFile = (path: string, contents: string) =>
   invoke<void>("write_text_file", { path, contents });
 
-/** `data` is base64 — JSON number arrays are far too slow for multi-MB PNGs. */
-export const writeBinaryFile = (path: string, data: string) =>
-  invoke<void>("write_binary_file", { path, data });
+/**
+ * Sends the PNG as the raw request body; JSON, whether a number array or
+ * base64, is slow for multi-megabyte images. The path goes in a header, base64
+ * so that any file name survives header encoding.
+ */
+export const writeBinaryFile = (path: string, data: Uint8Array) =>
+  invoke<void>("write_binary_file", data, {
+    headers: { "x-path": bytesToBase64(new TextEncoder().encode(path)) },
+  });
 
 export type SaveKind = "drawing" | "png" | "svg";
 
@@ -34,8 +40,8 @@ export type SaveKind = "drawing" | "png" | "svg";
 export const pickSavePath = (kind: SaveKind, suggested: string) =>
   invoke<string | null>("pick_save_path", { kind, suggested });
 
-export const copyImageToClipboard = (data: string) =>
-  invoke<void>("copy_image_to_clipboard", { data });
+/** `data` is a PNG, sent as the raw request body. */
+export const copyImageToClipboard = (data: Uint8Array) => invoke<void>("copy_image_to_clipboard", data);
 
 /** The six colours the GTK menu bar and its menus are painted in. */
 export interface MenuColors {
@@ -150,6 +156,22 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export async function blobToBase64(blob: Blob): Promise<string> {
-  return bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
+/** Sent by the backend when the desktop switches between light and dark. */
+export const COLOR_SCHEME_EVENT = "color-scheme-changed";
+
+/** The saved `.excalidrawlib` text, or null if no library was ever saved. */
+export const loadLibrary = () => invoke<string | null>("load_library");
+export const saveLibrary = (contents: string) => invoke<void>("save_library", { contents });
+
+/** Mirrors the Rust `ExportPreferences` struct, snake_case included. */
+export interface ExportPreferences {
+  /** PNG pixel density, 1 to 3. */
+  scale: number;
+  transparent: boolean;
+  /** Store the drawing inside exported images, so they open back in Excalidraw. */
+  embed_scene: boolean;
 }
+
+export const loadExportPreferences = () => invoke<ExportPreferences>("load_export_preferences");
+export const saveExportPreferences = (preferences: ExportPreferences) =>
+  invoke<void>("save_export_preferences", { preferences });

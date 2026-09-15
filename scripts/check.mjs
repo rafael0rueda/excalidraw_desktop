@@ -21,7 +21,8 @@ writeFileSync(
    export * from "${process.cwd()}/src/theme/color";
    export { cssVariables } from "${process.cwd()}/src/theme/variables";
    export { PRESET_THEMES, FALLBACK_THEME_ID } from "${process.cwd()}/src/theme/presets";
-   export * from "${process.cwd()}/src/lib/tabs";`,
+   export * from "${process.cwd()}/src/lib/tabs";
+   export * from "${process.cwd()}/src/lib/shortcuts";`,
 );
 const bundle = join(out, "bundle.mjs");
 await build({ entryPoints: [entry], bundle: true, format: "esm", outfile: bundle, logLevel: "warning" });
@@ -155,6 +156,17 @@ check("a file already open is found rather than opened twice", () => {
   ];
   assert.equal(t.findByPath(tabs, "/tmp/one.excalidraw").id, "a");
   assert.equal(t.findByPath(tabs, "/tmp/two.excalidraw"), undefined);
+});
+
+check("shortcuts follow the layout for letters and the position for digits", () => {
+  assert.equal(t.shortcutKey("t", "KeyT"), "t");
+  assert.equal(t.shortcutKey("S", "KeyS"), "s", "Shift does not change which shortcut it is");
+  assert.equal(t.shortcutKey("z", "KeyW"), "z", "AZERTY: Ctrl+Z must not become Ctrl+W");
+  assert.equal(t.shortcutKey("я", "KeyZ"), "z", "a Cyrillic layout falls back to the physical key");
+  assert.equal(t.shortcutKey("&", "Digit1"), "1", "AZERTY's number row");
+  assert.equal(t.shortcutKey("1", "Numpad1"), "1");
+  assert.equal(t.shortcutKey("б", "Comma"), ",");
+  assert.equal(t.shortcutKey("PageDown", "PageDown"), "PageDown");
 });
 
 console.log(`\n${checks} checks passed`);

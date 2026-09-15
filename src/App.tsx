@@ -5,10 +5,21 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import TabBar from "./components/TabBar";
 import ThemeEditor from "./components/ThemeEditor";
 import { useDocument } from "./lib/document";
-import { buildMenu, updateTabMarks, type MenuHandlers, type TabsMenu, type ThemeMenu } from "./lib/menu";
+import {
+  buildMenu,
+  updateTabMarks,
+  type ExportMenu,
+  type MenuHandlers,
+  type TabsMenu,
+  type ThemeMenu,
+} from "./lib/menu";
 import { useTheme } from "./theme/useTheme";
 import { copyToClipboard, exportPng, exportSvg } from "./lib/exportActions";
+import type { ExportOptions } from "./lib/exports";
+import { useExportPreferences } from "./lib/exportPreferences";
+import { addErShapes, usePersistentLibrary } from "./lib/library";
 import { openLink } from "./lib/links";
+import { shortcutKey } from "./lib/shortcuts";
 
 export default function App() {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
@@ -19,11 +30,27 @@ export default function App() {
     currentItemStrokeColor: theme.active.colors.stroke,
     currentItemBackgroundColor: theme.active.colors.fill,
   });
+  const exportPrefs = useExportPreferences();
+  usePersistentLibrary(api);
 
-  // The menu is not rebuilt on a tab switch, so the active drawing's path is
-  // read when an export runs rather than captured when the menu was built.
+  // The window starts hidden (`visible: false` in tauri.conf.json) and is shown
+  // once the theme has been read and painted, so a dark theme does not open as
+  // a white flash. lib.rs shows it anyway if this never runs.
+  useEffect(() => {
+    if (api && theme.ready) void getCurrentWindow().show().catch(() => {});
+  }, [api, theme.ready]);
+
+  // Read when an export runs rather than captured when the menu was built: a
+  // tab switch changes the active path without rebuilding the menu.
   const activePath = useRef(state.path);
   activePath.current = state.path;
+  const preferences = useRef(exportPrefs.preferences);
+  preferences.current = exportPrefs.preferences;
+  const exportOptions = (): ExportOptions => ({
+    scale: preferences.current.scale,
+    transparent: preferences.current.transparent,
+    embedScene: preferences.current.embed_scene,
+  });
 
   const handlers: MenuHandlers = {
     newTab: () => void actions.newTab(),
@@ -32,10 +59,12 @@ export default function App() {
     openRecent: (path) => void actions.openDrawing(path),
     save: () => void actions.save(),
     saveAs: () => void actions.saveAs(),
-    exportPng: () => api && void exportPng(api, activePath.current),
-    exportPngSelection: () => api && void exportPng(api, activePath.current, { selectionOnly: true }),
-    exportSvg: () => api && void exportSvg(api, activePath.current),
-    copyImage: () => api && void copyToClipboard(api),
+    exportPng: () => api && void exportPng(api, activePath.current, exportOptions()),
+    exportPngSelection: () =>
+      api && void exportPng(api, activePath.current, { ...exportOptions(), selectionOnly: true }),
+    exportSvg: () => api && void exportSvg(api, activePath.current, exportOptions()),
+    copyImage: () => api && void copyToClipboard(api, exportOptions()),
+    addErShapes: () => api && void addErShapes(api),
     quit: () => void closeWindow(),
   };
 
@@ -56,6 +85,15 @@ export default function App() {
     previous: () => void actions.selectRelative(-1),
   };
 
+  const exportMenu: ExportMenu = {
+    scale: exportPrefs.preferences.scale,
+    transparent: exportPrefs.preferences.transparent,
+    embedScene: exportPrefs.preferences.embed_scene,
+    setScale: (scale) => exportPrefs.update({ scale }),
+    setTransparent: (transparent) => exportPrefs.update({ transparent }),
+    setEmbedScene: (embed_scene) => exportPrefs.update({ embed_scene }),
+  };
+
   // One quit at a time: Ctrl+Q again, or the window's X while the first quit's
   // prompt is still up, would otherwise run a second one alongside it.
   const quitting = useRef(false);
@@ -71,12 +109,13 @@ export default function App() {
     }
   }, [actions]);
 
-  // Rebuild the native menu when an item has to appear, go or be renamed: a
-  // tab opened, closed or saved under a new name, or the themes changing.
+  // Rebuild the native menu when an item has to appear, go, be renamed or be
+  // checked: a tab opened, closed or saved under a new name, the themes, or
+  // the export choices changing.
   const tabShape = state.tabs.map((tab) => `${tab.id}:${tab.path ?? ""}`).join("\n");
   useEffect(() => {
     if (!api) return;
-    void buildMenu(handlers, themeMenu, tabsMenu);
+    void buildMenu(handlers, themeMenu, tabsMenu, exportMenu);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     api,
@@ -85,6 +124,7 @@ export default function App() {
     theme.themes,
     theme.systemPair.light?.id,
     theme.systemPair.dark?.id,
+    exportPrefs.preferences,
   ]);
 
   // Unsaved marks and the active tab change far more often, and are updated in place.
@@ -119,7 +159,7 @@ export default function App() {
       // would otherwise fire while the user is typing a colour.
       if ((e.target as HTMLElement | null)?.closest(".theme-editor")) return;
       const { handlers, actions, tabs } = keys.current;
-      const key = e.key.toLowerCase();
+      const key = shortcutKey(e.key, e.code);
       const shift = e.shiftKey;
       const fire = (fn: () => void) => {
         e.preventDefault();
@@ -140,8 +180,8 @@ export default function App() {
       else if (e.key === "Tab" || e.key === "PageDown" || e.key === "PageUp") {
         const back = e.key === "PageUp" || (e.key === "Tab" && shift);
         fire(() => void actions.selectRelative(back ? -1 : 1));
-      } else if (/^[1-9]$/.test(e.key) && !shift) {
-        const tab = tabs[Number(e.key) - 1];
+      } else if (/^[1-9]$/.test(key) && !shift) {
+        const tab = tabs[Number(key) - 1];
         if (tab) fire(() => void actions.selectTab(tab.id));
       }
     };

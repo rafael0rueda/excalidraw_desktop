@@ -946,8 +946,56 @@ was `drwx------`. That proves the page loads through the navigation guard, and
 that `load_session` → allowlist → `read_text_file` → `save_session` works
 end to end (a refused read would have dropped the tab). Not proven: anything
 needing clicks.
-Not in scope (phase 4): P3 raw binary IPC, library persistence, startup flash,
-export options, portal colour scheme, `e.code` shortcuts.
+
+**Phase 4 done 2026-09-14** (`tsc`, `check` 15/15, `cargo test` 14/14,
+`vite build`; not yet seen by eye):
+- Library persistence (B10): `library.rs` (`load_library` returns None only
+  when the file is missing and errors if it is unreadable; `save_library`),
+  plus `lib/library.ts`, an adapter for Excalidraw's `useHandleLibrary`. With no
+  saved file, `load` returns the ER shapes, so a first launch is seeded; once
+  saved, never again. **View → Add ER diagram shapes to library** calls
+  `updateLibrary({merge: true, openLibraryMenu: true})`. The ER file is imported
+  with `?raw` (hence `src/vite-env.d.ts`) and its `source` URL was corrected in
+  the file and the script.
+- Startup flash: the window is `visible: false`; `App.tsx` shows it once
+  `api` exists and `useTheme` is `ready` (settings, user themes and scheme read).
+  The window-state plugin runs with `StateFlags::all() & !VISIBLE`, since it
+  calls `show()` when restoring visibility. `show_eventually` in `lib.rs`
+  shows the window after 3 s if the renderer never does. Capability
+  `core:window:allow-show`.
+- Export options: `ExportPreferences {scale 1–3, transparent, embed_scene}`
+  in `export.json` (not `settings.json`, which `useTheme` writes whole), shown
+  as Export menu check items and a PNG scale submenu. Confirmed in the bundle
+  that the public `exportToBlob` embeds the scene for PNG when
+  `exportEmbedScene` is set; SVG passes it to `exportToSvg`. Clipboard copies
+  never embed.
+- Portal colour scheme: `settings::portal_prefers_dark` calls
+  `org.freedesktop.portal.Settings.ReadOne` (then `Read`) through GTK's `gio`,
+  so no new crate. `gsettings` stays as the fallback. `watch_color_scheme`
+  subscribes to `SettingChanged` on the main thread from `setup` and emits
+  `color-scheme-changed`, which `useTheme` listens to; the focus re-check
+  remains. This machine's portal answered `uint32 1` (prefer dark) via `gdbus`.
+- P3: `write_binary_file` and `copy_image_to_clipboard` take a
+  `tauri::ipc::Request` with a raw body. The path travels in an `x-path`
+  header, base64 of its UTF-8. `blobToBase64` is gone.
+- Shortcuts: `lib/shortcuts.ts` `shortcutKey(key, code)` uses `key` when it is
+  printable ASCII, the physical `KeyX` code otherwise (non-Latin layouts), and
+  `DigitN` for digits in any layout. Matching codes throughout would have made
+  AZERTY's Ctrl+Z close the tab.
+To check by hand: a dark theme opens with no white flash; the library survives
+a restart and first launch shows the ER shapes; export toggles (transparent,
+embed and reopen, 3×); flipping GNOME dark/light repaints without refocusing;
+PNG export and clipboard still work (raw IPC).
+Smoke-tested the same way as phase 3, with a hidden window this time. The
+seeded tab was restored and autosaved with its path about 16 s after
+`npm start` (the build included). The run surfaced two things, both fixed:
+- GLib-CRITICAL `g_variant_get_variant` in the log: `unbox` called
+  `as_variant()` on the final `u32`. The value read was right, but it now
+  checks `is_type(VARIANT)` first.
+- `settings.json` and `export.json` were written on a fresh start. StrictMode
+  runs the load effect twice in dev, and the second load took the first one's
+  result for a user change. Both loaders now also compare against the previous
+  `fromDisk`. Dev-only; production runs effects once.
 
 ## Gotchas
 

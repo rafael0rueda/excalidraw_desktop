@@ -1,13 +1,15 @@
 import { exportToBlob, exportToSvg } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
-import { blobToBase64, copyImageToClipboard, writeBinaryFile, writeTextFile } from "./api";
+import { copyImageToClipboard, writeBinaryFile, writeTextFile } from "./api";
 
 export interface ExportOptions {
   /** Export only the current selection rather than the whole scene. */
   selectionOnly?: boolean;
   transparent?: boolean;
   scale?: number;
+  /** Store the drawing inside the image, so opening it in Excalidraw brings the scene back. */
+  embedScene?: boolean;
 }
 
 /**
@@ -50,24 +52,34 @@ export async function toPngBlob(api: ExcalidrawImperativeAPI, opts: ExportOption
       ...appState,
       exportBackground: !opts.transparent,
       exportScale: opts.scale ?? 2,
+      exportEmbedScene: !!opts.embedScene,
     },
     mimeType: "image/png",
     quality: 1,
   });
 }
 
+async function pngBytes(api: ExcalidrawImperativeAPI, opts: ExportOptions) {
+  return new Uint8Array(await (await toPngBlob(api, opts)).arrayBuffer());
+}
+
 export async function savePng(api: ExcalidrawImperativeAPI, path: string, opts: ExportOptions = {}) {
-  const blob = await toPngBlob(api, opts);
-  await writeBinaryFile(path, await blobToBase64(blob));
+  await writeBinaryFile(path, await pngBytes(api, opts));
 }
 
 export async function saveSvg(api: ExcalidrawImperativeAPI, path: string, opts: ExportOptions = {}) {
   const { elements, appState, files } = sceneFor(api, opts);
   if (!elements.length) throw new Error("Nothing to export.");
+  // No scale: an SVG is drawn at whatever size it is shown.
   const svg = await exportToSvg({
     elements,
     files,
-    appState: { ...appState, exportBackground: !opts.transparent, exportScale: opts.scale ?? 1 },
+    appState: {
+      ...appState,
+      exportBackground: !opts.transparent,
+      exportScale: 1,
+      exportEmbedScene: !!opts.embedScene,
+    },
   });
   await writeTextFile(path, new XMLSerializer().serializeToString(svg));
 }
@@ -75,9 +87,9 @@ export async function saveSvg(api: ExcalidrawImperativeAPI, path: string, opts: 
 /**
  * Routed through the native GTK clipboard rather than navigator.clipboard —
  * WebKitGTK gates the async clipboard API behind user activation that an
- * app-driven copy does not always carry.
+ * app-driven copy does not always carry. Never embeds the scene: an image
+ * pasted elsewhere has no use for it.
  */
 export async function copyPngToClipboard(api: ExcalidrawImperativeAPI, opts: ExportOptions = {}) {
-  const blob = await toPngBlob(api, opts);
-  await copyImageToClipboard(await blobToBase64(blob));
+  await copyImageToClipboard(await pngBytes(api, { ...opts, embedScene: false }));
 }

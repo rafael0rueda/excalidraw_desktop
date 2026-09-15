@@ -2,6 +2,7 @@ mod chrome;
 mod clipboard;
 mod dialogs;
 mod files;
+mod library;
 mod recent;
 mod scope;
 mod session;
@@ -12,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, Url};
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_window_state::StateFlags;
 
 /// Drawings named on the command line. A file-manager double click arrives this
 /// way, and the desktop entry's `%F` may name several at once.
@@ -139,6 +141,21 @@ fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// The window is created hidden and shown by the renderer once its theme is on
+/// screen, so a dark theme does not open as a white flash (see `App.tsx`). If
+/// that never comes — a renderer that failed to load — it is shown anyway after
+/// a few seconds, rather than leaving an app with no window at all.
+fn show_eventually(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if let Some(window) = app.get_webview_window("main") {
+            if !window.is_visible().unwrap_or(true) {
+                let _ = window.show();
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -162,7 +179,13 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Everything but visibility: the window stays hidden until the theme is
+        // painted, and restoring visibility would show it straight away.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
+                .build(),
+        )
         .setup(|app| {
             // Named on the command line by the user, so the renderer may read them.
             let files = startup_drawings();
@@ -173,6 +196,10 @@ pub fn run() {
             app.manage(allowed);
             app.manage(StartupFiles(Mutex::new(files)));
             create_main_window(app)?;
+            // Setup runs on the GTK main thread, where the signal has to be subscribed.
+            #[cfg(target_os = "linux")]
+            settings::watch_color_scheme(app.handle().clone());
+            show_eventually(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -201,6 +228,10 @@ pub fn run() {
             settings::system_color_scheme,
             settings::save_user_theme,
             settings::delete_user_theme,
+            settings::load_export_preferences,
+            settings::save_export_preferences,
+            library::load_library,
+            library::save_library,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Excalidraw Desktop");

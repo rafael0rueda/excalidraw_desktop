@@ -1,18 +1,18 @@
-use base64::Engine;
-
 /// Copies a PNG to the system clipboard through GTK rather than the web
 /// clipboard API: WebKitGTK gates `navigator.clipboard.write()` behind user
 /// activation that an app-initiated copy does not reliably carry.
-// Off the main thread, so decoding a large base64 payload does not stall the
-// window; the GTK half still hops back onto the main loop below.
+///
+/// The PNG is the raw request body, not base64 inside JSON. Off the main
+/// thread; the GTK half hops back onto the main loop below.
 #[tauri::command(async)]
-pub fn copy_image_to_clipboard(app: tauri::AppHandle, data: String) -> Result<(), String> {
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data.as_bytes())
-        .map_err(|e| format!("bad image payload: {e}"))?;
+pub fn copy_image_to_clipboard(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the image as raw bytes".into());
+    };
 
     #[cfg(target_os = "linux")]
     {
+        let bytes = bytes.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         // GTK is not thread-safe; clipboard work must happen on the main loop.
         app.run_on_main_thread(move || {

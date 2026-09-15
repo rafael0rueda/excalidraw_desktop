@@ -15,6 +15,7 @@ export interface MenuHandlers {
   exportPngSelection: () => void;
   exportSvg: () => void;
   copyImage: () => void;
+  addErShapes: () => void;
   quit: () => void;
 }
 
@@ -39,6 +40,19 @@ export interface TabsMenu {
   next: () => void;
   previous: () => void;
 }
+
+/** The Export menu's remembered choices. */
+export interface ExportMenu {
+  scale: number;
+  transparent: boolean;
+  embedScene: boolean;
+  setScale: (scale: number) => void;
+  setTransparent: (on: boolean) => void;
+  setEmbedScene: (on: boolean) => void;
+}
+
+/** The PNG densities offered; `ExportPreferences::sanitized` clamps to the same range. */
+const EXPORT_SCALES = [1, 2, 3];
 
 type AnyMenuItem = MenuItem | CheckMenuItem | PredefinedMenuItem;
 
@@ -84,6 +98,7 @@ async function recentSubmenu(
   handlers: MenuHandlers,
   theme: ThemeMenu,
   tabs: TabsMenu,
+  exporting: ExportMenu,
   recents: RecentEntry[],
 ) {
   const items: AnyMenuItem[] = recents.length
@@ -110,7 +125,7 @@ async function recentSubmenu(
           id: "recent-clear",
           text: "Clear recent files",
           action: () => {
-            void clearRecent().then(() => buildMenu(handlers, theme, latestTabs ?? tabs));
+            void clearRecent().then(() => buildMenu(handlers, theme, latestTabs ?? tabs, exporting));
           },
         }),
       ),
@@ -237,7 +252,12 @@ export async function updateTabMarks(tabs: TabsMenu) {
  * Rebuilds and installs the whole window menu, for when an item has to appear,
  * disappear or be renamed. The menu it replaces is closed.
  */
-export async function buildMenu(handlers: MenuHandlers, theme: ThemeMenu, tabs: TabsMenu) {
+export async function buildMenu(
+  handlers: MenuHandlers,
+  theme: ThemeMenu,
+  tabs: TabsMenu,
+  exporting: ExportMenu,
+) {
   const build = ++generation;
   latestTabs = tabs;
   const made: Resource[] = [];
@@ -252,7 +272,7 @@ export async function buildMenu(handlers: MenuHandlers, theme: ThemeMenu, tabs: 
         items: [
           await keep(made, MenuItem.new({ id: "new", text: "New Tab", accelerator: "CmdOrCtrl+T", action: handlers.newTab })),
           await keep(made, MenuItem.new({ id: "open", text: "Open…", accelerator: "CmdOrCtrl+O", action: handlers.open })),
-          await recentSubmenu(made, handlers, theme, tabs, recents),
+          await recentSubmenu(made, handlers, theme, tabs, exporting, recents),
           await keep(made, PredefinedMenuItem.new({ item: "Separator" })),
           await keep(made, MenuItem.new({ id: "save", text: "Save", accelerator: "CmdOrCtrl+S", action: handlers.save })),
           await keep(made, MenuItem.new({ id: "saveas", text: "Save As…", accelerator: "CmdOrCtrl+Shift+S", action: handlers.saveAs })),
@@ -276,11 +296,66 @@ export async function buildMenu(handlers: MenuHandlers, theme: ThemeMenu, tabs: 
           await keep(made, MenuItem.new({ id: "svg", text: "Export SVG…", action: handlers.exportSvg })),
           await keep(made, PredefinedMenuItem.new({ item: "Separator" })),
           await keep(made, MenuItem.new({ id: "copyimg", text: "Copy image to clipboard", accelerator: "CmdOrCtrl+Shift+C", action: handlers.copyImage })),
+          await keep(made, PredefinedMenuItem.new({ item: "Separator" })),
+          await keep(
+            made,
+            CheckMenuItem.new({
+              id: "export-transparent",
+              text: "Transparent background",
+              checked: exporting.transparent,
+              action: () => exporting.setTransparent(!exporting.transparent),
+            }),
+          ),
+          await keep(
+            made,
+            CheckMenuItem.new({
+              id: "export-embed",
+              text: "Embed drawing in exported files",
+              checked: exporting.embedScene,
+              action: () => exporting.setEmbedScene(!exporting.embedScene),
+            }),
+          ),
+          await keep(
+            made,
+            Submenu.new({
+              text: "PNG scale",
+              items: await Promise.all(
+                EXPORT_SCALES.map((value) =>
+                  keep(
+                    made,
+                    CheckMenuItem.new({
+                      id: `export-scale-${value}`,
+                      text: `${value}×`,
+                      checked: exporting.scale === value,
+                      action: () => exporting.setScale(value),
+                    }),
+                  ),
+                ),
+              ),
+            }),
+          ),
         ],
       }),
     );
 
-    const view = await keep(made, Submenu.new({ text: "View", items: [await themeSubmenu(made, theme)] }));
+    const view = await keep(
+      made,
+      Submenu.new({
+        text: "View",
+        items: [
+          await themeSubmenu(made, theme),
+          await keep(made, PredefinedMenuItem.new({ item: "Separator" })),
+          await keep(
+            made,
+            MenuItem.new({
+              id: "library-er",
+              text: "Add ER diagram shapes to library",
+              action: handlers.addErShapes,
+            }),
+          ),
+        ],
+      }),
+    );
 
     const menu = await keep(
       made,

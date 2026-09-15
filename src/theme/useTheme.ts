@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { message } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import {
   deleteUserTheme,
@@ -9,6 +10,7 @@ import {
   saveUserTheme,
   systemColorScheme,
   themesDirPath,
+  COLOR_SCHEME_EVENT,
   type Settings,
   type ThemeFile,
 } from "../lib/api";
@@ -38,6 +40,8 @@ export interface ThemeController {
   userThemeIds: Set<string>;
   /** Where user themes live, for showing the user where their file went. */
   themesDir: string;
+  /** Settings, user themes and the desktop's scheme have been read, so `active` is the real one. */
+  ready: boolean;
   select: (id: string) => void;
   setSystemPair: (light: string, dark: string) => void;
   /**
@@ -85,6 +89,7 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
   const [systemDark, setSystemDark] = useState(false);
   const [draft, setDraft] = useState<Theme | null>(null);
   const [themesDir, setThemesDir] = useState("");
+  const [ready, setReady] = useState(false);
 
   const themes = useMemo(() => merge(userThemes), [userThemes]);
   const userThemeIds = useMemo(() => new Set(userThemes.map((t) => t.id)), [userThemes]);
@@ -120,13 +125,17 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
         readUserThemes(),
         themesDirPath().catch(() => ""),
       ]);
+      // StrictMode runs this effect twice in development, and the second read
+      // must not take the first one's result for a pick the user made.
+      const before = fromDisk.current;
       fromDisk.current = stored;
       // A theme picked in the moment before this resolved wins over the file,
       // and is copied so that the effect below sees a change and saves it.
-      setSettings((prev) => (prev === DEFAULT_SETTINGS ? stored : { ...prev }));
+      setSettings((prev) => (prev === DEFAULT_SETTINGS || prev === before ? stored : { ...prev }));
       setSystemDark(scheme === "dark");
       setUserThemes(user.themes);
       setThemesDir(dir);
+      setReady(true);
       // Errors are reported on an explicit reload, not on startup — a broken
       // file in the themes directory should not greet the user with a dialog.
       loaded.current = true;
@@ -149,8 +158,9 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
     previous.current = active;
   }, [api, active]);
 
-  // GNOME can flip between light and dark while we are running. Re-checking on
-  // focus is enough for a desktop app and costs nothing while idle.
+  // The desktop can flip between light and dark while we are running. The
+  // portal's change signal, forwarded by settings.rs, arrives the moment it
+  // does; re-checking on focus stays as the fallback for desktops without one.
   useEffect(() => {
     if (settings.theme !== SYSTEM_THEME) return;
     const refresh = () => {
@@ -159,7 +169,13 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
         .catch(() => {});
     };
     window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
+    const pending = listen<"light" | "dark">(COLOR_SCHEME_EVENT, ({ payload }) =>
+      setSystemDark(payload === "dark"),
+    );
+    return () => {
+      window.removeEventListener("focus", refresh);
+      void pending.then((unlisten) => unlisten());
+    };
   }, [settings.theme]);
 
   const select = useCallback((id: string) => {
@@ -222,6 +238,7 @@ export function useTheme(api: ExcalidrawImperativeAPI | null): ThemeController {
     systemPair,
     userThemeIds,
     themesDir,
+    ready,
     select,
     setSystemPair,
     preview,

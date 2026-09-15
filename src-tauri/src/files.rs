@@ -19,8 +19,28 @@ pub fn write_text_file(allowed: State<'_, Allowed>, path: String, contents: Stri
     write_atomic(&allowed.check(&path)?, contents.as_bytes())
 }
 
+/// Header carrying the target of a raw-body write, base64 so that any file name
+/// survives header encoding.
+const PATH_HEADER: &str = "x-path";
+
+fn header_path(request: &tauri::ipc::Request<'_>) -> Result<String, String> {
+    let encoded = request
+        .headers()
+        .get(PATH_HEADER)
+        .ok_or("missing path")?
+        .to_str()
+        .map_err(|e| e.to_string())?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|e| format!("bad path header: {e}"))?;
+    String::from_utf8(bytes).map_err(|e| format!("bad path header: {e}"))
+}
+
+/// A PNG export. The bytes are the raw request body: base64 inside JSON meant
+/// encoding, copying and decoding a multi-megabyte image on every export.
 #[tauri::command(async)]
-pub fn write_binary_file(allowed: State<'_, Allowed>, path: String, data: String) -> Result<(), String> {
+pub fn write_binary_file(allowed: State<'_, Allowed>, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let path = header_path(&request)?;
     let target = allowed.check(&path)?;
     // Only a PNG export is binary. Without this, an allowed drawing could be
     // overwritten with image bytes.
@@ -31,10 +51,10 @@ pub fn write_binary_file(allowed: State<'_, Allowed>, path: String, data: String
     if !png {
         return Err(format!("{path}: not a PNG file"));
     }
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data.as_bytes())
-        .map_err(|e| format!("bad image payload: {e}"))?;
-    write_atomic(&target, &bytes)
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the image as raw bytes".into());
+    };
+    write_atomic(&target, bytes)
 }
 
 /// Unique within this process, and across processes by the pid.
