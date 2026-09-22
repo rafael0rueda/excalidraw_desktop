@@ -24,9 +24,36 @@ fn require_extension(path: &Path, extensions: &[&str]) -> Result<(), String> {
 // File commands run on Tauri's thread pool rather than inline in the IPC
 // handler, which is the GTK main thread: a large drawing read or written there
 // froze the whole window for as long as it took.
+/// A drawing larger than this is not a drawing. Generous — a scene with images
+/// embedded in it runs to tens of megabytes — but bounded, so that a mistaken
+/// pick cannot pull an arbitrary file into the webview's memory.
+const MAX_TEXT_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Whether `path` is something this app can sensibly read whole.
+///
+/// The Open dialog will hand back whatever the user typed into it, and
+/// `read_to_string` on a FIFO or a character device blocks the thread it runs
+/// on for good, with nothing on screen to say why. `cli_drawings` already
+/// refuses those with `is_file`; this is the same check on the other way in.
+fn readable(path: &Path, max: u64) -> Result<(), String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !meta.is_file() {
+        return Err(format!("{}: not a regular file", path.display()));
+    }
+    if meta.len() > max {
+        return Err(format!(
+            "{}: too large to open ({} bytes, limit {max})",
+            path.display(),
+            meta.len()
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command(async)]
 pub fn read_text_file(allowed: State<'_, Allowed>, path: String) -> Result<String, String> {
     let path = allowed.check(&path)?;
+    readable(&path, MAX_TEXT_BYTES)?;
     std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -131,7 +158,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{require_extension, write_atomic, TEXT_EXTENSIONS};
+    use super::{readable, require_extension, write_atomic, MAX_TEXT_BYTES, TEXT_EXTENSIONS};
     use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::Path;
 
@@ -155,6 +182,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn only_a_regular_file_of_a_sane_size_is_read() {
+        let dir = scratch_dir("readable");
+        let file = dir.join("plan.excalidraw");
+        std::fs::write(&file, "{}").unwrap();
+
+        assert!(readable(&file, MAX_TEXT_BYTES).is_ok());
+        assert!(readable(&dir, MAX_TEXT_BYTES).is_err(), "a directory is not a drawing");
+        assert!(readable(&dir.join("gone.excalidraw"), MAX_TEXT_BYTES).is_err());
+        // The limit itself rather than a 256 MiB fixture: what is under test is
+        // that the size is looked at at all.
+        assert!(readable(&file, 1).is_err(), "a file over the limit is refused");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
