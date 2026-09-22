@@ -1084,11 +1084,33 @@ To check by hand: export an SVG with text and confirm the fonts are inlined
 filename); two fast Ctrl+Shift+S raise one dialog; a read-only
 `XDG_CONFIG_HOME` produces exactly one autosave warning; Open, Save, Save As,
 both exports and Open Recent all still work after the extension rule.
-Still open from this review: T1 (`documentState.ts` extraction), I1 (CI,
-clippy), I2 (`isDark`). Also unverified: whether the JS shortcut mirror and
+Still open from this review: none of the code items — see below. Also unverified: whether the JS shortcut mirror and
 the GTK menu accelerators can both fire for one keystroke — GTK3 activates
 window accelerators before the focused widget, so the mirror is probably dead
 code for those keys, but Save As and Export are where a double-fire would show.
+
+**T1, I1, I2 done 2026-09-22** (`npm run check` 25/25, `tsc`, `vite build`,
+`cargo test` 17/17; not yet seen by eye):
+- T1 `src/lib/documentState.ts` holds the decisions `document.ts` used to make
+  inside the hook: `captureMark`/`nextRev`, `snapshotPlan`/`worthWriting`/
+  `nextWritten`, `recoverySubject`/`recoveredSession`, `activeFrom`/
+  `reopenedContent`. No runtime imports beyond `./tabs`, so `check.mjs` loads
+  it. The session shapes (`Session`, `SessionTab`, `TabSnapshot`) moved here
+  too, beside the code that builds and reads them; `api.ts` re-exports them.
+  Behaviour is unchanged — `written` is still pruned against the tab list as
+  it stands *after* the await rather than the list that was sent.
+  Nine new checks, 16 → 25. Each was confirmed to bite by breaking what it
+  covers: a recovered dirty tab coming back clean (stops at 22), the session
+  file rewritten on every pointer move (17), a tab already on disk sent again
+  (16).
+- I1 `.github/workflows/ci.yml`: `check` + `build` + `npm audit` on one job,
+  `cargo test` + `cargo clippy -D warnings` against the GTK/webkit2gtk system
+  libraries on the other. **Clippy has never run** — Fedora's Rust toolchain
+  ships none and installing it needs root — so the first workflow run is the
+  first time it has been asked. Red there is the lint speaking, not a
+  regression. cargo-audit is still not covered: it needs a source install per
+  run or a third-party action, and neither earns its keep yet.
+- I2 `isDark` deleted.
 
 Plan (user, 2026-09-22): phases 0–3 only — C1, B1–B4, H1–H4, one commit each,
 gated by `npm run check`, `tsc --noEmit` and `cargo test`. T1 (extracting the
