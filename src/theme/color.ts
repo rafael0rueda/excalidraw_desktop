@@ -45,10 +45,3 @@ export function alpha(hex: string, a: number): string {
   return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${a})`;
 }
 
-/** Perceived lightness, for deciding what to put on top of a colour. */
-export function isDark(hex: string): boolean {
-  const rgb = parse(hex);
-  if (!rgb) return false;
-  const [r, g, b] = rgb.map((v) => v / 255);
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5;
-}
