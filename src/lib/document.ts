@@ -43,6 +43,12 @@ import {
 const AUTOSAVE_DELAY_MS = 1500;
 /** Longest a snapshot may lag behind while the user keeps drawing. */
 const AUTOSAVE_MAX_MS = 10_000;
+/**
+ * Consecutive failed snapshots before the user is told. A single failure is
+ * not worth a dialog — the next one a second later usually works — but a
+ * standing one means crash recovery is dead, and nothing else would say so.
+ */
+const AUTOSAVE_FAILURES_BEFORE_WARNING = 3;
 
 type ParsedScene = Awaited<ReturnType<typeof parseScene>>;
 
@@ -524,6 +530,9 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   const ending = useRef(false);
   /** The tab list and active tab as the session file last saw them. */
   const writtenMeta = useRef("");
+  /** Snapshots that have failed in a row, and whether that has been reported. */
+  const failures = useRef(0);
+  const warned = useRef(false);
 
   const snapshot = useCallback(
     (final = false): Promise<void> => {
@@ -554,13 +563,30 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
           // new to record, the session file is not rewritten and synced again.
           if (!sent.size && meta === writtenMeta.current) return;
           await saveSession(payload, active);
+          failures.current = 0;
           writtenMeta.current = meta;
           for (const [id, rev] of sent) written.current.set(id, rev);
           for (const id of [...written.current.keys()]) {
             if (!tabsRef.current.some((tab) => tab.id === id)) written.current.delete(id);
           }
-        } catch {
-          // Autosave is best effort; a failure here must never interrupt drawing.
+        } catch (err) {
+          // Autosave is best effort; a failure here must never interrupt
+          // drawing. But staying silent for the whole session left the app
+          // showing unsaved marks and a tab bar that imply a snapshot exists
+          // when the config directory is read-only or full, and nothing else
+          // would ever mention it. Said once, and never while quitting, where
+          // a dialog would only stand between the user and the exit.
+          failures.current += 1;
+          if (failures.current >= AUTOSAVE_FAILURES_BEFORE_WARNING && !warned.current && !ending.current) {
+            warned.current = true;
+            // Not awaited: the snapshot queue must not wait on a dialog.
+            void message(
+              "Autosave has failed several times, so this app cannot keep crash-recovery " +
+                "snapshots of the drawings you have open.\n\nSaving a drawing to its own " +
+                `file still works — use File → Save. Reported once per run.\n\n${String(err)}`,
+              { title: "Autosave is not working", kind: "warning" },
+            ).catch(() => {});
+          }
         }
       });
       inFlight.current = run;
