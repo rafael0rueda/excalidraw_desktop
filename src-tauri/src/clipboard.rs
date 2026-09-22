@@ -19,7 +19,7 @@ pub fn copy_image_to_clipboard(app: tauri::AppHandle, request: tauri::ipc::Reque
             let _ = tx.send(set_clipboard_image(&bytes));
         })
         .map_err(|e| e.to_string())?;
-        return rx.recv().map_err(|e| e.to_string())?;
+        rx.recv().map_err(|e| e.to_string())?
     }
 
     #[cfg(not(target_os = "linux"))]

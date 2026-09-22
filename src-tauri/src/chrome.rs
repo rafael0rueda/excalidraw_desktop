@@ -153,7 +153,7 @@ pub fn set_menu_colors(app: tauri::AppHandle, colors: MenuColors) -> Result<(), 
             let _ = tx.send(install(css));
         })
         .map_err(|e| e.to_string())?;
-        return rx.recv().map_err(|e| e.to_string())?;
+        rx.recv().map_err(|e| e.to_string())?
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -183,7 +183,7 @@ pub fn set_prefer_dark_theme(app: tauri::AppHandle, dark: bool) -> Result<(), St
             let _ = tx.send(install_prefer_dark(dark));
         })
         .map_err(|e| e.to_string())?;
-        return rx.recv().map_err(|e| e.to_string())?;
+        rx.recv().map_err(|e| e.to_string())?
     }
 
     #[cfg(not(target_os = "linux"))]

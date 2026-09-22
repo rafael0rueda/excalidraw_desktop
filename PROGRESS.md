@@ -1105,11 +1105,18 @@ code for those keys, but Save As and Export are where a double-fire would show.
   (16).
 - I1 `.github/workflows/ci.yml`: `check` + `build` + `npm audit` on one job,
   `cargo test` + `cargo clippy -D warnings` against the GTK/webkit2gtk system
-  libraries on the other. **Clippy has never run** — Fedora's Rust toolchain
-  ships none and installing it needs root — so the first workflow run is the
-  first time it has been asked. Red there is the lint speaking, not a
-  regression. cargo-audit is still not covered: it needs a source install per
-  run or a third-party action, and neither earns its keep yet.
+  libraries on the other. The first run went red on clippy, which had never
+  been asked anything before: three `needless_return`s, one lint, all of them
+  the `return rx.recv()...?` that ends the `#[cfg(target_os = "linux")]` block
+  in `set_menu_colors`, `set_prefer_dark_theme` and
+  `copy_image_to_clipboard`. Dropping the `return` makes the cfg block the
+  function's tail expression, which is what it already was on every other
+  platform. Fixed rather than allowed, and the gate stays at `-D warnings`:
+  a whole codebase's first clippy run costing three lines is an argument for
+  keeping it on. Install it with `sudo dnf install clippy` (Fedora's rustc
+  ships without it; the packaged version matches the toolchain).
+  cargo-audit is still not covered: it needs a source install per run or a
+  third-party action, and neither earns its keep yet.
 - I2 `isDark` deleted.
 
 Plan (user, 2026-09-22): phases 0–3 only — C1, B1–B4, H1–H4, one commit each,
