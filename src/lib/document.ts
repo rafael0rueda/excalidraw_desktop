@@ -117,9 +117,10 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   const savedVersion = useRef(0);
 
   /**
-   * False between handing Excalidraw a scene and Excalidraw committing it.
-   * `getSceneElements()` still reports the outgoing drawing in that window, so
-   * capturing then would file one tab's scene under another tab's id.
+   * False between deciding to put a scene on screen and Excalidraw committing
+   * it. `getSceneElements()` still reports the outgoing drawing for that whole
+   * window — which starts at `show()`, before the scene has even been parsed —
+   * so capturing then would file one tab's scene under another tab's id.
    */
   const committed = useRef(true);
 
@@ -249,6 +250,13 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     async (id: string): Promise<void> => {
       if (!api) return;
       const content = contentOf(id);
+      // Lowered here rather than in `applyScene`, which is only reached after
+      // the parse below has awaited. In that window `activeRef` already names
+      // the incoming tab while the canvas still holds the outgoing one, so a
+      // capture landing there filed one drawing under another tab's id. The
+      // caller has already captured what it is leaving, so suppressing
+      // captures from here until the new scene is committed loses nothing.
+      committed.current = false;
       let scene: ParsedScene;
       try {
         scene = await parseScene(content.scene);
