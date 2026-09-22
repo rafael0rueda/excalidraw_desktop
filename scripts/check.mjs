@@ -7,7 +7,7 @@
  *   node scripts/check.mjs
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
@@ -167,6 +167,26 @@ check("shortcuts follow the layout for letters and the position for digits", () 
   assert.equal(t.shortcutKey("1", "Numpad1"), "1");
   assert.equal(t.shortcutKey("б", "Comma"), ",");
   assert.equal(t.shortcutKey("PageDown", "PageDown"), "PageDown");
+});
+
+check("the CSP lets the page fetch its own assets", () => {
+  // Excalidraw inlines fonts into an SVG export by fetching the woff2 itself
+  // (`fetchFont`, main chunk) — without 'self' the fetch is blocked, the
+  // export still succeeds, and the text falls back to another font everywhere
+  // but here. On-screen and PNG rendering go through font-src, so this hides.
+  const config = JSON.parse(
+    readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+  );
+  const directives = Object.fromEntries(
+    config.app.security.csp
+      .split(";")
+      .map((part) => part.trim().split(/\s+/))
+      .filter(([name]) => name)
+      .map(([name, ...values]) => [name, values]),
+  );
+  assert.ok(directives["connect-src"]?.includes("'self'"), "connect-src must allow 'self'");
+  assert.ok(directives["connect-src"]?.includes("ipc:"), "connect-src must still allow Tauri's IPC");
+  assert.ok(directives["object-src"]?.includes("'none'"), "object-src must stay closed");
 });
 
 console.log(`\n${checks} checks passed`);
