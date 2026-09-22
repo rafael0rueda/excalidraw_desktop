@@ -1052,6 +1052,44 @@ Findings
 - I1 no CI, and `cargo clippy` has never run (not installed).
 - I2 `isDark` is unused.
 
+**Phases 0–3 done 2026-09-22** (`npm run check` 16/16, `tsc`, `vite build`,
+`cargo test` 17/17, `npm audit --omit=dev` 0; not yet seen by eye):
+- C1 `connect-src 'self'` added. `npm run check` grew a guard that parses the
+  CSP out of `tauri.conf.json` and asserts the directive, since the reason it
+  is there is invisible from the string itself.
+- B1 `pushRecent` is best effort and runs after the write has been declared a
+  success, so a recent-list failure can no longer report a saved drawing as
+  unsaved.
+- B2 `committed` is lowered at the top of `show()` rather than inside
+  `applyScene`, closing the window where a capture could file one tab's scene
+  under another tab's id.
+- B3 three consecutive snapshot failures raise one warning per run, naming the
+  last error. Not while `ending`, and not awaited, so the snapshot queue never
+  waits on a dialog.
+- B4 `App.tsx` holds a `busy` ref: Open, Save, Save As and the three exports
+  run one at a time. Close and quit keep their own guards, and the save a
+  close prompt runs goes straight to `actions`, so it never waits on this one.
+- H1 `require_extension` is shared by `write_text_file` (`.excalidraw`, `.svg`)
+  and `write_binary_file` (`.png`), applied to the resolved path.
+- H2 `read_text_file` refuses anything that is not a regular file (a FIFO used
+  to block its thread for good) and anything over 256 MiB.
+- H3 `ensure_private_dir` moved to `store.rs` and now runs on `config_dir()`
+  at startup, so `recent.json` no longer sits in a world-readable directory.
+  `clear_session` deleted: never called, and a free way for a compromised
+  renderer to delete the recovery snapshots.
+- H4 `session/unreadable/` keeps its newest ten, is created privately, and no
+  longer renames a second failure over the first within the same second.
+To check by hand: export an SVG with text and confirm the fonts are inlined
+(`grep -c "@font-face"`, and that `src:` is a `data:font/woff2`, not a bare
+filename); two fast Ctrl+Shift+S raise one dialog; a read-only
+`XDG_CONFIG_HOME` produces exactly one autosave warning; Open, Save, Save As,
+both exports and Open Recent all still work after the extension rule.
+Still open from this review: T1 (`documentState.ts` extraction), I1 (CI,
+clippy), I2 (`isDark`). Also unverified: whether the JS shortcut mirror and
+the GTK menu accelerators can both fire for one keystroke — GTK3 activates
+window accelerators before the focused widget, so the mirror is probably dead
+code for those keys, but Save As and Export are where a double-fire would show.
+
 Plan (user, 2026-09-22): phases 0–3 only — C1, B1–B4, H1–H4, one commit each,
 gated by `npm run check`, `tsc --noEmit` and `cargo test`. T1 (extracting the
 pure decision points of `document.ts` into `documentState.ts` so `check.mjs`
