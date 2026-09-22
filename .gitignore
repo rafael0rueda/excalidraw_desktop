@@ -3,4 +3,5 @@ dist/
 src-tauri/target/
 public/fonts/
 public/*.woff2
+test/
 *.log

@@ -1053,7 +1053,7 @@ Findings
 - I2 `isDark` is unused.
 
 **Phases 0–3 done 2026-09-22** (`npm run check` 16/16, `tsc`, `vite build`,
-`cargo test` 17/17, `npm audit --omit=dev` 0; not yet seen by eye):
+`cargo test` 17/17, `npm audit --omit=dev` 0; seen by eye in 0.5.1, see below):
 - C1 `connect-src 'self'` added. `npm run check` grew a guard that parses the
   CSP out of `tauri.conf.json` and asserts the directive, since the reason it
   is there is invisible from the string itself.
@@ -1090,7 +1090,7 @@ window accelerators before the focused widget, so the mirror is probably dead
 code for those keys, but Save As and Export are where a double-fire would show.
 
 **T1, I1, I2 done 2026-09-22** (`npm run check` 25/25, `tsc`, `vite build`,
-`cargo test` 17/17; not yet seen by eye):
+`cargo test` 17/17; seen by eye in 0.5.1, see below):
 - T1 `src/lib/documentState.ts` holds the decisions `document.ts` used to make
   inside the hook: `captureMark`/`nextRev`, `snapshotPlan`/`worthWriting`/
   `nextWritten`, `recoverySubject`/`recoveredSession`, `activeFrom`/
@@ -1125,6 +1125,21 @@ pure decision points of `document.ts` into `documentState.ts` so `check.mjs`
 can reach `snapshotPayload`, `restorePlan`, `captureMark` and `dirtyFor`) and
 I1/I2 are deferred, deliberately: the tests are worth more written against
 known-correct behaviour than codifying today's.
+
+**Verified by hand on 0.5.1, 2026-09-22** — installed from the RPM and run,
+rather than reasoned about:
+- C1 an SVG exported from a drawing with text is 35 kB and contains a
+  `data:font/woff2`, so the font is inlined and the file travels. This is the
+  defect the review was written for, and it is the first time the fix has been
+  seen rather than argued from the bundle source.
+- B4 two fast Ctrl+Shift+S raise one dialog.
+- B2 two drawings open, switching while editing: each tab keeps its own scene
+  and its own unsaved dot.
+- H1/H2 Open, Save, Save As, Open Recent and both exports all behave as
+  before — the write and read guards refuse nothing they should not.
+- Recovery after `kill -9` with unsaved work still restores.
+Not checked by hand, and still worth doing some time: the autosave warning
+(B3), which needs a read-only `XDG_CONFIG_HOME` to provoke.
 
 ## Gotchas
 
