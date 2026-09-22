@@ -1050,7 +1050,7 @@ Findings
   is the one module `scripts/check.mjs` cannot load. The tested modules are
   the easy ones.
 - I1 no CI, and `cargo clippy` has never run (not installed).
-- I2 `isDark` is unused; `dist/` is both committed and in `.gitignore`.
+- I2 `isDark` is unused.
 
 Plan (user, 2026-09-22): phases 0–3 only — C1, B1–B4, H1–H4, one commit each,
 gated by `npm run check`, `tsc --noEmit` and `cargo test`. T1 (extracting the

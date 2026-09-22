@@ -52,18 +52,36 @@ export default function App() {
     embedScene: preferences.current.embed_scene,
   });
 
+  /**
+   * One file operation at a time. Every handler below can raise a native
+   * dialog, and a second Ctrl+S or Export while the first is still up stacked
+   * a second dialog over it — two pickers then racing to set one tab's path.
+   * Closing and quitting are not routed through here: they have guards of
+   * their own (`prompting`, `quitting`), and the save a close prompt runs goes
+   * straight to `actions`, so it never waits on this one.
+   */
+  const busy = useRef(false);
+  const once = useCallback((run: () => Promise<unknown>) => {
+    if (busy.current) return;
+    busy.current = true;
+    void run().finally(() => {
+      busy.current = false;
+    });
+  }, []);
+
   const handlers: MenuHandlers = {
     newTab: () => void actions.newTab(),
     closeTab: () => void actions.closeTab(),
-    open: () => void actions.openDrawing(),
-    openRecent: (path) => void actions.openDrawing(path),
-    save: () => void actions.save(),
-    saveAs: () => void actions.saveAs(),
-    exportPng: () => api && void exportPng(api, activePath.current, exportOptions()),
+    open: () => once(() => actions.openDrawing()),
+    openRecent: (path) => once(() => actions.openDrawing(path)),
+    save: () => once(() => actions.save()),
+    saveAs: () => once(() => actions.saveAs()),
+    exportPng: () => api && once(() => exportPng(api, activePath.current, exportOptions())),
     exportPngSelection: () =>
-      api && void exportPng(api, activePath.current, { ...exportOptions(), selectionOnly: true }),
-    exportSvg: () => api && void exportSvg(api, activePath.current, exportOptions()),
-    copyImage: () => api && void copyToClipboard(api, exportOptions()),
+      api &&
+      once(() => exportPng(api, activePath.current, { ...exportOptions(), selectionOnly: true })),
+    exportSvg: () => api && once(() => exportSvg(api, activePath.current, exportOptions())),
+    copyImage: () => api && once(() => copyToClipboard(api, exportOptions())),
     addErShapes: () => api && void addErShapes(api),
     quit: () => void closeWindow(),
   };
