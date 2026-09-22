@@ -997,6 +997,68 @@ seeded tab was restored and autosaved with its path about 16 s after
   result for a user change. Both loaders now also compare against the previous
   `fromDisk`. Dev-only; production runs effects once.
 
+## Review 2026-09-22 — findings, and the plan for them
+
+Baseline at review time: `tsc` clean, `npm run check` 15/15, `cargo test` 14/14,
+`npm audit --omit=dev` 0. Verified against the installed sources, not guessed:
+`send_user_message` in tauri-runtime-wry 2.11.4 runs the closure inline when it
+is already on the main thread, so the `run_on_main_thread` + `rx.recv()` pattern
+in `chrome.rs` cannot deadlock even though those two commands are sync; the
+opener capability's scope really is `mailto:`/`tel:`/`http://`/`https://` only
+(`gen/schemas/acl-manifests.json`); tauri-utils injects a nonce into `<style>`
+tags in `index.html`, so `style-src 'self'` does not break the inline block
+there; React sets inline styles through CSSOM, which CSP does not govern.
+
+Findings
+
+- C1 `connect-src ipc: http://ipc.localhost` omits `'self'`, so Excalidraw's
+  `fetchFont` (`fetch(url, {headers:{Accept:"font/woff2"}})`, main chunk) is
+  blocked when it inlines fonts into an SVG export. It catches the failure,
+  logs `Failed to fetch font family`, and falls back to emitting the bare
+  relative URL — so the export *succeeds* and the text renders in a fallback
+  font anywhere but here. On-screen and PNG rendering go through `font-src`,
+  which is why this hides. The CSP string is Tauri's documentation example,
+  which assumes a frontend that never fetches.
+- B1 `writeTo` shares one `try` between `writeTextFile` and `pushRecent`, so a
+  recent-list failure is reported as "Could not save" after the bytes reached
+  disk, and leaves the tab dirty under its old path. `openDrawing` already
+  treats `pushRecent` as best effort.
+- B2 `committed` is lowered inside `applyScene`, but `show()` awaits
+  `parseScene` before reaching it. In that window `activeRef` names the
+  incoming tab while the canvas still holds the outgoing one, so an `onChange`
+  landing there files the old scene under the new tab's id. Self-healing —
+  `applyScene` overwrites the entry with the text read before the await — but
+  the invariant is briefly false.
+- B3 the autosave `catch` is silent for the whole session, so a read-only or
+  full config directory means crash recovery is dead while the tab bar still
+  shows unsaved marks.
+- B4 no re-entrancy guard on Save As or the exports (`closeTab`/`closeWindow`
+  have one); two quick Ctrl+Shift+S stack two GTK dialogs.
+- H1 `write_text_file` takes any extension, while `write_binary_file` requires
+  `.png`. Callers only ever write `.excalidraw` and `.svg`.
+- H2 `read_text_file` has no size ceiling and no regular-file check, so a
+  hand-typed FIFO in the Open dialog blocks a thread-pool thread for good.
+  `cli_drawings` already guards this with `is_file()`.
+- H3 `~/.config/excalidraw-desktop` is left at the umask's 0755 when
+  `save_settings` creates it before `session/` does; `recent.json` (every path
+  opened) sits in it at 0644. `clear_session` is registered but never called
+  from the UI.
+- H4 `session/unreadable/` grows without bound and is created by
+  `create_dir_all` rather than `ensure_private_dir` (safe only because the
+  0700 parent covers it).
+- T1 `document.ts` is 844 lines, owns every path where work can be lost, and
+  is the one module `scripts/check.mjs` cannot load. The tested modules are
+  the easy ones.
+- I1 no CI, and `cargo clippy` has never run (not installed).
+- I2 `isDark` is unused; `dist/` is both committed and in `.gitignore`.
+
+Plan (user, 2026-09-22): phases 0–3 only — C1, B1–B4, H1–H4, one commit each,
+gated by `npm run check`, `tsc --noEmit` and `cargo test`. T1 (extracting the
+pure decision points of `document.ts` into `documentState.ts` so `check.mjs`
+can reach `snapshotPayload`, `restorePlan`, `captureMark` and `dirtyFor`) and
+I1/I2 are deferred, deliberately: the tests are worth more written against
+known-correct behaviour than codifying today's.
+
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that
