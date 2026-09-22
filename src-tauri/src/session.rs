@@ -251,6 +251,33 @@ pub fn mark_clean_exit() -> Result<(), String> {
     write_meta(&meta)
 }
 
+/// How many unreadable snapshots are kept. The app never reads them again —
+/// they exist so the user can try the file in another tool — so without a
+/// bound the directory grows for the life of the install.
+const MAX_UNREADABLE: usize = 10;
+
+/// Drops all but the newest `MAX_UNREADABLE`.
+fn prune_unreadable(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|path| path.is_file())
+        .collect();
+    let Some(excess) = files.len().checked_sub(MAX_UNREADABLE).filter(|n| *n > 0) else {
+        return;
+    };
+    // Oldest first. By modification time rather than by name: the name carries
+    // a timestamp, but it carries the tab id ahead of it, so sorting by name
+    // would order the pile by tab instead of by when.
+    files.sort_by_key(|path| path.metadata().and_then(|meta| meta.modified()).ok());
+    for path in files.iter().take(excess) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 /// Moves a snapshot the renderer could not parse out of `prune`'s way, so that
 /// closing its tab does not delete what may be the only copy. It keeps its
 /// extension, for trying it in another tool. Returns where it went.
@@ -260,9 +287,19 @@ pub fn keep_unreadable_snapshot(id: String) -> Result<String, String> {
     let _session = session_lock();
     let from = scene_path(&id);
     let dir = session_dir().join("unreadable");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let to = dir.join(format!("{id}-{}.excalidraw", now()));
+    ensure_private_dir(&dir)?;
+    // `now()` counts seconds, and one tab failing twice inside the same one
+    // would otherwise rename the second copy over the first — precisely the
+    // loss this function exists to prevent.
+    let stamp = now();
+    let mut to = dir.join(format!("{id}-{stamp}.excalidraw"));
+    let mut n = 2;
+    while to.exists() {
+        to = dir.join(format!("{id}-{stamp}-{n}.excalidraw"));
+        n += 1;
+    }
     std::fs::rename(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+    prune_unreadable(&dir);
     Ok(to.to_string_lossy().into_owned())
 }
 
@@ -371,6 +408,19 @@ mod tests {
         save(&allowed, vec![tab("ccc", None, Some("{}"))], Some("ccc".into())).unwrap();
         assert_eq!(std::fs::read_to_string(&kept).unwrap(), "not a drawing");
         assert!(keep_unreadable_snapshot("../escape".into()).is_err());
+
+        // --- and the pile of them is bounded
+        let unreadable = session_dir().join("unreadable");
+        let mode = std::fs::metadata(&unreadable).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "they are whole drawings too");
+        for n in 0..MAX_UNREADABLE + 5 {
+            write_atomic(&unreadable.join(format!("filler-{n}.excalidraw")), b"x").unwrap();
+        }
+        prune_unreadable(&unreadable);
+        let left = std::fs::read_dir(&unreadable).unwrap().flatten().count();
+        // The count alone: these are written in the same instant, so which of
+        // them survives a tie in modification time is not worth asserting on.
+        assert_eq!(left, MAX_UNREADABLE);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
