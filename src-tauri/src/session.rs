@@ -7,7 +7,7 @@
 
 use crate::files::write_atomic;
 use crate::scope::Allowed;
-use crate::store::{config_dir, now, safe_id};
+use crate::store::{config_dir, ensure_private_dir, now, safe_id};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -109,18 +109,6 @@ fn legacy_scene_path() -> PathBuf {
 
 fn meta_path() -> PathBuf {
     session_dir().join("meta.json")
-}
-
-/// Snapshots are whole drawings, so the directory holding them is the user's
-/// alone rather than whatever the umask makes it.
-fn ensure_private_dir(dir: &Path) -> Result<(), String> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
-        .and_then(|()| std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)))
-        .map_err(|e| format!("{}: {e}", dir.display()))
 }
 
 fn read_meta() -> Option<SessionMeta> {
@@ -263,21 +251,6 @@ pub fn mark_clean_exit() -> Result<(), String> {
     write_meta(&meta)
 }
 
-#[tauri::command(async)]
-pub fn clear_session() -> Result<(), String> {
-    let _session = session_lock();
-    let mut paths = snapshot_files();
-    paths.push(meta_path());
-    for path in paths {
-        if let Err(e) = std::fs::remove_file(&path) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                return Err(format!("{}: {e}", path.display()));
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Moves a snapshot the renderer could not parse out of `prune`'s way, so that
 /// closing its tab does not delete what may be the only copy. It keeps its
 /// extension, for trying it in another tool. Returns where it went.
@@ -398,10 +371,6 @@ mod tests {
         save(&allowed, vec![tab("ccc", None, Some("{}"))], Some("ccc".into())).unwrap();
         assert_eq!(std::fs::read_to_string(&kept).unwrap(), "not a drawing");
         assert!(keep_unreadable_snapshot("../escape".into()).is_err());
-
-        clear_session().unwrap();
-        assert!(load(&allowed).is_none());
-        clear_session().expect("clearing twice is not an error");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

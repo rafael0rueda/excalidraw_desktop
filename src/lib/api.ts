@@ -98,7 +98,6 @@ export const saveSession = (tabs: TabSnapshot[], active: string | null) =>
   invoke<void>("save_session", { tabs, active });
 export const loadSession = () => invoke<Session | null>("load_session");
 export const markCleanExit = () => invoke<void>("mark_clean_exit");
-export const clearSession = () => invoke<void>("clear_session");
 /** Moves an unparseable snapshot out of the way of pruning; resolves to where it went. */
 export const keepUnreadableSnapshot = (id: string) =>
   invoke<string>("keep_unreadable_snapshot", { id });

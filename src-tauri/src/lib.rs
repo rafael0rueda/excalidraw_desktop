@@ -187,6 +187,13 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // Before anything writes into it: `save_settings` creating it
+            // first would otherwise leave the directory holding `recent.json`
+            // — every path the user has opened — at whatever the umask makes
+            // it. Best effort: the writes themselves still report their own
+            // failures, and a config directory we cannot tighten is not a
+            // reason to refuse to start.
+            let _ = store::ensure_private_dir(&store::config_dir());
             // Named on the command line by the user, so the renderer may read them.
             let files = startup_drawings();
             let allowed = scope::Allowed::default();
@@ -219,7 +226,6 @@ pub fn run() {
             session::save_session,
             session::load_session,
             session::mark_clean_exit,
-            session::clear_session,
             session::keep_unreadable_snapshot,
             settings::load_settings,
             settings::save_settings,
