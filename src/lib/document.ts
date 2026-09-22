@@ -16,8 +16,18 @@ import {
   startupFiles,
   OPEN_FILES_EVENT,
   writeTextFile,
-  type TabSnapshot,
 } from "./api";
+import {
+  activeFrom,
+  captureMark,
+  nextRev,
+  nextWritten,
+  recoveredSession,
+  recoverySubject,
+  reopenedContent,
+  snapshotPlan,
+  worthWriting,
+} from "./documentState";
 import {
   currentView,
   emptyScene,
@@ -26,9 +36,7 @@ import {
   serializeScene,
 } from "./scene";
 import {
-  NEVER_SAVED,
   UNPARSED,
-  basename,
   findByPath,
   newTabId,
   relativeId,
@@ -171,13 +179,13 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     const id = activeRef.current;
     const prev = store.current.get(id);
     const all = api.getSceneElementsIncludingDeleted();
-    const mark = [
+    const mark = captureMark(
       id,
       sceneVersion(all),
       all.length,
       api.getAppState().viewBackgroundColor,
       Object.keys(api.getFiles()).length,
-    ].join(":");
+    );
     if (opts.onlyIfChanged && prev && mark === capturedMark.current) return;
     capturedMark.current = mark;
     const scene = serializeScene(api);
@@ -185,9 +193,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       scene,
       view: currentView(api),
       savedVersion: savedVersion.current,
-      // The revision only moves when the drawing does, which is what lets
-      // autosave leave untouched tabs alone.
-      rev: prev && prev.scene === scene ? prev.rev : (prev?.rev ?? 0) + 1,
+      rev: nextRev(prev, scene),
     });
   }, [api]);
 
@@ -222,12 +228,11 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       api.history.clear();
 
       savedVersion.current = opts.savedVersion ?? sceneVersion(scene.elements);
-      const prev = store.current.get(id);
       store.current.set(id, {
         scene: text,
         view: opts.view ?? null,
         savedVersion: savedVersion.current,
-        rev: prev && prev.scene === text ? prev.rev : (prev?.rev ?? 0) + 1,
+        rev: nextRev(store.current.get(id), text),
       });
     },
     [api],
@@ -543,32 +548,20 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         if (!api || !restored.current || (ending.current && !final)) return;
         try {
           capture({ onlyIfChanged: !final });
-          // The revision each scene was sent at, taken now: the tab may be
-          // captured again while the write is in flight.
-          const sent = new Map<string, number>();
-          const payload: TabSnapshot[] = tabsRef.current.map((tab) => {
-            const content = store.current.get(tab.id);
-            const snap: TabSnapshot = { id: tab.id, path: tab.path, dirty: tab.dirty };
-            // A drawing nobody has touched since the last snapshot is already on disk;
-            // sending it again would rewrite every open tab on every keystroke.
-            if (content && written.current.get(tab.id) !== content.rev) {
-              snap.scene = content.scene;
-              sent.set(tab.id, content.rev);
-            }
-            return snap;
-          });
+          // Planned before the write, so the revisions recorded afterwards are
+          // the ones that actually went out: the tab may well be captured again
+          // while the write is in flight.
+          const tabs = tabsRef.current;
           const active = activeRef.current;
-          const meta = JSON.stringify([payload.map(({ id, path, dirty }) => [id, path, dirty]), active]);
-          // Excalidraw reports pointer movement as a change as well. With nothing
-          // new to record, the session file is not rewritten and synced again.
-          if (!sent.size && meta === writtenMeta.current) return;
-          await saveSession(payload, active);
+          const plan = snapshotPlan(tabs, active, (id) => store.current.get(id), written.current);
+          if (!worthWriting(plan, writtenMeta.current)) return;
+          await saveSession(plan.payload, active);
           failures.current = 0;
-          writtenMeta.current = meta;
-          for (const [id, rev] of sent) written.current.set(id, rev);
-          for (const id of [...written.current.keys()]) {
-            if (!tabsRef.current.some((tab) => tab.id === id)) written.current.delete(id);
-          }
+          writtenMeta.current = plan.meta;
+          // Against the tabs as they stand *now*, not the list that was sent:
+          // one closed while the write was in flight has had its snapshot
+          // pruned already, so its revision must not linger here.
+          written.current = nextWritten(written.current, plan, tabsRef.current);
         } catch (err) {
           // Autosave is best effort; a failure here must never interrupt
           // drawing. But staying silent for the whole session left the app
@@ -733,12 +726,8 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
 
     // Changes the files on disk do not have only survive an unclean exit —
     // after an orderly one the user already chose to save or discard them.
-    const unsaved = session.tabs.filter((tab) => tab.dirty);
-    if (!session.clean_exit && unsaved.length) {
-      const subject =
-        unsaved.length === 1
-          ? `${unsaved[0].path ? basename(unsaved[0].path) : "An unsaved drawing"} was`
-          : `${unsaved.length} drawings were`;
+    const subject = recoverySubject(session);
+    if (subject) {
       // Three buttons, and only an explicit Discard discards. With two, Escape
       // or closing the dialog resolved to Discard, and the next snapshot then
       // pruned work that existed nowhere else. Restoring loses nothing — the
@@ -753,22 +742,13 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         },
       );
       if (choice !== "Discard") {
-        for (const tab of session.tabs) {
-          store.current.set(tab.id, {
-            scene: tab.scene,
-            // No stored view: the snapshot's own appState puts the user back at
-            // the viewport they were working in.
-            view: null,
-            // A recovered drawing matches nothing on disk, so it stays dirty
-            // until the user actually saves it.
-            savedVersion: tab.dirty ? NEVER_SAVED : UNPARSED,
-            rev: 1,
-          });
-          written.current.set(tab.id, 1);
-        }
-        const metas = session.tabs.map(({ id, path, dirty }) => ({ id, path, dirty }));
-        const active = metas.some((t) => t.id === session.active) ? session.active! : metas[0].id;
-        replaceTabs(metas, active);
+        const restored = recoveredSession(session);
+        for (const [id, content] of restored.contents) store.current.set(id, content);
+        // The session file already holds exactly these scenes, so the first
+        // snapshot after this has nothing to send.
+        written.current = restored.written;
+        const active = restored.active ?? restored.tabs[0].id;
+        replaceTabs(restored.tabs, active);
         await show(active);
         return;
       }
@@ -785,9 +765,10 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       const text = await readTextFile(tab.path).catch(() => null);
       if (text === null) continue;
       opened.push({ id: tab.id, path: tab.path, dirty: false });
-      store.current.set(tab.id, { scene: text, view: null, savedVersion: UNPARSED, rev: 1 });
+      store.current.set(tab.id, reopenedContent(text));
     }
-    if (!opened.length) {
+    const active = activeFrom(opened, session.active);
+    if (!active) {
       // Every tab in the session was untitled (nothing had a path to reopen).
       // Same reasoning as the empty-session case above: still push the default
       // tab through `show()` so the canvas gets its themed background from the
@@ -796,7 +777,6 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       await show(activeRef.current);
       return;
     }
-    const active = opened.some((t) => t.id === session.active) ? session.active! : opened[0].id;
     replaceTabs(opened, active);
     await show(active);
   }, [api, replaceTabs, show]);

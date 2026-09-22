@@ -22,6 +22,7 @@ writeFileSync(
    export { cssVariables } from "${process.cwd()}/src/theme/variables";
    export { PRESET_THEMES, FALLBACK_THEME_ID } from "${process.cwd()}/src/theme/presets";
    export * from "${process.cwd()}/src/lib/tabs";
+   export * from "${process.cwd()}/src/lib/documentState";
    export * from "${process.cwd()}/src/lib/shortcuts";`,
 );
 const bundle = join(out, "bundle.mjs");
@@ -187,6 +188,146 @@ check("the CSP lets the page fetch its own assets", () => {
   assert.ok(directives["connect-src"]?.includes("'self'"), "connect-src must allow 'self'");
   assert.ok(directives["connect-src"]?.includes("ipc:"), "connect-src must still allow Tauri's IPC");
   assert.ok(directives["object-src"]?.includes("'none'"), "object-src must stay closed");
+});
+
+// --- documentState: the decisions behind the autosave and startup paths.
+// Each of these has been a bug at least once; none was reachable from here
+// until the logic moved out of the `useDocument` hook.
+
+const tab = (id, path = null, dirty = false) => ({ id, path, dirty });
+const content = (scene, rev, savedVersion = 0) => ({ scene, view: null, savedVersion, rev });
+
+check("a snapshot carries only the scenes the session file has not got", () => {
+  const tabs = [tab("a", "/tmp/a.excalidraw"), tab("b"), tab("c")];
+  const store = new Map([
+    ["a", content("scene-a", 7)],
+    ["b", content("scene-b", 2)],
+    ["c", content("scene-c", 1)],
+  ]);
+  // `a` is on disk at the revision it still holds; `b` has moved since.
+  const written = new Map([["a", 7], ["b", 1]]);
+
+  const plan = t.snapshotPlan(tabs, "b", (id) => store.get(id), written);
+
+  assert.deepEqual(plan.payload.map((p) => p.id), ["a", "b", "c"], "every tab is listed, or it is pruned");
+  assert.equal(plan.payload[0].scene, undefined, "an untouched tab sends no scene");
+  assert.equal(plan.payload[1].scene, "scene-b");
+  assert.equal(plan.payload[2].scene, "scene-c", "a tab the file has never seen always sends one");
+  assert.deepEqual([...plan.sent], [["b", 2], ["c", 1]]);
+  assert.equal(plan.payload[0].path, "/tmp/a.excalidraw");
+});
+
+check("a snapshot with nothing new in it is not written", () => {
+  const tabs = [tab("a"), tab("b")];
+  const store = new Map([["a", content("x", 1)], ["b", content("y", 1)]]);
+  const written = new Map([["a", 1], ["b", 1]]);
+  const plan = (active) => t.snapshotPlan(tabs, active, (id) => store.get(id), written);
+
+  const settled = plan("a");
+  assert.equal(settled.sent.size, 0);
+  assert.equal(t.worthWriting(settled, settled.meta), false, "pointer movement must not rewrite the file");
+  assert.equal(t.worthWriting(plan("b"), settled.meta), true, "but switching tabs must");
+
+  const renamed = t.snapshotPlan([tab("a", "/tmp/saved.excalidraw"), tab("b")], "a", (id) => store.get(id), written);
+  assert.equal(t.worthWriting(renamed, settled.meta), true, "and so must a Save As");
+  const marked = t.snapshotPlan([tab("a", null, true), tab("b")], "a", (id) => store.get(id), written);
+  assert.equal(t.worthWriting(marked, settled.meta), true, "and an unsaved mark appearing");
+});
+
+check("what reached disk is recorded, and closed tabs are forgotten", () => {
+  const tabs = [tab("a"), tab("b")];
+  const store = new Map([["a", content("x", 4)], ["b", content("y", 9)]]);
+  const plan = t.snapshotPlan(tabs, "a", (id) => store.get(id), new Map());
+
+  const after = t.nextWritten(new Map([["gone", 3]]), plan, tabs);
+  assert.deepEqual([...after].sort(), [["a", 4], ["b", 9]], "a tab that has closed leaves no revision behind");
+
+  // The map handed in is not the map handed back: the caller keeps the old one
+  // if the write it was planned for never lands.
+  const before = new Map([["a", 1]]);
+  t.nextWritten(before, plan, tabs);
+  assert.deepEqual([...before], [["a", 1]]);
+});
+
+check("a revision moves only when the drawing does", () => {
+  assert.equal(t.nextRev(undefined, "scene"), 1, "a tab nothing has stored yet starts at 1");
+  assert.equal(t.nextRev(content("scene", 3), "scene"), 3, "the same text keeps its revision");
+  assert.equal(t.nextRev(content("scene", 3), "other"), 4);
+});
+
+check("a capture mark moves with anything worth serialising for", () => {
+  const mark = t.captureMark("a", 12, 3, "#1f1f28", 0);
+  assert.equal(mark, t.captureMark("a", 12, 3, "#1f1f28", 0));
+  assert.notEqual(mark, t.captureMark("b", 12, 3, "#1f1f28", 0), "another tab");
+  assert.notEqual(mark, t.captureMark("a", 13, 3, "#1f1f28", 0), "an edit");
+  assert.notEqual(mark, t.captureMark("a", 12, 2, "#1f1f28", 0), "a deletion");
+  assert.notEqual(mark, t.captureMark("a", 12, 3, "#ffffff", 0), "the canvas colour");
+  assert.notEqual(mark, t.captureMark("a", 12, 3, "#1f1f28", 1), "an image added");
+});
+
+check("only an unclean exit with unsaved work is worth a recovery prompt", () => {
+  const scene = (id, path, dirty) => ({ id, path, dirty, scene: "{}" });
+  const session = (tabs, clean_exit) => ({ tabs, active: null, clean_exit });
+
+  assert.equal(t.recoverySubject(session([scene("a", null, true)], true)), null, "an orderly exit was already answered for");
+  assert.equal(t.recoverySubject(session([scene("a", "/tmp/a.excalidraw", false)], false)), null, "nothing unsaved");
+  assert.equal(
+    t.recoverySubject(session([scene("a", "/home/rafa/plan.excalidraw", true)], false)),
+    "plan.excalidraw was",
+  );
+  assert.equal(t.recoverySubject(session([scene("a", null, true)], false)), "An unsaved drawing was");
+  assert.equal(
+    t.recoverySubject(session([scene("a", null, true), scene("b", "/tmp/b.excalidraw", true), scene("c", null, false)], false)),
+    "2 drawings were",
+  );
+});
+
+check("a recovered drawing stays unsaved until it is saved", () => {
+  const session = {
+    tabs: [
+      { id: "a", path: "/tmp/a.excalidraw", dirty: true, scene: "scene-a" },
+      { id: "b", path: null, dirty: false, scene: "scene-b" },
+    ],
+    active: "b",
+    clean_exit: false,
+  };
+
+  const restored = t.recoveredSession(session);
+
+  assert.deepEqual(restored.tabs, [
+    { id: "a", path: "/tmp/a.excalidraw", dirty: true },
+    { id: "b", path: null, dirty: false },
+  ]);
+  assert.equal(restored.active, "b");
+  assert.equal(restored.contents.get("a").scene, "scene-a");
+  assert.equal(restored.contents.get("a").savedVersion, t.NEVER_SAVED, "it matches nothing on disk");
+  assert.equal(restored.contents.get("b").savedVersion, t.UNPARSED, "worked out when it is first shown");
+  assert.equal(restored.contents.get("a").view, null, "the snapshot's own appState carries the viewport");
+  // The session file already holds these scenes, so the next snapshot has
+  // nothing to send — sending them again would rewrite every tab at startup.
+  assert.deepEqual([...restored.written], [["a", 1], ["b", 1]]);
+  const plan = t.snapshotPlan(restored.tabs, restored.active, (id) => restored.contents.get(id), restored.written);
+  assert.equal(plan.sent.size, 0);
+});
+
+check("the tab that comes back on screen is the one that was on it", () => {
+  const tabs = [tab("a"), tab("b")];
+  assert.equal(t.activeFrom(tabs, "b"), "b");
+  assert.equal(t.activeFrom(tabs, "gone"), "a", "a tab that could not be reopened falls back to the first");
+  assert.equal(t.activeFrom(tabs, null), "a");
+  assert.equal(t.activeFrom([], "a"), null, "nothing opened at all");
+
+  const session = { tabs: [{ id: "a", path: null, dirty: true, scene: "{}" }], active: "gone", clean_exit: false };
+  assert.equal(t.recoveredSession(session).active, "a");
+});
+
+check("a tab reopened from its own file is clean and unparsed", () => {
+  assert.deepEqual(t.reopenedContent("scene"), {
+    scene: "scene",
+    view: null,
+    savedVersion: t.UNPARSED,
+    rev: 1,
+  });
 });
 
 console.log(`\n${checks} checks passed`);

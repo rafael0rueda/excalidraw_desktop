@@ -1,6 +1,7 @@
 // Typed wrappers around the Rust command layer. The renderer never touches the
 // filesystem directly — everything goes through these invocations.
 import { invoke } from "@tauri-apps/api/core";
+import type { Session, TabSnapshot } from "./documentState";
 
 export interface RecentEntry {
   path: string;
@@ -67,32 +68,10 @@ export const listRecent = () => invoke<RecentEntry[]>("list_recent");
 export const pushRecent = (path: string) => invoke<RecentEntry[]>("push_recent", { path });
 export const clearRecent = () => invoke<RecentEntry[]>("clear_recent");
 
-export interface SessionTab {
-  id: string;
-  /** File the snapshot came from, or null for a drawing never saved anywhere. */
-  path: string | null;
-  dirty: boolean;
-  /** `.excalidraw` JSON. */
-  scene: string;
-}
-
-export interface Session {
-  tabs: SessionTab[];
-  active: string | null;
-  clean_exit: boolean;
-}
-
-/** A tab on its way into the session file. */
-export interface TabSnapshot {
-  id: string;
-  path: string | null;
-  dirty: boolean;
-  /**
-   * Left out when the tab's scene has not changed since the last snapshot, so
-   * an autosave only ever carries the drawing actually being worked on.
-   */
-  scene?: string;
-}
+// The session shapes are declared in `documentState`, beside the logic that
+// builds and reads them, and re-exported here so the command layer still
+// describes its own shapes to anything that only talks to it.
+export type { Session, SessionTab, TabSnapshot } from "./documentState";
 
 export const saveSession = (tabs: TabSnapshot[], active: string | null) =>
   invoke<void>("save_session", { tabs, active });
