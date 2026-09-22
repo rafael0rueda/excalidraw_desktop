@@ -340,11 +340,15 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       const writtenVersion = activeAndCommitted ? sceneVersion(api!.getSceneElements()) : null;
       try {
         await writeTextFile(target, content.scene);
-        await pushRecent(target);
       } catch (err) {
         await message(String(err), { title: "Could not save", kind: "error" });
         return false;
       }
+      // Best effort, and deliberately after the write has been declared a
+      // success: sharing the `try` above meant a failure here reported "Could
+      // not save" over a drawing that had already reached disk, and left the
+      // tab dirty under its old path. `openDrawing` treats it the same way.
+      await pushRecent(target).catch(() => {});
       let dirty = tabsRef.current.find((tab) => tab.id === id)?.dirty ?? false;
       if (id === activeRef.current) {
         if (writtenVersion !== null) savedVersion.current = writtenVersion;
