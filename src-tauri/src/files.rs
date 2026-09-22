@@ -5,6 +5,22 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::State;
 
+/// What the renderer may write as text: a drawing, or an SVG export. Being in
+/// `Allowed` already means the user chose the path in a dialog — this is the
+/// second half of the same rule `write_binary_file` applies to PNG, so that a
+/// flaw in the page cannot turn one kind of file into another.
+const TEXT_EXTENSIONS: &[&str] = &["excalidraw", "svg"];
+
+/// Checks the extension of a path that has already been resolved, so a symlink
+/// is judged by what it points at rather than by what it is called.
+fn require_extension(path: &Path, extensions: &[&str]) -> Result<(), String> {
+    let found = path.extension().and_then(|e| e.to_str()).unwrap_or_default();
+    if extensions.iter().any(|want| found.eq_ignore_ascii_case(want)) {
+        return Ok(());
+    }
+    Err(format!("{}: not a {} file", path.display(), extensions.join(" or ")))
+}
+
 // File commands run on Tauri's thread pool rather than inline in the IPC
 // handler, which is the GTK main thread: a large drawing read or written there
 // froze the whole window for as long as it took.
@@ -16,7 +32,9 @@ pub fn read_text_file(allowed: State<'_, Allowed>, path: String) -> Result<Strin
 
 #[tauri::command(async)]
 pub fn write_text_file(allowed: State<'_, Allowed>, path: String, contents: String) -> Result<(), String> {
-    write_atomic(&allowed.check(&path)?, contents.as_bytes())
+    let target = allowed.check(&path)?;
+    require_extension(&target, TEXT_EXTENSIONS)?;
+    write_atomic(&target, contents.as_bytes())
 }
 
 /// Header carrying the target of a raw-body write, base64 so that any file name
@@ -44,13 +62,7 @@ pub fn write_binary_file(allowed: State<'_, Allowed>, request: tauri::ipc::Reque
     let target = allowed.check(&path)?;
     // Only a PNG export is binary. Without this, an allowed drawing could be
     // overwritten with image bytes.
-    let png = target
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("png"));
-    if !png {
-        return Err(format!("{path}: not a PNG file"));
-    }
+    require_extension(&target, &["png"])?;
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("expected the image as raw bytes".into());
     };
@@ -119,8 +131,24 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::write_atomic;
+    use super::{require_extension, write_atomic, TEXT_EXTENSIONS};
     use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::path::Path;
+
+    #[test]
+    fn only_the_kinds_of_file_this_app_produces_may_be_written() {
+        for good in ["/tmp/plan.excalidraw", "/tmp/plan.EXCALIDRAW", "/tmp/export.svg"] {
+            assert!(require_extension(Path::new(good), TEXT_EXTENSIONS).is_ok(), "{good}");
+        }
+        // An allowed path is one the user picked in a dialog, so these are not
+        // reachable today — the point is that they stay unreachable if some
+        // other path into `Allowed` is ever added.
+        for bad in ["/tmp/.bashrc", "/tmp/notes.txt", "/tmp/plan", "/tmp/plan.excalidraw.txt"] {
+            assert!(require_extension(Path::new(bad), TEXT_EXTENSIONS).is_err(), "{bad}");
+        }
+        assert!(require_extension(Path::new("/tmp/a.png"), &["png"]).is_ok());
+        assert!(require_extension(Path::new("/tmp/a.excalidraw"), &["png"]).is_err());
+    }
 
     fn scratch_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("excalidraw-write-atomic-test-{name}-{}", std::process::id()));
