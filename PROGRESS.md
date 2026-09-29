@@ -1185,7 +1185,8 @@ Done:
   hyperlink popup, with no frame; the iframe element stays a blank box — the
   red line never shows. (The placeholder text is faint only because the
   scratch file's stroke is `#1e1e1e` on a dark canvas.)
-Not confirmed: that the embeddable's link actually opens in the browser.
+- S3 the embeddable's link, followed from the placeholder, opens in the
+  desktop browser.
 
 Considered, not done:
 - `app.security.freezePrototype` — worth trying, but freezing
