@@ -1175,10 +1175,17 @@ Done:
   `'unsafe-eval'`, `data:`, `blob:` or `*` in `script-src` (confirmed to bite
   by adding `'unsafe-inline'`).
 
-To check by hand on the next build: a message dialog and the Theme editor's
-discard/delete confirm still appear (S2); Copy image still pastes into another
-app (S1); a drawing with an embeddable (YouTube link) shows the placeholder and
-its link opens in the browser (S3).
+**Verified by hand on 0.5.2, 2026-09-29** (installed from the RPM):
+- S2 the Theme editor's "Unsaved theme — Discard / Keep editing" confirm
+  still appears.
+- S1 Copy image pastes into another app.
+- S3 with a scratch drawing holding a YouTube embeddable and an `iframe`
+  element whose `generationData.html` shows a red line and meta-refreshes to
+  example.com: the embeddable draws the placeholder with its URL and the
+  hyperlink popup, with no frame; the iframe element stays a blank box — the
+  red line never shows. (The placeholder text is faint only because the
+  scratch file's stroke is `#1e1e1e` on a dark canvas.)
+Not confirmed: that the embeddable's link actually opens in the browser.
 
 Considered, not done:
 - `app.security.freezePrototype` — worth trying, but freezing
