@@ -92,6 +92,12 @@ fn startup_drawings() -> Vec<String> {
 /// `blob:` is let through because WebKitGTK routes a download link through
 /// here too, and Excalidraw's "Export library" is one: `<a download>` on a
 /// blob URL. Only the page itself can create one.
+///
+/// Frames come through here as well as the page (checked in WebKitGTK 2.54),
+/// so refusing `about:srcdoc` is what stops a drawing's HTML from running: an
+/// Excalidraw `iframe` element renders whatever `customData` a file carries as
+/// a srcdoc frame, scripts allowed. A remote frame never gets this far — the
+/// CSP refuses it first.
 fn allowed_navigation(url: &Url, dev_url: Option<&Url>) -> bool {
     if url.scheme() == "blob" {
         return true;
@@ -284,6 +290,8 @@ mod tests {
         assert!(!page("https://example.com/"));
         assert!(!page("http://localhost:8080/"));
         assert!(!page("file:///home/rafa/.bashrc"));
+        assert!(!page("about:srcdoc"), "a drawing's embedded HTML must not load");
+        assert!(!page("about:blank"));
         let dev_page = Url::parse("http://localhost:1420/").unwrap();
         assert!(!allowed_navigation(&dev_page, None), "no dev server in a release build");
     }

@@ -226,6 +226,11 @@ export default function App() {
           // themes are built from dark colours on the light base instead.
           theme="light"
           onChange={actions.onSceneChange}
+          // No drawing gets to put a web page inside the app. The CSP already
+          // blocks the frame's load, which left an empty box; refusing here
+          // draws Excalidraw's own placeholder naming the URL instead, and its
+          // link still opens in the browser through `onLinkOpen`.
+          validateEmbeddable={false}
           onLinkOpen={(element, event) => {
             // Followed by us rather than in the webview; see `openLink`.
             event.preventDefault();

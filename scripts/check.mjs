@@ -188,6 +188,16 @@ check("the CSP lets the page fetch its own assets", () => {
   assert.ok(directives["connect-src"]?.includes("'self'"), "connect-src must allow 'self'");
   assert.ok(directives["connect-src"]?.includes("ipc:"), "connect-src must still allow Tauri's IPC");
   assert.ok(directives["object-src"]?.includes("'none'"), "object-src must stay closed");
+  // A drawing is untrusted input. These are what keep a hostile one from
+  // running script or pulling a remote page into a frame: frames fall back to
+  // default-src, and `lib.rs` would hand a refused frame's URL to the browser.
+  assert.deepEqual(directives["default-src"], ["'self'"], "default-src must stay 'self' alone");
+  for (const name of ["frame-src", "child-src"]) {
+    assert.equal(directives[name], undefined, `${name} must not widen what default-src allows`);
+  }
+  for (const loose of ["'unsafe-inline'", "'unsafe-eval'", "data:", "blob:", "*"]) {
+    assert.ok(!directives["script-src"]?.includes(loose), `script-src must not allow ${loose}`);
+  }
 });
 
 // --- documentState: the decisions behind the autosave and startup paths.
