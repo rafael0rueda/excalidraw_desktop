@@ -1141,6 +1141,54 @@ rather than reasoned about:
 Not checked by hand, and still worth doing some time: the autosave warning
 (B3), which needs a read-only `XDG_CONFIG_HOME` to provoke.
 
+## Security pass 2026-09-29
+
+Baseline and result: `npm run check` 25/25, `tsc`, `vite build`, `cargo test`
+17/17, `cargo clippy -D warnings` clean. The file scope, ids, write guards and
+config permissions from the earlier reviews were re-read and hold; this pass
+looked at what a hostile *drawing* can reach.
+
+Established by experiment (WebKitGTK 2.54 via python gi, the app's CSP served
+as a header from a custom scheme — script in `/tmp`, not kept):
+- WebKit's `decide-policy` fires for **frames** as well as the page, so
+  `on_navigation` sees them. `about:srcdoc` reaches it and is refused by
+  `allowed_navigation`. That refusal is what stops an Excalidraw `iframe`
+  element (magic frame) from running the HTML a file carries in
+  `customData.generationData.html` — Excalidraw renders it as a srcdoc frame
+  with `allow-scripts` whatever `validateEmbeddable` says.
+- A remote `<iframe src=https://…>` never reaches the handler under our CSP.
+  Without the CSP it does, and `open_externally` would then open that URL in
+  the user's browser with no click. So the CSP's `default-src 'self'` (frames
+  fall back to it) is load-bearing, not just "offline".
+
+Done:
+- S1 `copy_image_to_clipboard` decodes with `PixbufLoader::with_type("png")`
+  rather than sniffing into any installed gdk-pixbuf loader in-process.
+- S2 capabilities: `dialog:default` → `dialog:allow-message` (confirm/ask go
+  through `plugin:dialog|message` in plugin-dialog 2.7.2; the page never opens
+  its own pickers). `core:window:allow-set-title` and `allow-close` dropped:
+  never called.
+- S3 `validateEmbeddable={false}`: embeds draw Excalidraw's placeholder with
+  the URL instead of an empty frame the CSP blocked. The navigation test now
+  covers `about:srcdoc`/`about:blank`; `check.mjs` asserts `default-src` is
+  `'self'` alone, no `frame-src`/`child-src`, and no `'unsafe-inline'`,
+  `'unsafe-eval'`, `data:`, `blob:` or `*` in `script-src` (confirmed to bite
+  by adding `'unsafe-inline'`).
+
+To check by hand on the next build: a message dialog and the Theme editor's
+discard/delete confirm still appear (S2); Copy image still pastes into another
+app (S1); a drawing with an embeddable (YouTube link) shows the placeholder and
+its link opens in the browser (S3).
+
+Considered, not done:
+- `app.security.freezePrototype` — worth trying, but freezing
+  `Object.prototype` can break a library at runtime in ways only use shows;
+  needs a session with the app open.
+- `on_navigation` opens every refused http(s) navigation externally, frames
+  included, with no user-gesture check (Tauri does not pass one). Safe today
+  only because the CSP stops remote frames and srcdoc is refused; if either
+  ever loosens, this becomes a drive-by browser open.
+
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that
