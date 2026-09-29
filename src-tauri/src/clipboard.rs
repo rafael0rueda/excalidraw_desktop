@@ -33,7 +33,11 @@ pub fn copy_image_to_clipboard(app: tauri::AppHandle, request: tauri::ipc::Reque
 fn set_clipboard_image(bytes: &[u8]) -> Result<(), String> {
     use gdk_pixbuf::prelude::PixbufLoaderExt;
 
-    let loader = gdk_pixbuf::PixbufLoader::new();
+    // PNG only. `PixbufLoader::new` sniffs the bytes and hands them to
+    // whichever loader claims them — ICO, ANI, XPM, TGA and anything else
+    // installed — and it does so in this process, not the renderer's. The
+    // renderer only ever sends PNG, so nothing else needs to be reachable.
+    let loader = gdk_pixbuf::PixbufLoader::with_type("png").map_err(|e| e.to_string())?;
     loader.write(bytes).map_err(|e| e.to_string())?;
     loader.close().map_err(|e| e.to_string())?;
     let pixbuf = loader.pixbuf().ok_or("decoded image was empty")?;
