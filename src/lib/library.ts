@@ -37,3 +37,23 @@ export function usePersistentLibrary(api: ExcalidrawImperativeAPI | null) {
 export function addErShapes(api: ExcalidrawImperativeAPI) {
   return api.updateLibrary({ libraryItems: erShapes(), merge: true, openLibraryMenu: true });
 }
+
+/** The Kanagawa palettes the ERD library comes in, one file each. */
+export const KANAGAWA_ERD_VARIANTS = ["wave", "dragon", "lotus"] as const;
+export type KanagawaErdVariant = (typeof KANAGAWA_ERD_VARIANTS)[number];
+
+/**
+ * Adds one palette of the Kanagawa ERD shapes (`scripts/build-kanagawa-erd-library.mjs`)
+ * the same way as `addErShapes`. Imported on demand: the three files are about
+ * 350 KB, and most launches never ask for them.
+ */
+export async function addKanagawaErdShapes(api: ExcalidrawImperativeAPI, variant: KanagawaErdVariant) {
+  const files = {
+    wave: () => import("../../resources/libraries/kanagawa-erd-wave.excalidrawlib?raw"),
+    dragon: () => import("../../resources/libraries/kanagawa-erd-dragon.excalidrawlib?raw"),
+    lotus: () => import("../../resources/libraries/kanagawa-erd-lotus.excalidrawlib?raw"),
+  };
+  const { default: text } = await files[variant]();
+  const libraryItems: LibraryItems = JSON.parse(text).libraryItems;
+  return api.updateLibrary({ libraryItems, merge: true, openLibraryMenu: true });
+}

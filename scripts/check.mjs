@@ -7,7 +7,7 @@
  *   node scripts/check.mjs
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
@@ -338,6 +338,42 @@ check("a tab reopened from its own file is clean and unparsed", () => {
     savedVersion: t.UNPARSED,
     rev: 1,
   });
+});
+
+check("every bundled library is one Excalidraw 0.18.1 can insert", () => {
+  // Arrowheads and font ids as 0.18.1 defines them; restore quietly drops or
+  // swaps anything else, so a shape would come out different from its design.
+  const arrowheads = new Set([null, "arrow", "bar", "dot", "circle", "circle_outline", "triangle",
+    "triangle_outline", "diamond", "diamond_outline", "crowfoot_one", "crowfoot_many", "crowfoot_one_or_many"]);
+  const fonts = new Set([1, 2, 3, 5, 6, 7, 8, 9]);
+  const dir = join(process.cwd(), "resources/libraries");
+  const files = readdirSync(dir).filter((f) => f.endsWith(".excalidrawlib"));
+  assert.ok(files.includes("kanagawa-erd-wave.excalidrawlib"));
+  for (const file of files) {
+    const lib = JSON.parse(readFileSync(join(dir, file), "utf8"));
+    assert.equal(lib.type, "excalidrawlib", file);
+    assert.equal(lib.version, 2, file);
+    const itemIds = lib.libraryItems.map((item) => item.id);
+    assert.equal(new Set(itemIds).size, itemIds.length, `${file}: item ids must be unique`);
+    for (const item of lib.libraryItems) {
+      const where = `${file} · ${item.name}`;
+      assert.ok(item.elements.length > 0, `${where}: empty`);
+      const ids = new Set(item.elements.map((e) => e.id));
+      assert.equal(ids.size, item.elements.length, `${where}: element ids must be unique`);
+      for (const e of item.elements) {
+        for (const key of ["id", "type", "x", "y", "width", "height"]) {
+          assert.ok(e[key] !== undefined, `${where}: ${e.id ?? "?"} has no ${key}`);
+        }
+        if (e.type === "text") assert.ok(fonts.has(e.fontFamily), `${where}: font ${e.fontFamily}`);
+        if (e.type === "arrow") {
+          assert.ok(arrowheads.has(e.startArrowhead) && arrowheads.has(e.endArrowhead), `${where}: arrowhead`);
+          for (const b of [e.startBinding, e.endBinding]) {
+            if (b) assert.ok(ids.has(b.elementId), `${where}: bound to an element outside the item`);
+          }
+        }
+      }
+    }
+  }
 });
 
 console.log(`\n${checks} checks passed`);

@@ -1,6 +1,6 @@
 # Project state & how to resume
 
-Last updated: 2026-08-30
+Last updated: 2026-09-29
 
 ## Decisions already made (do not re-litigate)
 
@@ -1196,6 +1196,42 @@ Considered, not done:
   included, with no user-gesture check (Tauri does not pass one). Safe today
   only because the CSP stops remote frames and srcdoc is refused; if either
   ever loosens, this becomes a drive-by browser open.
+
+## Kanagawa ERD library (2026-09-29)
+
+A second ER library, designed in Claude Design and delivered as a handoff
+(`kanagawa-erd-handoff/`, left untracked). 29 items in each of three palettes:
+Wave, Dragon and Lotus.
+
+- `scripts/kanagawa-erd-library.js` is the handoff's `src/erd-library.js`,
+  **kept verbatim** so a revised design can be copied over it. It is a
+  browser-style script, not a module; `scripts/build-kanagawa-erd-library.mjs`
+  runs it in a `vm` context, as the handoff's `build.js` did, and writes
+  `resources/libraries/kanagawa-erd-{wave,dragon,lotus}.excalidrawlib`. The only
+  change from the handoff's output is `source`, set to this repo's URL. Output
+  is compact JSON (about 118 KB each, 213 KB indented). The generator is
+  seeded, so a rebuild writes identical bytes. Its output matched the handoff's
+  `dist/` exactly once the `source` URL was left out of the comparison.
+- `library.ts` `addKanagawaErdShapes(api, variant)` loads the chosen file with a
+  dynamic `?raw` import, so each palette is its own chunk and none is in the
+  startup bundle. It merges the shapes in the same way as `addErShapes`. The
+  menu is View → Add Kanagawa ERD shapes to library → Wave / Dragon / Lotus. The
+  first-launch seed is still the plain ER set.
+- `check.mjs` now checks every file in `resources/libraries/`: type/version,
+  unique item and element ids, each element's id/type/x/y/width/height, text
+  fonts among 0.18.1's ids (the design uses Nunito 6, Cascadia 3), arrowheads
+  among 0.18.1's (the design uses `crowfoot_*`), and arrow bindings that point
+  inside their own item. 26/26.
+- Seen rendered by Excalidraw 0.18.1 in Chromium (scratch page in `test/`, not
+  committed): fonts load from the local copies, and the crow's-foot heads,
+  zero circles, kind colours, dashed view border and double weak-entity border
+  all draw as designed. **Not yet seen**: the menu entries in the Tauri app, or
+  the sidebar thumbnails.
+
+Open:
+- No **Kanagawa Dragon** theme preset, so the Dragon shapes' zero circles
+  (filled with `#181616` to mask the line) show as dots on any other canvas.
+  The Wave and Lotus canvases match their presets exactly.
 
 ## Gotchas
 

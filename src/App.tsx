@@ -17,7 +17,7 @@ import { useTheme } from "./theme/useTheme";
 import { copyToClipboard, exportPng, exportSvg } from "./lib/exportActions";
 import type { ExportOptions } from "./lib/exports";
 import { useExportPreferences } from "./lib/exportPreferences";
-import { addErShapes, usePersistentLibrary } from "./lib/library";
+import { addErShapes, addKanagawaErdShapes, usePersistentLibrary } from "./lib/library";
 import { openLink } from "./lib/links";
 import { shortcutKey } from "./lib/shortcuts";
 
@@ -83,6 +83,7 @@ export default function App() {
     exportSvg: () => api && once(() => exportSvg(api, activePath.current, exportOptions())),
     copyImage: () => api && once(() => copyToClipboard(api, exportOptions())),
     addErShapes: () => api && void addErShapes(api),
+    addKanagawaErdShapes: (variant) => api && void addKanagawaErdShapes(api, variant),
     quit: () => void closeWindow(),
   };
 

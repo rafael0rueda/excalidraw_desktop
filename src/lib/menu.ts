@@ -3,6 +3,7 @@ import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tau
 import { listRecent, clearRecent, type RecentEntry } from "./api";
 import { tabTitle, type TabMeta } from "./tabs";
 import { SYSTEM_THEME } from "../theme/types";
+import { KANAGAWA_ERD_VARIANTS, type KanagawaErdVariant } from "./library";
 
 export interface MenuHandlers {
   newTab: () => void;
@@ -16,6 +17,7 @@ export interface MenuHandlers {
   exportSvg: () => void;
   copyImage: () => void;
   addErShapes: () => void;
+  addKanagawaErdShapes: (variant: KanagawaErdVariant) => void;
   quit: () => void;
 }
 
@@ -351,6 +353,24 @@ export async function buildMenu(
               id: "library-er",
               text: "Add ER diagram shapes to library",
               action: handlers.addErShapes,
+            }),
+          ),
+          await keep(
+            made,
+            Submenu.new({
+              text: "Add Kanagawa ERD shapes to library",
+              items: await Promise.all(
+                KANAGAWA_ERD_VARIANTS.map((variant) =>
+                  keep(
+                    made,
+                    MenuItem.new({
+                      id: `library-kanagawa-${variant}`,
+                      text: variant[0].toUpperCase() + variant.slice(1),
+                      action: () => handlers.addKanagawaErdShapes(variant),
+                    }),
+                  ),
+                ),
+              ),
             }),
           ),
         ],
