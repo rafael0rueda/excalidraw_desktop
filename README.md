@@ -87,28 +87,28 @@ The packages are not published anywhere; build them first with `npm run bundle`
 `src-tauri/target/release/bundle/`. The quotes in the commands below matter —
 the file names contain a space.
 
-The commands name version 0.5.2. If you built a different version, use the one
+The commands name version 0.5.3. If you built a different version, use the one
 in `package.json`. Earlier builds stay in that directory, so check you pick the
 newest file.
 
 ### Fedora, RHEL, AlmaLinux, Rocky, CentOS Stream
 
 ```bash
-sudo dnf install "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.2-1.x86_64.rpm"
+sudo dnf install "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.3-1.x86_64.rpm"
 sudo dnf remove excalidraw-desktop     # to uninstall
 ```
 
 ### openSUSE
 
 ```bash
-sudo zypper install --allow-unsigned-rpm "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.2-1.x86_64.rpm"
+sudo zypper install --allow-unsigned-rpm "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.3-1.x86_64.rpm"
 sudo zypper remove excalidraw-desktop
 ```
 
 ### Debian, Ubuntu, Mint, Pop!\_OS, elementary
 
 ```bash
-sudo apt install "./src-tauri/target/release/bundle/deb/Excalidraw Desktop_0.5.2_amd64.deb"
+sudo apt install "./src-tauri/target/release/bundle/deb/Excalidraw Desktop_0.5.3_amd64.deb"
 sudo apt remove excalidraw-desktop
 ```
 
@@ -120,7 +120,7 @@ resolves it. If it ever reports the dependency as unsatisfiable:
 
 ```bash
 sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0t64
-sudo dpkg -i --force-depends "./src-tauri/target/release/bundle/deb/Excalidraw Desktop_0.5.2_amd64.deb"
+sudo dpkg -i --force-depends "./src-tauri/target/release/bundle/deb/Excalidraw Desktop_0.5.3_amd64.deb"
 ```
 
 ### Arch, and everything else
@@ -136,7 +136,7 @@ binary in place —
 — or install it by hand, which is all the packages do anyway:
 
 ```bash
-stage="src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.2-1.x86_64"
+stage="src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.3-1.x86_64"
 
 sudo install -Dm755 src-tauri/target/release/excalidraw-desktop /usr/bin/excalidraw-desktop
 sudo install -Dm644 packaging/excalidraw-desktop.xml \
