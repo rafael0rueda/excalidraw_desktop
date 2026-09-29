@@ -7,6 +7,48 @@ Built with **Tauri v2** (Rust + system WebKitGTK) rather than Electron: the
 resulting app is ~20 MB instead of ~200 MB, and `tauri build` emits native
 `.rpm` and `.deb` packages directly.
 
+## What this adds to Excalidraw
+
+The drawing editor itself is Excalidraw 0.18.1, unchanged. Everything around it
+is what this app adds, compared with using Excalidraw at excalidraw.com:
+
+- **Tabs.** Several drawings open in one window, each with its own viewport
+  and unsaved-changes dot. `Ctrl+Tab` and `Ctrl+1`…`Ctrl+9` move between them.
+  See [Tabs](#tabs).
+- **Real files on disk.** Open and Save use the desktop's own dialogs, and
+  Save writes straight back to the file you opened, with no trip through a
+  downloads folder. Writes are atomic, so a crash mid-save cannot leave half a
+  drawing where the old one was. **File → Open Recent** remembers the last ten.
+- **Part of the desktop.** Double-clicking a `.excalidraw` file in the file
+  manager opens it. Opening several at once gives each one a tab in the one
+  window, and so does naming drawings on the command line. See
+  [Opening drawings from the file manager](#opening-drawings-from-the-file-manager).
+- **Recovery for every drawing.** Every open tab is snapshotted a second or
+  two after you stop drawing. After a crash, all of them are offered back.
+  After a normal quit, the next launch reopens the drawings you had open.
+  Autosave never writes to your own file. See
+  [Autosave and recovery](#autosave-and-recovery).
+- **Full themes, not just light and dark.** Ten built-in themes (Nord,
+  Dracula, Gruvbox, Solarized, Catppuccin, Kanagawa and more) colour the canvas,
+  the panels, the tab bar and the native menu bar. They are built from real dark
+  colours rather than by inverting the canvas. You can also edit themes live,
+  save your own as JSON, and have *Follow system* switch between a light and
+  dark theme of your choice. See [Theming](#theming).
+- **Entity–relationship shapes** in the Library from the first launch:
+  entities, relationships, attributes and crow's-foot connectors. See
+  [Library](#library).
+- **Native menus and shortcuts** that follow your keyboard layout. On AZERTY,
+  `Ctrl+Z` is still undo, and Cyrillic or Greek layouts fall back to the
+  key's position. See [Keyboard shortcuts](#keyboard-shortcuts).
+- **Nothing leaves the machine.** The fonts are bundled, the app makes no
+  network requests, and there is no account. Links in a drawing open in your
+  own browser rather than inside the app. A drawing someone sends you cannot
+  load a web page or run code: embedded web content is shown as a placeholder
+  with its link.
+
+In exchange, it leaves out what needs a server: live collaboration, shareable
+links, and embedded web pages.
+
 ## Which distributions this runs on
 
 The app needs exactly two things at runtime: **WebKitGTK 4.1**
