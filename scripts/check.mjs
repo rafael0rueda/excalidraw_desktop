@@ -365,6 +365,11 @@ check("every bundled library is one Excalidraw 0.18.1 can insert", () => {
           assert.ok(e[key] !== undefined, `${where}: ${e.id ?? "?"} has no ${key}`);
         }
         if (e.type === "text") assert.ok(fonts.has(e.fontFamily), `${where}: font ${e.fontFamily}`);
+        if (e.type === "text" && e.containerId) {
+          const container = item.elements.find((c) => c.id === e.containerId);
+          assert.ok(container, `${where}: label bound to an element outside the item`);
+          assert.ok(container.boundElements?.some((b) => b.id === e.id), `${where}: container does not list its label`);
+        }
         if (e.type === "arrow") {
           assert.ok(arrowheads.has(e.startArrowhead) && arrowheads.has(e.endArrowhead), `${where}: arrowhead`);
           for (const b of [e.startBinding, e.endBinding]) {
@@ -372,6 +377,10 @@ check("every bundled library is one Excalidraw 0.18.1 can insert", () => {
           }
         }
       }
+      // A connector (an arrow and its label) is left ungrouped, so it can be
+      // selected, reshaped and bound like an arrow drawn by hand.
+      const connector = item.elements.every((e) => e.type === "arrow" || (e.type === "text" && e.containerId));
+      if (connector) assert.ok(item.elements.every((e) => e.groupIds.length === 0), `${where}: connector is grouped`);
     }
   }
 });

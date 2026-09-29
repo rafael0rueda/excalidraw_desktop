@@ -1203,8 +1203,9 @@ A second ER library, designed in Claude Design and delivered as a handoff
 (`kanagawa-erd-handoff/`, left untracked). 29 items in each of three palettes:
 Wave, Dragon and Lotus.
 
-- `scripts/kanagawa-erd-library.js` is the handoff's `src/erd-library.js`,
-  **kept verbatim** so a revised design can be copied over it. It is a
+- `scripts/kanagawa-erd-library.js` is the handoff's `src/erd-library.js`
+  with one deliberate change (below), so a revised design copied over it has
+  to carry that change across; `check.mjs` fails if it does not. It is a
   browser-style script, not a module; `scripts/build-kanagawa-erd-library.mjs`
   runs it in a `vm` context, as the handoff's `build.js` did, and writes
   `resources/libraries/kanagawa-erd-{wave,dragon,lotus}.excalidrawlib`. The only
@@ -1228,10 +1229,24 @@ Wave, Dragon and Lotus.
   all draw as designed. **Not yet seen**: the menu entries in the Tauri app, or
   the sidebar thumbnails.
 
+- **Connectors are native arrows** (Rafa's call, same day). As designed, each
+  crow's-foot item was a group of arrow + free text label + a 12px ellipse for
+  a "zero" end, so a click selected the group, an end could not be dragged
+  onto a table, and label and circle stayed put when the line was reshaped.
+  `connector()` now returns an ungrouped arrow whose label is its bound text
+  (`containerId`, `boundElements`). Excalidraw 0.18.1 has no zero arrowhead,
+  so an optional relationship is a **dashed** arrow; the ellipses are gone,
+  from the Legend too (its zero rows are dashed). Checked in Chromium: a click
+  selects the arrow alone, and after moving it the label draws at the arrow's
+  midpoint. Arrow labels are placed at render time from the arrow, so the
+  text's stored x/y going stale is normal. `check.mjs` asserts a connector is
+  ungrouped and that every bound label's container lists it. Dragging an
+  endpoint onto a table was not exercised (synthetic pointer events were
+  unreliable); it is Excalidraw's own behaviour for an ungrouped arrow.
+
 Open:
-- No **Kanagawa Dragon** theme preset, so the Dragon shapes' zero circles
-  (filled with `#181616` to mask the line) show as dots on any other canvas.
-  The Wave and Lotus canvases match their presets exactly.
+- No **Kanagawa Dragon** theme preset; the Dragon shapes are drawn for a
+  `#181616` canvas. The Wave and Lotus canvases match their presets exactly.
 
 ## Gotchas
 
