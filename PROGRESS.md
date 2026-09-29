@@ -1226,8 +1226,10 @@ Wave, Dragon and Lotus.
 - Seen rendered by Excalidraw 0.18.1 in Chromium (scratch page in `test/`, not
   committed): fonts load from the local copies, and the crow's-foot heads,
   zero circles, kind colours, dashed view border and double weak-entity border
-  all draw as designed. **Not yet seen**: the menu entries in the Tauri app, or
-  the sidebar thumbnails.
+  all draw as designed.
+- **Checked by hand on the installed 0.5.2 RPM, 2026-09-29** (Rafa: "works
+  correctly"), with the unlabelled, ungrouped connectors below: the View
+  submenu adds the shapes and the connectors behave like hand-drawn arrows.
 
 - **Connectors are native arrows** (Rafa's call, same day). As designed, each
   crow's-foot item was a group of arrow + free text label + a 12px ellipse for
