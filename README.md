@@ -368,9 +368,9 @@ second set, designed in Claude Design: 29 shapes per palette covering tables
 (with foreign keys, join, weak, view, enum and collapsed variants), single
 column rows, six crow's-foot connectors, Chen notation, a note, a schema
 boundary, a cardinality legend and a four-table starter schema whose
-connectors stay attached to its tables. The connectors are ordinary arrows,
-not groups: click one to select it, drag an end onto a table to attach it,
-and its label stays on the line. A dashed connector means the relationship
+connectors stay attached to its tables. The connectors are ordinary, unlabelled
+arrows, not groups: click one to select it, drag an end onto a table to
+attach it, and double-click it to add a label of your own. A dashed connector means the relationship
 is optional (zero-or-one, zero-or-many), since Excalidraw has no arrowhead
 for "zero". They are drawn for a canvas in the
 same palette. Wave and Lotus match the **Kanagawa Wave** and **Kanagawa

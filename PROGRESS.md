@@ -1243,6 +1243,9 @@ Wave, Dragon and Lotus.
   ungrouped and that every bound label's container lists it. Dragging an
   endpoint onto a table was not exercised (synthetic pointer events were
   unreliable); it is Excalidraw's own behaviour for an ungrouped arrow.
+- **Connectors carry no label** (Rafa, same day): each crow's-foot item is a
+  single arrow. The bound-label check in `check.mjs` stays, as it holds for
+  any library that has them.
 
 Open:
 - No **Kanagawa Dragon** theme preset; the Dragon shapes are drawn for a

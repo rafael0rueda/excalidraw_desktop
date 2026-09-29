@@ -73,16 +73,11 @@ var KanagawaERD = (function () {
     els.push(text(280 - PAD, 6, c.t, { size: 13, color: T.muted, align: 'right' }));
     return group(els);
   }
-  // A plain arrow, not a group, so it edits and binds like one drawn by hand.
-  // Excalidraw has no "zero" arrowhead, so an optional end is a dashed line.
-  // The label is the arrow's own bound text and rides its midpoint.
-  function connector(T, start, end, label, optional) {
-    var L = 240, a = line(0, 0, [[0, 0], [L, 0]], { arrow: true, stroke: T.rel, sw: 2, start: start, end: end, dash: optional ? 'dashed' : 'solid' });
-    if (!label) return [a];
-    var t = text(L / 2, 0, label, { size: 13, color: T.muted, align: 'center' });
-    t.y -= t.height / 2; t.containerId = a.id; t.verticalAlign = 'middle';
-    a.boundElements = [{ id: t.id, type: 'text' }];
-    return [a, t];
+  // A plain arrow with no label, not a group, so it edits and binds like one
+  // drawn by hand. Excalidraw has no "zero" arrowhead, so an optional end is a
+  // dashed line.
+  function connector(T, start, end, optional) {
+    return [line(0, 0, [[0, 0], [240, 0]], { arrow: true, stroke: T.rel, sw: 2, start: start, end: end, dash: optional ? 'dashed' : 'solid' })];
   }
   function chen(T, type, label, o) {
     o = o || {};
@@ -122,12 +117,12 @@ var KanagawaERD = (function () {
     add('Columns', 'Unique', rowItem(T, { k: 'UQ', n: 'slug', t: 'text' }));
     add('Columns', 'Column', rowItem(T, { n: 'column_name', t: 'type' }));
 
-    add("Crow's foot", 'One to one', connector(T, 'crowfoot_one', 'crowfoot_one', 'has'));
-    add("Crow's foot", 'One to many', connector(T, 'crowfoot_one', 'crowfoot_many', 'places'));
-    add("Crow's foot", 'One to one-or-many', connector(T, 'crowfoot_one', 'crowfoot_one_or_many', 'contains'));
-    add("Crow's foot", 'One to zero-or-many', connector(T, 'crowfoot_one', 'crowfoot_many', 'owns', true));
-    add("Crow's foot", 'Zero-or-one to one', connector(T, 'crowfoot_one', 'crowfoot_one', 'profile', true));
-    add("Crow's foot", 'Many to many', connector(T, 'crowfoot_many', 'crowfoot_many', 'tagged'));
+    add("Crow's foot", 'One to one', connector(T, 'crowfoot_one', 'crowfoot_one'));
+    add("Crow's foot", 'One to many', connector(T, 'crowfoot_one', 'crowfoot_many'));
+    add("Crow's foot", 'One to one-or-many', connector(T, 'crowfoot_one', 'crowfoot_one_or_many'));
+    add("Crow's foot", 'One to zero-or-many', connector(T, 'crowfoot_one', 'crowfoot_many', true));
+    add("Crow's foot", 'Zero-or-one to one', connector(T, 'crowfoot_one', 'crowfoot_one', true));
+    add("Crow's foot", 'Many to many', connector(T, 'crowfoot_many', 'crowfoot_many'));
 
     add('Chen', 'Entity', chen(T, 'rectangle', 'Customer'));
     add('Chen', 'Weak entity', chen(T, 'rectangle', 'Dependent', { double: true, stroke: T.weak }));
