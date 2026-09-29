@@ -10,11 +10,9 @@
     "core:event:default",
     "core:window:default",
     "core:window:allow-destroy",
-    "core:window:allow-set-title",
-    "core:window:allow-close",
     "core:window:allow-show",
     "core:webview:default",
-    "dialog:default",
+    "dialog:allow-message",
     "opener:allow-open-url",
     "opener:allow-default-urls",
     "window-state:default"
