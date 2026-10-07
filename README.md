@@ -52,33 +52,28 @@ links, and embedded web pages.
 
 ## Which distributions this runs on
 
-The app needs exactly two things at runtime: **WebKitGTK 4.1**
-(`libwebkit2gtk-4.1.so.0`) and **GTK 3** (`libgtk-3.so.0`). WebKitGTK 4.1 is the
-deciding one — it is the GTK 3 build of WebKit against libsoup 3, and it is what
-dates the list below. Anything older ships only the 4.0 ABI and will not do.
-
 | Distribution | Status | Install with |
 |---|---|---|
-| Fedora 38+ | Tested — developed and run on Fedora 44 | the `.rpm` |
-| RHEL 9+ / AlmaLinux / Rocky / CentOS Stream 9+ | Should work, not tried | the `.rpm` |
-| openSUSE Leap 15.5+ / Tumbleweed | Should work, not tried | the `.rpm` |
-| Mageia 9+ | Should work, not tried | the `.rpm` |
-| Debian 12 (bookworm)+ | Should work, not tried | the `.deb` |
-| Ubuntu 22.04+ | Should work, not tried | the `.deb` |
-| Linux Mint 21+, Pop!\_OS 22.04+, elementary 7+ | Should work, not tried | the `.deb` |
-| Arch, Manjaro, EndeavourOS | No package — [build from source](#building-from-source) | — |
-| Void, Gentoo, NixOS, Alpine, anything else | No package — [build from source](#building-from-source) | — |
+| Fedora 44 | Tested — developed and run here | the `.rpm` |
+| Anything else | Not tried — [build from source](#building-from-source) on that system | whatever that build produces |
 
-"Should work, not tried" is meant literally: the packages declare the right
-dependencies and contain the right files, and only Fedora has actually had one
-installed. Both packages are `x86_64`/`amd64` only. There is no ARM build,
-though nothing in the source prevents one — `npm run bundle` on an ARM machine
-should produce it.
+The app needs **WebKitGTK 4.1** (`libwebkit2gtk-4.1.so.0`) and **GTK 3**
+(`libgtk-3.so.0`) at runtime, and a C library at least as new as the one it was
+built against. That last one is what narrows the table: a binary built on
+Fedora 44 asks for glibc 2.39, so the packages built here will not start on
+Debian 12, Ubuntu 22.04, RHEL 9 or anything else that ships an older one. Both
+packages say so — the RPM requires `libc.so.6(GLIBC_2.39)(64bit)` and the deb
+`libc6 (>= 2.39)` — so on such a system the install is refused, rather than
+succeeding and leaving an app that does not launch.
 
-The RPM deliberately requires the two **shared libraries** rather than package
-names. Fedora calls them `webkit2gtk4.1` and `gtk3`, openSUSE and Mageia call
-them something else, and a soname is the one thing they all agree on — `dnf`,
-`zypper` and `urpmi` each resolve it to whatever their own package is.
+On another distribution, build on that distribution: the result links against
+the glibc it finds there. That has not been tried anywhere but Fedora, and both
+packages are `x86_64`/`amd64` only. There is no ARM build, though nothing in the
+source prevents one.
+
+The RPM requires **shared libraries** rather than package names. Fedora calls
+them `webkit2gtk4.1` and `gtk3`, openSUSE and Mageia call them something else,
+and a soname is the one thing they all agree on.
 
 ## Installing
 
@@ -91,37 +86,28 @@ The commands name version 0.5.3. If you built a different version, use the one
 in `package.json`. Earlier builds stay in that directory, so check you pick the
 newest file.
 
-### Fedora, RHEL, AlmaLinux, Rocky, CentOS Stream
+### Fedora
 
 ```bash
 sudo dnf install "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.3-1.x86_64.rpm"
 sudo dnf remove excalidraw-desktop     # to uninstall
 ```
 
-### openSUSE
+### A package built on another distribution
+
+Not tried. These are the commands that should apply to a package built on the
+system it is being installed on.
 
 ```bash
+# openSUSE
 sudo zypper install --allow-unsigned-rpm "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.3-1.x86_64.rpm"
-sudo zypper remove excalidraw-desktop
-```
 
-### Debian, Ubuntu, Mint, Pop!\_OS, elementary
-
-```bash
+# Debian, Ubuntu and their derivatives
 sudo apt install "./src-tauri/target/release/bundle/deb/Excalidraw Desktop_0.5.3_amd64.deb"
-sudo apt remove excalidraw-desktop
 ```
 
-The leading `./` is required — without a path separator `apt` looks for a
-package by that name in the repositories instead. The deb depends on
-`libwebkit2gtk-4.1-0` and `libgtk-3-0`; on Ubuntu 24.04 and Debian 13 the latter
-is supplied by `libgtk-3-0t64`, which provides the old name, so `apt` still
-resolves it. If it ever reports the dependency as unsatisfiable:
-
-```bash
-sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0t64
-sudo dpkg -i --force-depends "./src-tauri/target/release/bundle/deb/Excalidraw Desktop_0.5.3_amd64.deb"
-```
+The leading `./` is required for `apt` — without a path separator it looks for
+a package by that name in the repositories instead.
 
 ### Arch, and everything else
 
@@ -172,8 +158,12 @@ What lands on the system either way:
 
 ## Building from source
 
-Build dependencies: **Node 20+ with npm**, and a Rust toolchain plus the GTK and
-WebKitGTK development headers.
+Build dependencies: **Node 20.19 or newer (or 22.12+) with npm**, **Rust 1.88 or
+newer**, and the GTK and WebKitGTK development headers. Fedora 44's own `rust`
+and `nodejs` packages are new enough. Where a distribution's are not — Debian
+and Ubuntu, at the time of writing — take Rust from [rustup](https://rustup.rs)
+and Node from NodeSource or `nvm`, and leave `rustc`, `cargo`, `nodejs` and
+`npm` out of the command below.
 
 | Distribution | Command |
 |---|---|
@@ -194,7 +184,8 @@ bundler shells out to `rpmbuild` or `dpkg-deb` — they are written in Rust, and
 neither name appears anywhere in the Tauri CLI binary — so a Fedora machine can
 produce the `.deb` and a Debian machine the `.rpm`, and `rpm-build` is not a
 build dependency. That is how the `.deb` here was made; it has never been
-installed.
+installed, and being built on Fedora 44 it is only good for a system with
+glibc 2.39 or newer.
 
 An AppImage is possible in principle (`npx tauri build --bundles appimage`) but
 is not built here: Tauri's AppImage step runs `linuxdeploy`'s GTK plugin, which
@@ -247,6 +238,7 @@ open the same way, as extra tabs on top of the session being restored.
 | `Ctrl+Shift+E` | Export PNG |
 | `Ctrl+Shift+C` | Copy image to clipboard |
 | `Ctrl+,` | Customise themes |
+| `Ctrl+Q` | Quit |
 
 Shortcuts are registered both as native menu accelerators and as a
 window-level capture listener, because Excalidraw's canvas swallows many
@@ -292,7 +284,9 @@ focus.
 
 **View → Theme → Customise themes…** (`Ctrl+,`) opens a side panel. Pick any
 theme to start from, change its ten colours, and watch the app repaint as you
-type — nothing is written until you press a save button.
+type — no theme file is written until you press a save button. The choices
+under *Appearance* at the top of the panel are different: which theme is in
+use is saved as soon as you change it.
 
 - **Save** writes the theme under its current id. Doing this to a built-in
   theme means your version replaces it from then on; delete the file to get the
@@ -355,6 +349,7 @@ The **Export** menu remembers three choices, stored in
 - **Transparent background:** PNG and SVG exports leave out the canvas colour.
 - **Embed drawing in exported files:** the scene is stored inside the PNG or
   SVG, so opening that image in Excalidraw brings the editable drawing back.
+  That means excalidraw.com: this app's own Open reads `.excalidraw` files only.
   Copying to the clipboard never embeds it.
 - **PNG scale:** 1×, 2× (the default) or 3× pixel density.
 
@@ -424,8 +419,10 @@ file** — saving stays something you ask for.
 
 ```
 src/                    Renderer — React 19 + Excalidraw. No filesystem access.
+  bootstrap.ts          Points Excalidraw at the bundled fonts before it loads
   lib/api.ts            Typed wrappers over the Rust command layer
   lib/document.ts       Tabs, open/save, dirty tracking, autosave (useDocument hook)
+  lib/documentState.ts  The decisions behind document.ts, as pure functions the gate tests
   lib/exports.ts        PNG/SVG/clipboard rendering
   lib/exportActions.ts  Dialog-driven export flows
   lib/links.ts          Follows element links: scroll within the drawing, or the system browser
@@ -437,6 +434,7 @@ src/                    Renderer — React 19 + Excalidraw. No filesystem access
   lib/scene.ts          Excalidraw (de)serialisation helpers
   lib/tabs.ts           The tab model and its pure helpers
   theme/types.ts        Theme schema and validation
+  theme/color.ts        Hex-colour helpers: mixing, hover shades
   theme/presets.ts      Built-in themes
   theme/variables.ts    Theme -> Excalidraw CSS custom properties
   theme/apply.ts        Paints a theme onto the running instance
@@ -446,6 +444,7 @@ src/                    Renderer — React 19 + Excalidraw. No filesystem access
   components/TabBar.tsx       The open drawings
   components/ThemeEditor.tsx  The theme editor panel
 src-tauri/src/          Rust backend
+  lib.rs                Startup, the single-instance hand-over, which pages the window may load
   files.rs              Atomic file reads/writes, for allowed paths only
   scope.rs              Which paths the renderer may use: from dialogs, CLI, session, recent
   dialogs.rs            Open/Save pickers, run in Rust so their result can be trusted
@@ -458,6 +457,7 @@ src-tauri/src/          Rust backend
   chrome.rs             Paints the GTK menu bar and menus in the theme's colours
 scripts/copy-assets.mjs Copies Excalidraw fonts into public/ for offline use
 scripts/check.mjs       Assertions over the pure modules and bundled libraries (`npm run check`)
+scripts/version.mjs     Every place the version is written; `npm run bump -- 0.5.4` sets them all
 scripts/build-er-library.mjs          Writes the ER shapes into resources/libraries/
 scripts/build-kanagawa-erd-library.mjs  Writes the Kanagawa ERD shapes from
                                         scripts/kanagawa-erd-library.js
@@ -470,8 +470,10 @@ packaging/              What the packages install beyond the binary
 
 **Offline guarantee.** Excalidraw fetches its handwriting fonts (Excalifont,
 Nunito, Comic Shanns) from a CDN by default. `scripts/copy-assets.mjs` copies
-them out of the npm package into `public/`, and `index.html` sets
-`window.EXCALIDRAW_ASSET_PATH = "./"` before Excalidraw loads.
+them out of the npm package into `public/`, and `src/bootstrap.ts` sets
+`window.EXCALIDRAW_ASSET_PATH` before Excalidraw loads. It is a module of its
+own rather than a script in `index.html` because the content security policy
+allows no inline script.
 
 **Config location.** `~/.config/excalidraw-desktop/` holds:
 

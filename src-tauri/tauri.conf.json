@@ -67,7 +67,10 @@
         },
         "postInstallScript": "../packaging/post-install.sh",
         "postRemoveScript": "../packaging/post-remove.sh",
-        "desktopTemplate": "../packaging/excalidraw-desktop.desktop.hbs"
+        "desktopTemplate": "../packaging/excalidraw-desktop.desktop.hbs",
+        "depends": [
+          "libc.so.6(GLIBC_2.39)(64bit)"
+        ]
       },
       "deb": {
         "files": {
@@ -76,7 +79,10 @@
         },
         "postInstallScript": "../packaging/post-install.sh",
         "postRemoveScript": "../packaging/post-remove.sh",
-        "desktopTemplate": "../packaging/excalidraw-desktop.desktop.hbs"
+        "desktopTemplate": "../packaging/excalidraw-desktop.desktop.hbs",
+        "depends": [
+          "libc6 (>= 2.39)"
+        ]
       }
     }
   }
