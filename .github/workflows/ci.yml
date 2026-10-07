@@ -1,6 +1,7 @@
 # The gate every change in this repo is already held to by hand:
 #   npm run check && npx tsc --noEmit && npx vite build && cargo test
-# See PROGRESS.md for what each of those covers.
+# See PROGRESS.md for the state of the project and docs/reviews/ for why each
+# check exists.
 name: CI
 
 on:

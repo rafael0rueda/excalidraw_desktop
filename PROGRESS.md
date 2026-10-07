@@ -6,8 +6,11 @@ Last updated: 2026-10-07
 
 - **Tauri v2, not Electron.** Chosen after empirically testing Excalidraw 0.18.1
   inside WebKitGTK 2.52.5 (the engine Tauri embeds). See "Engine findings".
-- **Packaging: RPM** via `tauri build`, plus `.desktop` entry and `.excalidraw`
-  MIME association (phase 8).
+- **Packaging: RPM and deb** via `tauri build`, plus `.desktop` entry and
+  `.excalidraw` MIME association (phase 8). Supported on **Fedora 44** only: a
+  package built here needs that machine's glibc or newer (decided 2026-10-07).
+- **The theme owns the canvas colour.** "Reset the canvas" stays, and the theme
+  is re-applied after it (decided 2026-10-07).
 - **Theming: full editor + presets** (phases 5–6), themes as JSON in
   `~/.config/excalidraw-desktop/themes/`.
 - Excalidraw pinned to **0.18.1**. Do not bump without re-running the engine test.
@@ -22,7 +25,7 @@ Last updated: 2026-10-07
 | 4 | Autosave + session restore | **Done** |
 | 5 | Theme engine + presets | **Done** |
 | 6 | Theme editor UI | **Done** |
-| 7 | Tabs / multiple drawings | **Built, not yet checked by eye** |
+| 7 | Tabs / multiple drawings | **Done** (switching checked by hand on 0.5.1) |
 | 8 | RPM + .desktop + MIME association | **Done** (installed and launched on this machine) |
 
 ## Engine findings (verified by experiment, keep these)
@@ -108,7 +111,8 @@ and silently at startup — a broken file should not greet the user with a dialo
 
 **Settings:** `~/.config/excalidraw-desktop/settings.json` —
 `{ theme, light_theme, dark_theme }`. `theme` is a theme id or `"system"`;
-`"system"` reads GNOME's `color-scheme` via `gsettings` and picks from the pair.
+`"system"` reads the desktop's `color-scheme` from the settings portal, with
+`gsettings` as the fallback, and picks from the pair.
 The pair is editable from the editor panel (phase 6) as well as in the file.
 Re-checked on window focus, so a desktop-wide light/dark flip follows.
 
@@ -226,15 +230,15 @@ Design decisions worth keeping:
   listener in `App.tsx` skips events originating inside it. Excalidraw binds
   single-key tool shortcuts on the document.
 
-`npm run check` (`scripts/check-theme.mjs`) covers the pure parts: preset
+`npm run check` (`scripts/check.mjs`) covers the pure parts: preset
 validity, that preset ids satisfy the Rust id rule, `parseTheme` diagnostics,
 well-formed CSS output for every preset, and the id/repair helpers. It uses
 esbuild, which Vite already depends on, rather than adding a test runner.
 
-**Not yet verified by eye.** The app cannot be driven in an ordinary browser —
-`App.tsx` calls `getCurrentWindow()` on mount, so React never renders outside
-Tauri — which rules out headless checking of this panel. It needs a human
-looking at the window.
+**Verified by hand:** the editor saves a working user theme (see "Where things
+stand"). The app cannot be driven in an ordinary browser — `App.tsx` calls
+`getCurrentWindow()` on mount, so React never renders outside Tauri — so
+anything about this panel needs a human looking at the window.
 
 ## Tabs (phase 7, built)
 
@@ -287,43 +291,52 @@ Design decisions worth keeping:
 `--ed-*` became `--ui-*` and moved to `theme/panel.ts`, since the tab bar and the
 theme editor now style themselves from the same set.
 
-**Not yet verified by eye**, for the same reason as the theme editor: `App.tsx`
-calls `getCurrentWindow()` on mount, so React never renders outside Tauri and the
-window cannot be driven headlessly. What *was* verified from outside: the app
+**Verified by hand on 0.5.1** as far as switching goes: two drawings open,
+each tab keeping its own scene and unsaved dot. Like the theme editor, it
+cannot be driven headlessly. What was verified from outside when it was built: the app
 starts, writes a `meta.json` in the new shape with one tab, and its snapshot
 carries the theme's canvas colour — so startup, restore and autosave all ran.
 
-## Next steps
+## Where things stand
 
-All eight phases are built. The RPM is **installed on this machine** (0.4.0):
-the app appears in the GNOME app grid with its icon, launches from there, and
-the GTK menu bar and its drop-down menus come up in the theme's colours — so
-the chrome work of phase 7 is confirmed on a real desktop, not just under
-`tauri dev`. What is left is verification by a human at the machine, and then
-whatever the app turns out to want in use.
+**0.5.3 is the last version built and installed.** Everything from review
+2026-10-07 — seven phases, `docs/reviews/2026-10-07.md` — is on `main` and has
+passed the gate, and **none of it has been seen in a running window.**
 
-1. Double-click a `.excalidraw` file in Files: it should open in the app, with
-   the app's icon on it. Then select two and open them together, and
-   double-click a third while the app is running — one window, three tabs.
-   (Launching from the app grid works; the *file association* is the untested
-   half.)
-2. Look at the tab bar in a running window: open two files, switch, check each
-   tab keeps its own viewport and dirty dot, close a dirty tab, close the last
-   tab (should leave an empty one, not quit), then `kill -9` with two dirty tabs
-   and check the recovery prompt offers both back.
-3. Verify by hand what is still unproven: open, save, export, clipboard, and the
-   clean-quit path (quit normally, relaunch, expect *no* recovery prompt).
-   Crash recovery itself is already verified, but only for a single drawing.
-4. Still open from the theme chrome: whether the theme editor's `<select>`
-   pop-ups follow the theme. They are WebKit `menu` widgets and the same CSS
-   provider targets them, but only the menu bar has actually been seen.
+Next, in order:
+1. Run through the "To check by hand" lists in `docs/reviews/2026-10-07.md`,
+   one per phase.
+2. `npm run bump -- 0.5.4`, `npm run bundle`, install the RPM, commit, and
+   `git tag v0.5.4`. There are no tags before that one.
 
-Already verified by hand, so don't re-do it: **the theme editor saves a working
-user theme.** Dracula was edited in the panel (`Ctrl+,`) and saved; that wrote
-`~/.config/excalidraw-desktop/themes/dracula.json`, and because a saved theme
-keeps the preset's `id`, it replaced the shipped Dracula in place — the View →
-Theme menu listed the edited name instead of a second entry, which is the
-intended behaviour. The test file has since been removed and the preset is back.
+What a human has actually seen, and on which version:
+
+| Seen working | On |
+|---|---|
+| Launch from the GNOME app grid with its icon; themed menu bar and menus | 0.4.0 |
+| The theme editor saves a working user theme (a saved Dracula replaced the preset in place) | 0.4.x |
+| Native file dialogs: lists and sidebars follow the theme | 0.4.4 |
+| Crash recovery of one drawing after `kill -9` | 2026-08-27, again on 0.5.1 |
+| Two tabs: each keeps its own scene and unsaved dot | 0.5.1 |
+| Open, Save, Save As, Open Recent, PNG and SVG export | 0.5.1 |
+| An SVG export carries its fonts inline | 0.5.1 |
+| Two fast Ctrl+Shift+S raise one dialog | 0.5.1 |
+| Embedded web content is refused; its link opens in the browser | 0.5.2 |
+| The Kanagawa ERD shapes insert and their connectors behave as arrows | 0.5.2 |
+
+Never checked by hand:
+- Double-clicking a `.excalidraw` file in Files, the app's icon on such files,
+  and opening several at once. (Checked from the command line only.)
+- `kill -9` with two unsaved tabs: the prompt should offer both back.
+- A clean quit followed by a relaunch shows no recovery prompt.
+- The autosave warning, which needs a read-only `XDG_CONFIG_HOME` to provoke.
+- Whether the theme editor's `<select>` pop-ups follow the theme.
+- Whether a shortcut can fire twice, once from the GTK accelerator and once
+  from the listener in `App.tsx`. Save As and Export are where it would show.
+- The header-bar buttons of native dialogs (the 0.4.6 fix was never recorded
+  as seen).
+- The `.deb`, which has never been installed anywhere.
+- PNG export at 2× and 3× — until 2026-10-07 the scale had no effect at all.
 
 ## Packaging (phase 8, built)
 
@@ -438,8 +451,8 @@ And by running the release binary against a scratch `XDG_CONFIG_HOME`:
 - killing it and relaunching with a third drawing yields three tabs — the two
   restored plus the new one, which is the one focused.
 
-Still unverified: the installed package on the real system, i.e. double-clicking
-a file in Files and seeing the app's icon on it.
+Still unverified: double-clicking a file in Files and seeing the app's icon on
+it. The package itself is installed and runs.
 
 ## Autosave & session restore (phase 4)
 
@@ -484,718 +497,20 @@ intact, still marked dirty.
 
 `cargo test --lib` covers the snapshot file lifecycle.
 
-## Code review, verified against a running instance (2026-08-31)
+## Reviews
 
-Twelve review findings were checked empirically, not just read. GUI input
-injection is impossible on this box (GNOME/Wayland refuses XTEST to Xwayland
-clients), so the frontend ones were driven through a throwaway Tauri-IPC
-harness: the real, unmodified renderer running in a browser against a fake
-`window.__TAURI_INTERNALS__.invoke` over an in-memory filesystem. The harness
-files were deleted afterwards; rebuild them if these need re-testing.
+Each review, with its findings and how every one was dealt with, is a file of
+its own under `docs/reviews/`. They are history: read one when a finding id
+(`B2`, `H3`, `D1`…) turns up in a comment or a commit message, not to learn
+what state the project is in.
 
-Two harness lessons worth keeping:
-
-- `_unlisten` calls `window.__TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener`
-  *before* invoking `plugin:event|unlisten`. A fake IPC layer that omits that
-  global makes every unlisten throw, and `void pending.then(...)` swallows it —
-  which looks exactly like a listener leak that is not there.
-- `confirm()` from `@tauri-apps/plugin-dialog` invokes `plugin:dialog|message`
-  and compares the result to `okLabel`. The backend returns the *button label*,
-  not a boolean, so a fake that answers `true` silently takes the cancel path.
-
-Confirmed, in severity order:
-
-1. **Save race loses work. Fixed 2026-09-06.** `writeTo` (`src/lib/document.ts`)
-   recomputes `savedVersion` from the live scene *after* awaiting the disk
-   write. With a 1.2 s write latency, an element drawn during the write ended
-   up `sceneHasIt:true, diskHasIt:false, tabShowsDirty:false`; quitting asked
-   nothing, marked a clean exit, and the next launch came back without it.
-   Fix: the version being written is now captured in the same tick as
-   `capture()`, before the await, and `dirty` is recomputed against the live
-   scene afterward instead of forced to `false`.
-2. **Export selection drops bound text and frame children. Fixed
-   2026-09-06.** `sceneFor` in `src/lib/exports.ts` filters on raw
-   `selectedElementIds`, which by Excalidraw's design excludes bound labels.
-   Select-all then export selection: 4230 bytes full vs 1049 selection-only,
-   label absent. Fix: a new `expandSelection` walks the raw selection twice —
-   once to pull in a selected frame's children by `frameId`, once more to pull
-   in a label bound (`containerId`) to whatever the first pass just included,
-   which also covers a label on a container that only got in because its
-   frame was selected. `getSelectedElements`, Excalidraw's own version of
-   this, is not part of the package's public export surface (checked
-   `dist/types/excalidraw/index.d.ts`), hence the local reimplementation.
-3. **`saveAsNew` overwrites its source. Fixed 2026-09-06.** `taken.delete(draft.id)`
-   means an unedited name re-derives the *same* id; the "new" theme wrote
-   `light.json`. Renaming first gave the expected `light-copy`. Fix: the
-   `.delete` had no legitimate purpose — "save as new" only ever needs a
-   fresh id, so the draft's own current id now stays in `taken` too.
-4. **Unsaved-changes prompt has no Cancel. Fixed 2026-09-06.** Buttons are
-   `{"OkCancelCustom":["Save","Discard"]}`; Escape resolves to the cancel label
-   and is treated as Discard, closing a dirty tab with zero writes. Fix:
-   `confirmTab` now shows a `YesNoCancelCustom`-style dialog via `message()`
-   with an explicit `{yes: "Save", no: "Discard", cancel: "Cancel"}`. Traced
-   through `tauri-plugin-dialog`'s desktop backend
-   (`~/.cargo/registry/src/.../tauri-plugin-dialog-2.7.2/src/desktop.rs`):
-   with a real third button present, GTK's Escape/close routes to
-   `rfd::MessageDialogResult::Cancel`, which that backend maps to
-   `Custom(cancel)` — now genuinely distinct from clicking Discard.
-5. **`endSession` marks a clean exit even when the snapshot is suppressed.
-   Fixed 2026-09-06.** Quitting while `load_session` is still pending gave
-   `saveSessionCalls:0, markCleanExitCalls:1` on a session whose `clean_exit`
-   was `false`. Next launch: no recovery prompt, unsaved work gone. Fix:
-   `endSession` now returns immediately if `restored.current` is still false,
-   leaving the previous run's snapshot and `clean_exit` untouched.
-6. **`writeTo` is the only mutation site that does not also write
-   `tabsRef.current`. Fixed 2026-09-06.** Save-then-quit wrote the file but
-   snapshotted `{path:null, dirty:true}`. Worse, the re-render schedules a
-   *late* snapshot that lands after `mark_clean_exit` and flips `clean_exit`
-   back to `false` — observed directly. Whichever side wins the race against
-   `window.destroy()`, the next launch is wrong: a saved file reopened as an
-   untitled dirty tab, or a spurious recovery prompt. Fix: `writeTo` now sets
-   `tabsRef.current = next` synchronously, matching every other mutation site
-   in the file, instead of relying on React to re-render before the ref is
-   read again.
-7. **Non-canonical dialog paths open one file twice. Fixed 2026-09-06.**
-   `cli_drawings()` canonicalises; the dialog path does not. Opening a file
-   and then a symlink to it went from 1 tab to 2. Fix: a new
-   `canonicalize_path` Rust command (`files.rs`), the same normalisation
-   `cli_drawings` already did, called from `openDrawing` on whatever the
-   native Open dialog returns before the existing-tab check and before the
-   path is stored. The CLI and single-instance paths already arrive
-   canonical, so they are left alone.
-8. **`adopt.current` stays armed. Fixed 2026-09-06.** Changing the *dark* pair
-   while the desktop is light leaves `theme.chosen` identity unchanged, so the
-   effect never consumes the flag. Editing a colour and then letting the
-   desktop flip to dark replaced the unsaved draft with no discard prompt.
-   Control run without the arming step kept the draft — so the flag, not the
-   flip, is the cause. Fix: the consuming effect in `ThemeEditor.tsx` dropped
-   its `[theme.chosen]` dependency array, so it runs after every render
-   instead of only when that one reference changes, and always disarms on the
-   render right after `apply()` — whether or not `chosen` actually moved.
-9. **`write_atomic` drops permissions and breaks links. Permissions and
-   symlinks fixed 2026-09-06; hard links are an accepted trade-off.**
-   Reproduced with the exact function: a `600` target came back `644`; a
-   symlink was replaced by a regular file leaving the target untouched; a
-   hard link was broken (link count 1, the other name kept the old content).
-   Fix: `write_atomic` now resolves the target through `std::fs::canonicalize`
-   before writing, so a symlink's own directory entry is never the rename
-   target — its content updates, the link itself is untouched — and carries
-   the existing file's permission bits onto the replacement before the
-   rename. Covered by two new tests in `files.rs`. Breaking a hard link is
-   not fixed: preserving one would mean writing into the existing inode
-   in place, which gives up the atomicity (`write` then `rename`) the
-   function exists for — not attempted.
-10. **Invalid theme JSON is unreportable. Fixed 2026-09-06.** `list_user_themes`
-    drops it with `.ok()`, so the renderer's `errors[]` path in `readUserThemes`
-    — which exists precisely to report rejects — can only ever see files that
-    already parsed. Fix: `list_user_themes` now returns `ThemeFile { value,
-    error }` per file instead of a bare `Vec<serde_json::Value>`; a read or JSON
-    parse failure becomes `{value: null, error: "<filename>: <reason>"}` instead
-    of vanishing. The listing logic moved to `list_theme_files_at(dir)` so a test
-    can point it at a scratch directory rather than fight `config_dir()`'s
-    process-wide `XDG_CONFIG_HOME` — `snapshot_lifecycle` in `session.rs` already
-    has a comment about exactly that hazard. Covered by a new test in
-    `settings.rs`.
-11. **`"csp": null` in `tauri.conf.json` alongside unrestricted
-    `read_text_file`/`write_text_file`. Fixed 2026-09-06.** Set a real policy:
-    `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self';
-    img-src 'self' data:; font-src 'self' data:; worker-src 'self' blob: data:;
-    connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'`.
-    Every directive traces to something actually found, not guessed:
-    - `connect-src ipc: http://ipc.localhost` is Tauri's own documented
-      requirement for IPC (`tauri-utils-2.9.3/src/config.rs`, the `HeaderConfig`
-      doc comment) — omitting it would have broken every `invoke()` call, i.e.
-      the entire app.
-    - `worker-src 'self' blob: data:` and `script-src 'wasm-unsafe-eval'` come
-      from reading `dist/assets/pica-*.js` (the image-paste resizer): it does
-      `new Worker("data:text/javascript;base64,...")`, `new
-      Worker(URL.createObjectURL(...))`, and `WebAssembly.compile`/`new
-      WebAssembly.Instance` for a SIMD fast path. Without these, pasting a large
-      image would silently fall back to a slower path or throw, depending on
-      pica's own feature detection — never tested by hand, since GUI input
-      injection is impossible on this box (see the phase-6 note).
-    - `img-src`/`font-src ... data:` come from `data:image`/`data:font` hits in
-      the built CSS and JS — the offline-fonts and icon setup already relies on
-      base64-embedded assets.
-    - No `frame-src` allowance for embeddable content (YouTube/Figma links
-      Excalidraw can render as iframes): the README's very first line is "no
-      network access at runtime", and an iframe embed needs exactly that. Blocked
-      deliberately, not by oversight — revisit only if embeds are ever wanted.
-    - The one inline `<script>` in `index.html` (`window.EXCALIDRAW_ASSET_PATH =
-      "./"`, which must run before Excalidraw's own module evaluates) moved to
-      its own file, `src/bootstrap.ts`, loaded via a second `<script
-      type="module">` tag ahead of `main.tsx`'s — an inline script has no `src`
-      for `script-src 'self'` to allow without `'unsafe-inline'`, and Tauri only
-      auto-nonces `style` tags and `script[src^='http']`, not plain inline
-      scripts (checked `tauri-utils-2.9.3/src/html.rs`). Verified after `vite
-      build` folds both into one chunk: the assignment lands at byte offset 1210
-      of a 1.38 MB bundle, i.e. before essentially all of React/Excalidraw's own
-      code, so the ordering guarantee survived the bundling.
-    - **Screenshotting the release build was attempted and abandoned** (`import`
-      from ImageMagick 7.1.2-27 fails identically on every syntax tried;
-      `ffmpeg -f x11grab` against `:0` only ever captured an empty root window
-      with a cursor, since this desktop's real content is native Wayland, not
-      the X11 screen `DISPLAY=:0` names). **Superseded 2026-09-07**: the app
-      *was* verified rendering correctly, just not via a screenshot — see
-      finding 12, which drove the real renderer through the Tauri-IPC harness
-      under this CSP and confirmed both the base UI and a themed dialog paint
-      correctly. Still outstanding: actually pasting a large image to confirm
-      pica's WASM/worker path (`worker-src`/`'wasm-unsafe-eval'`) works under
-      this CSP, which needs a real logged-in session with clipboard access,
-      not this harness.
-
-12. **Every Excalidraw dialog (Help, export, command palette, ...) ignores the
-    active theme. Fixed 2026-09-07.** `applyTheme` (`src/theme/apply.ts`) only
-    ever painted `document.querySelector(".excalidraw")` — the *first* match.
-    A dialog is not nested inside that element: Excalidraw's `Modal.tsx`
-    portals it straight onto `<body>` as a sibling carrying the `.excalidraw`
-    class itself (`useCreatePortalContainer` in Excalidraw's source, confirmed
-    by reading `dist/dev/index.js`). Two things follow from that: custom
-    properties set on the main root don't reach a sibling by inheritance, and
-    the dialog's own `.excalidraw` class means Excalidraw's stylesheet
-    reasserts its stock (light) variable values directly on it too — a rule
-    that targets an element beats one merely inherited from an ancestor,
-    however that ancestor's value was set. So even inheriting the variables
-    wouldn't have been enough. Fix: `applyTheme` now paints every `.excalidraw`
-    element present (`querySelectorAll`, not `querySelector`), and a
-    `MutationObserver` on `<body>` paints each new one — e.g. a Modal's portal
-    container — the instant it's added. Verified live: rebuilt the
-    throwaway Tauri-IPC harness from the note at the top of this section,
-    forced the dark `kanagawa-wave` theme, opened Help, and read
-    `getComputedStyle` on the dialog's `.Island` — `background-color: rgb(42,
-    42, 55)` (`#2A2A37`, the theme's `surface`) with light text, where it was
-    previously the stock white/black regardless of theme. This same harness
-    run is also the first actual visual confirmation that the app renders
-    correctly under the CSP from finding 11 — see the note there.
-
-13. **Canvas is white on some launches, themed correctly on others — a startup
-    race. Fixed 2026-09-08.** Reported by the user against the real installed
-    app (dark GTK toolbar, pure white canvas), non-deterministic across
-    restarts. Root cause: `restoreSession` (`src/lib/document.ts`) returns
-    early — without ever calling `show()` — whenever there is nothing to
-    restore: no session file, an empty one, or (the common case) a session
-    whose only tab is an untitled one, since the "reopen quietly" loop skips
-    any tab with `path: null` and then bails out on `!opened.length`. Skipping
-    `show()` means the default tab never goes through `applyScene`, which is
-    the *only* place that merges the theme into the same `updateScene` call as
-    the scene content — a design called out explicitly in the doc comment on
-    `ThemedDefaults`, because doing it afterward, from a separate effect, loses
-    to Excalidraw's own initial-mount commit landing after ours. With
-    `restoreSession` bailing out, the canvas was left to be coloured only by
-    `useTheme`'s independent `applyTheme` effect (`src/theme/apply.ts`), which
-    is exactly that racy "afterward" case — it sometimes wins against
-    Excalidraw's own mount commit and sometimes loses, depending on IPC/disk
-    timing, which is why it was intermittent rather than constant. Fix: both
-    early-return points in `restoreSession` now call
-    `await show(activeRef.current)` before returning, so the default tab is
-    always pushed through the race-safe path. Verified with `npx tsc --noEmit`
-    and `npm run check` (14/14); not yet re-verified by eye against the real
-    installed app — needs a rebuild (`npm run bundle`) and a `sudo dnf
-    reinstall` the user runs themselves, then a few cold restarts to confirm
-    the white canvas no longer appears.
-
-14. **Native file chooser (Library → "Load from file") sometimes opens light
-    instead of dark — the same shape of race as finding 13, but external to
-    our code. Fixed 2026-09-08.** User confirmed this dialog (screenshot:
-    GTK's own "Select File" chooser) is intermittently light on launch, GTK
-    dark theme other times, matching the OS's actual `prefer-dark` setting
-    inconsistently. This dialog is raised by Excalidraw's own Library UI via a
-    plain `<input type="file">` — no code of ours is on that path at all (`grep
-    -rn library src` turns up nothing), so it's WebKitGTK handing off to a real
-    native `GtkFileChooserDialog`. We never set GTK's own
-    `gtk-application-prefer-dark-theme`; GTK decides it by itself, the first
-    time anything touches `GtkSettings`, via an async desktop-portal query over
-    D-Bus. A dialog raised before that query resolves gets GTK's light default,
-    regardless of the desktop's real preference — same shape as finding 13
-    (an early consumer racing an async resolution) but happening entirely
-    inside GTK, invisible to our own effects. Fix: new Rust command
-    `set_prefer_dark_theme` (`src-tauri/src/chrome.rs`) sets
-    `gtk-application-prefer-dark-theme` directly via `GtkSettingsExt`, driven
-    by the theme's own `dark` flag — the value `system_color_scheme` (a
-    synchronous `gsettings get` shell-out, not the portal) already resolves.
-    Called from `paintMenuBar` (`src/theme/apply.ts`) on every theme
-    application, deduped against the last value set. Since this runs every
-    time the active theme is (re)computed — including the startup resolution —
-    GTK's own dark preference is pinned to our already-correct answer well
-    before the user could ever reach the Library menu to raise the dialog.
-    Verified with `cargo check`, `cargo test` (9/9) and `npm run check`
-    (14/14). Shipped as 0.4.3. **Turned out insufficient — see finding 15**:
-    `gsettings` already reported `gtk-theme: 'Adwaita-dark'` and
-    `color-scheme: 'prefer-dark'` on this machine, so GTK's own binding to
-    those settings was already in effect regardless of this fix; the portal-race
-    theory doesn't hold up as the explanation for what the user was actually
-    seeing. This fix is harmless and still correct as a defensive pin, but it
-    was not the fix that mattered.
-
-15. **The real cause of finding 14's symptom: GTK3's "dark" flag does not
-    reach a `GtkTreeView`/`GtkPlacesSidebar`'s content, only its chrome. Fixed
-    2026-09-08.** After 0.4.3, the user reported the file chooser "looks
-    better, but still has white parts" and pinned it down: the file *list* and
-    the *sidebar* specifically. Pixel-sampling the screenshot with PIL
-    confirmed it precisely — the dialog's own titlebar was already the correct
-    dark colour (`rgb(42,42,55)`), but the list background, row background and
-    sidebar were flat `rgb(255,255,255)`. Checking the system explained why:
-    `gtk-theme` resolves to `Adwaita-dark`, but `/usr/share/themes/Adwaita-dark`
-    on this machine only ships a `gtk-2.0/` directory (from the legacy
-    `adwaita-gtk2-theme` package) — there is no GTK3 theme by that name
-    installed. GTK3 falls back to its own built-in Adwaita and applies
-    `gtk-application-prefer-dark-theme` to it, which is a long-standing,
-    widely-documented GTK3 limitation: that flag darkens headerbars, buttons
-    and menus, but was never extended to `.view`-class content — treeview,
-    iconview and `GtkPlacesSidebar` all keep Adwaita's light background no
-    matter what. This is orthogonal to finding 14's portal-race theory, which
-    is why 0.4.3 alone didn't fix it. Fix: extended the same screen-wide CSS
-    provider from finding 14/`chrome.rs` (already proven to reach native
-    dialogs in-process, at `STYLE_PROVIDER_PRIORITY_APPLICATION`) with
-    selectors for `filechooser .view`, `treeview.view` (+ `:selected` and
-    header buttons), and `placessidebar`'s `list`/`row`, reusing the same
-    `MenuColors` already sent for the menu bar rather than adding a new IPC
-    round trip. Verified with `cargo check` and `cargo test` (9/9); not yet
-    re-verified by eye against the real dialog — needs the 0.4.4 rebuild
-    installed and the Library file chooser reopened. **Caveat**: this only
-    reaches a dialog created in our own process. `xdg-desktop-portal-gtk` and
-    `xdg-desktop-portal-gnome` are both running on this machine; if WebKitGTK
-    turns out to route this specific `<input type="file">` through the portal
-    rather than an in-process `GtkFileChooserNative`, this CSS provider — being
-    process-local — cannot reach it, and the white content would persist as a
-    platform limitation outside this app's control. Confirming which is the
-    case needs the dialog open and a live process/window inspection, not yet
-    done.
-
-16. **0.4.4 confirmed in-process (finding 15's caveat resolved): list and
-    sidebar went dark, but the Cancel/Open/search buttons stayed near-white.
-    Fixed 2026-09-08.** User installed 0.4.4 and confirmed "the rest is good"
-    — meaning the CSS provider does reach this dialog, settling finding 15's
-    open question about a possible portal boundary. The one remaining light
-    spot, pixel-sampled the same way (`(235,233,220)`, `(250,249,248)`,
-    `(241,240,238)` — all near-white): the dialog's own header-bar buttons.
-    These live in a `GtkHeaderBar`, which is the window's titlebar widget, a
-    *sibling* of `filechooser` in the widget tree rather than a descendant —
-    so `filechooser`-scoped selectors never had a chance of reaching them,
-    independent of the treeview/sidebar issue findings 14/15 were chasing.
-    Fix: added `headerbar button` selectors to the same provider, excluding
-    `.suggested-action`/`.destructive-action` so GTK's own accent styling on
-    the primary button (Open, once a file is picked) is left alone. Verified
-    with `cargo check` and `cargo test` (9/9); not yet re-verified by eye —
-    needs the 0.4.5 rebuild installed.
-
-17. **0.4.5 had no visible effect on the header-bar buttons at all — pixel
-    values were exactly unchanged. Fixed 2026-09-08.** Root cause of finding
-    16's fix not working: Adwaita paints `GtkButton` with a
-    `background-image` (a gradient), and CSS background-image paints over
-    background-color rather than being replaced by it — setting only
-    `background-color` in finding 16's rule left the original gradient fully
-    visible on top, so the change was applied but invisible. Fix: added
-    `background-image: none` to all three `headerbar button` rules from
-    finding 16, alongside the existing `background-color`. Verified with
-    `cargo check` and `cargo test` (9/9); not yet re-verified by eye — needs
-    the 0.4.6 rebuild installed.
-
-Downgraded — do not fix what is not broken:
-
-- The `onCloseRequested` effect depending on the unstable `actions` object was
-  reported as leaving a gap where a close is not intercepted, plus a listener
-  leak. **Neither happens.** Measured sequence `LLULLUULULLUU...` with
-  `minAfterStart:1`: the new listener always registers before the old one
-  unlistens, and listens/unlistens balanced 8/8. Only the per-render IPC churn
-  is real, and that is a performance nit.
-
-## Review 2026-09-14 — findings, not yet implemented
-
-Baseline at review time: `tsc` clean, `npm run check` 14/14, `cargo test` 9/9.
-Checked against the installed sources, not guessed: Excalidraw 0.18.1 binds
-`Ctrl+Shift+G` (ungroup) and `Ctrl+Shift+P` (command palette); it opens element
-links itself with `window.open(void 0, "_self" | "_blank")` unless `onLinkOpen`
-prevents it; the package does not persist the library on its own.
-
-Security
-- S1 `read_text_file`/`write_text_file`/`write_binary_file` take any path, so a
-  renderer compromise is arbitrary read/write in `$HOME`. Scope them in Rust.
-- S2 Element links open inside the webview (no `onLinkOpen`, no
-  `on_navigation`/`on_new_window` guard). Route to the system browser, deny
-  navigation away from the app.
-- S3 `write_atomic`: fixed `.tmp` name, follows a planted symlink, no
-  `create_new`, no fsync, temp left behind on error, concurrent writers collide.
-- S4 `npm audit`: high (lodash-es via mermaid-to-excalidraw), transitive fix.
-- S5 Snapshots/config written with umask perms; app commands not capability-gated.
-
-Bugs
-- B1 Recovery prompt: Escape = Discard, and the next snapshot prunes the
-  untitled work for good (`restoreSession`). Same class as finding 4.
-- B2 Unparseable tab becomes an empty drawing still bound to its path (`show`);
-  a later Save overwrites the user's file.
-- B3 Save As / exports append the extension after the dialog, bypassing its
-  overwrite confirmation.
-- B4 Files from a second launch during startup are dropped by `replaceTabs`.
-- B5 Export PNG/SVG shortcuts steal Excalidraw's command palette and ungroup.
-- B6 No re-entrancy guard on quit/close: double prompts, double saves.
-- B7 Save As can put one path in two tabs (not canonicalised / not checked).
-- B8 Native menu rebuilt on each dirty flip, old resources never closed (leak);
-  out-of-order rebuilds can install a stale menu.
-- B9 Export selection is O(n²) (`expandSelection` inside `filter`).
-- B10 Library is not persisted across launches.
-- B11 A theme picked before settings load is overwritten; a corrupt
-  settings.json is silently replaced with defaults.
-
-Performance
-- P1 Sync commands run on the main thread (file I/O, base64, `gsettings` spawn on
-  every focus). Make them async — only after snapshots are serialised and
-  blocked once `endSession` starts, or ordering races appear.
-- P2 Every capture serialises the whole scene (images included) even if unchanged.
-- P3 PNG bytes go through base64 JSON IPC; raw binary IPC exists.
-- P4 Close and keydown listeners re-register every render.
-- P5 `recent.json` is written non-atomically.
-
-Improvements: white startup flash on dark themes; XDG portal colour scheme
-(non-GNOME, change signal); export options (scale, transparency, embed scene,
-default dir next to the drawing); bundle the ER library; `e.code` for
-shortcuts on non-US layouts; `cargo audit`.
-
-Plan: phase 1 data loss (B1–B4, B6) → phase 2 security (S1–S5) → phase 3
-correctness/perf (snapshot serialisation, P1, B5, B7–B9, B11, P2, P4, P5) →
-phase 4 features (library persistence + ER library, startup flash, export
-options, portal). Each item: tests, `tsc`/`check`/`cargo test`, own commit.
-
-Decisions (user, 2026-09-14): implement phases 1–3 only; Export PNG moves to
-`Ctrl+Shift+E` (Excalidraw's own image-export key, unused here) and Export SVG
-becomes menu-only; add `tauri-plugin-opener` so links open in the browser.
-
-**Phase 1 done 2026-09-14** (`tsc`, `check` 14/14, `cargo test` 10/10; not yet
-seen by eye):
-- B1 recovery prompt is Restore / Discard / Cancel; anything but Discard restores.
-- B2 an unparseable tab is closed, not emptied. A file-backed one leaves the
-  file alone; a snapshot-only one is moved to `session/unreadable/` first
-  (`keep_unreadable_snapshot`), outside `prune`'s reach.
-- B3 Save As and both exports go through Rust `dialogs::pick_save_path`, which
-  adds the extension and asks before replacing a file the dialog never saw;
-  declining reopens the dialog. Exports now default beside the drawing.
-- B4 `open-files` events are queued until startup has restored the session.
-- B6 `closeWindow` (menu, Ctrl+Q and the window's X all route there) and
-  `closeTab`/`confirmDiscard` refuse to run twice at once.
-To check by hand: type a Save As name without extension over an existing file;
-`kill -9` with unsaved work and press Escape on the prompt.
-
-**Phase 2 done 2026-09-14** (`tsc`, `check` 14/14, `cargo test` 13/13,
-`vite build`, `npm audit` 0; not yet seen by eye):
-- S1 `scope.rs`: `read_text_file`/`write_text_file`/`write_binary_file` only
-  accept paths in `Allowed`, compared canonically. Paths get in from
-  `pick_open_path`/`pick_save_path` (dialogs now run in Rust; the
-  `canonicalize_path` command is gone), the command line, a second launch,
-  `load_session` and `list_recent`. `save_session` and `push_recent` drop paths
-  that are not allowed, since those lists allow on the way back in.
-  `write_binary_file` also requires `.png`.
-- S2 the main window is built in `setup` (`create: false` in the config) with
-  `on_navigation` (only `tauri://` or `devUrl`, and no query string — an
-  element link is the app URL plus `?element=`) and `on_new_window` (always
-  Deny). Refused http/https/mailto URLs go to `tauri-plugin-opener`.
-  `onLinkOpen` → `lib/links.ts`: element links scroll to the element (key
-  `element`, host-checked, confirmed in the bundle), anything else goes to
-  `openUrl` (capability `opener:allow-open-url` + `allow-default-urls`).
-- S3 `write_atomic`: a new temp name per write, `create_new`, fsync of file and
-  directory, and the temp file removed on failure.
-- S4 `overrides`: lodash-es 4.18.1; nanoid 3.3.19 under Excalidraw (same major)
-  and 5.1.16 under mermaid-to-excalidraw (major bump — build fine, the
-  text-to-diagram dialog not yet tried by eye).
-- S5 `session/` is created and kept 0700. Capability-gating the app's own
-  commands was not done: one local origin, little to gain.
-- P5 `recent.json` is written through `write_atomic` (recent.rs was rewritten
-  here anyway).
-To check by hand: Open, Open Recent, Save, Save As, both exports; a https link
-on an element opens the browser; an element link scrolls; Help dialog links;
-Mermaid text-to-diagram.
-Follow-up found while checking phase 3: wry sends *every* WebKitGTK
-`NavigationAction` through `on_navigation`, downloads included, so the guard
-also blocked Excalidraw's "Export library" (`<a download>` on a `blob:` URL).
-`allowed_navigation` now lets `blob:` through; only the page can create one.
-
-**Phase 3 done 2026-09-14** (`tsc`, `check` 14/14, `cargo test` 13/13,
-`vite build`; not yet seen by eye):
-- Snapshots are queued (`inFlight`), so two never race to disk. `endSession`
-  sets `ending` and only its own final snapshot gets through after that, so
-  none lands after `mark_clean_exit`. Also fixed while there: `written` recorded
-  the tab's revision *after* the await, which could mark an unsent scene as sent.
-- P1 file, session, recent, settings/theme and clipboard commands are
-  `#[tauri::command(async)]` (a sync command runs inline in the IPC handler,
-  i.e. on the GTK main thread; checked in `tauri-macros` `wrapper.rs`). Session
-  and recent commands take a Rust `Mutex`, since the thread pool no longer
-  serialises them.
-- P2 autosave skips serialising when a mark (tab, version including deleted
-  elements, element count, background, file count) has not moved, and skips
-  `save_session` when there is no scene to send and the tab list is unchanged.
-  Pointer movement fires `onChange`, and every write now fsyncs. Save, tab
-  switches and quit still capture in full.
-- B5 Export PNG is `Ctrl+Shift+E`, Export SVG is menu-only; Excalidraw's
-  palette and ungroup keys work again.
-- B7 Save As refuses a path already open in another tab.
-- B8 `buildMenu` runs only when tabs, paths or themes change; dirty/active marks
-  go through `updateTabMarks` (`setText`/`setChecked`). Every item a build
-  creates is closed when the next build replaces it, including the handle
-  `setAsAppMenu` returns. A generation counter drops a build that finishes late.
-  Exports read the active path through a ref, since a tab switch no longer rebuilds.
-- B9 `expandSelection` runs once per export.
-- B11 settings read from disk are not written straight back (a corrupt file is
-  left alone until the user changes a theme). A pick made before the load
-  finishes wins over the file and is saved. Saves are queued.
-- P4 `actions` is memoised, so the close listener registers once; the keydown
-  listener reads through a ref.
-Smoke-tested 2026-09-14 via `npm start` with `XDG_CONFIG_HOME`/`DATA`/`CACHE`
-pointed at `/tmp/excalidraw-smoke`, seeding a clean-exit session whose one tab
-had a path. Within seconds the app had rewritten `meta.json` with the same tab
-id and path, `clean_exit: false`, and a re-serialised snapshot, and `session/`
-was `drwx------`. That proves the page loads through the navigation guard, and
-that `load_session` → allowlist → `read_text_file` → `save_session` works
-end to end (a refused read would have dropped the tab). Not proven: anything
-needing clicks.
-
-**Phase 4 done 2026-09-14** (`tsc`, `check` 15/15, `cargo test` 14/14,
-`vite build`; not yet seen by eye):
-- Library persistence (B10): `library.rs` (`load_library` returns None only
-  when the file is missing and errors if it is unreadable; `save_library`),
-  plus `lib/library.ts`, an adapter for Excalidraw's `useHandleLibrary`. With no
-  saved file, `load` returns the ER shapes, so a first launch is seeded; once
-  saved, never again. **View → Add ER diagram shapes to library** calls
-  `updateLibrary({merge: true, openLibraryMenu: true})`. The ER file is imported
-  with `?raw` (hence `src/vite-env.d.ts`) and its `source` URL was corrected in
-  the file and the script.
-- Startup flash: the window is `visible: false`; `App.tsx` shows it once
-  `api` exists and `useTheme` is `ready` (settings, user themes and scheme read).
-  The window-state plugin runs with `StateFlags::all() & !VISIBLE`, since it
-  calls `show()` when restoring visibility. `show_eventually` in `lib.rs`
-  shows the window after 3 s if the renderer never does. Capability
-  `core:window:allow-show`.
-- Export options: `ExportPreferences {scale 1–3, transparent, embed_scene}`
-  in `export.json` (not `settings.json`, which `useTheme` writes whole), shown
-  as Export menu check items and a PNG scale submenu. Confirmed in the bundle
-  that the public `exportToBlob` embeds the scene for PNG when
-  `exportEmbedScene` is set; SVG passes it to `exportToSvg`. Clipboard copies
-  never embed.
-- Portal colour scheme: `settings::portal_prefers_dark` calls
-  `org.freedesktop.portal.Settings.ReadOne` (then `Read`) through GTK's `gio`,
-  so no new crate. `gsettings` stays as the fallback. `watch_color_scheme`
-  subscribes to `SettingChanged` on the main thread from `setup` and emits
-  `color-scheme-changed`, which `useTheme` listens to; the focus re-check
-  remains. This machine's portal answered `uint32 1` (prefer dark) via `gdbus`.
-- P3: `write_binary_file` and `copy_image_to_clipboard` take a
-  `tauri::ipc::Request` with a raw body. The path travels in an `x-path`
-  header, base64 of its UTF-8. `blobToBase64` is gone.
-- Shortcuts: `lib/shortcuts.ts` `shortcutKey(key, code)` uses `key` when it is
-  printable ASCII, the physical `KeyX` code otherwise (non-Latin layouts), and
-  `DigitN` for digits in any layout. Matching codes throughout would have made
-  AZERTY's Ctrl+Z close the tab.
-To check by hand: a dark theme opens with no white flash; the library survives
-a restart and first launch shows the ER shapes; export toggles (transparent,
-embed and reopen, 3×); flipping GNOME dark/light repaints without refocusing;
-PNG export and clipboard still work (raw IPC).
-Smoke-tested the same way as phase 3, with a hidden window this time. The
-seeded tab was restored and autosaved with its path about 16 s after
-`npm start` (the build included). The run surfaced two things, both fixed:
-- GLib-CRITICAL `g_variant_get_variant` in the log: `unbox` called
-  `as_variant()` on the final `u32`. The value read was right, but it now
-  checks `is_type(VARIANT)` first.
-- `settings.json` and `export.json` were written on a fresh start. StrictMode
-  runs the load effect twice in dev, and the second load took the first one's
-  result for a user change. Both loaders now also compare against the previous
-  `fromDisk`. Dev-only; production runs effects once.
-
-## Review 2026-09-22 — findings, and the plan for them
-
-Baseline at review time: `tsc` clean, `npm run check` 15/15, `cargo test` 14/14,
-`npm audit --omit=dev` 0. Verified against the installed sources, not guessed:
-`send_user_message` in tauri-runtime-wry 2.11.4 runs the closure inline when it
-is already on the main thread, so the `run_on_main_thread` + `rx.recv()` pattern
-in `chrome.rs` cannot deadlock even though those two commands are sync; the
-opener capability's scope really is `mailto:`/`tel:`/`http://`/`https://` only
-(`gen/schemas/acl-manifests.json`); tauri-utils injects a nonce into `<style>`
-tags in `index.html`, so `style-src 'self'` does not break the inline block
-there; React sets inline styles through CSSOM, which CSP does not govern.
-
-Findings
-
-- C1 `connect-src ipc: http://ipc.localhost` omits `'self'`, so Excalidraw's
-  `fetchFont` (`fetch(url, {headers:{Accept:"font/woff2"}})`, main chunk) is
-  blocked when it inlines fonts into an SVG export. It catches the failure,
-  logs `Failed to fetch font family`, and falls back to emitting the bare
-  relative URL — so the export *succeeds* and the text renders in a fallback
-  font anywhere but here. On-screen and PNG rendering go through `font-src`,
-  which is why this hides. The CSP string is Tauri's documentation example,
-  which assumes a frontend that never fetches.
-- B1 `writeTo` shares one `try` between `writeTextFile` and `pushRecent`, so a
-  recent-list failure is reported as "Could not save" after the bytes reached
-  disk, and leaves the tab dirty under its old path. `openDrawing` already
-  treats `pushRecent` as best effort.
-- B2 `committed` is lowered inside `applyScene`, but `show()` awaits
-  `parseScene` before reaching it. In that window `activeRef` names the
-  incoming tab while the canvas still holds the outgoing one, so an `onChange`
-  landing there files the old scene under the new tab's id. Self-healing —
-  `applyScene` overwrites the entry with the text read before the await — but
-  the invariant is briefly false.
-- B3 the autosave `catch` is silent for the whole session, so a read-only or
-  full config directory means crash recovery is dead while the tab bar still
-  shows unsaved marks.
-- B4 no re-entrancy guard on Save As or the exports (`closeTab`/`closeWindow`
-  have one); two quick Ctrl+Shift+S stack two GTK dialogs.
-- H1 `write_text_file` takes any extension, while `write_binary_file` requires
-  `.png`. Callers only ever write `.excalidraw` and `.svg`.
-- H2 `read_text_file` has no size ceiling and no regular-file check, so a
-  hand-typed FIFO in the Open dialog blocks a thread-pool thread for good.
-  `cli_drawings` already guards this with `is_file()`.
-- H3 `~/.config/excalidraw-desktop` is left at the umask's 0755 when
-  `save_settings` creates it before `session/` does; `recent.json` (every path
-  opened) sits in it at 0644. `clear_session` is registered but never called
-  from the UI.
-- H4 `session/unreadable/` grows without bound and is created by
-  `create_dir_all` rather than `ensure_private_dir` (safe only because the
-  0700 parent covers it).
-- T1 `document.ts` is 844 lines, owns every path where work can be lost, and
-  is the one module `scripts/check.mjs` cannot load. The tested modules are
-  the easy ones.
-- I1 no CI, and `cargo clippy` has never run (not installed).
-- I2 `isDark` is unused.
-
-**Phases 0–3 done 2026-09-22** (`npm run check` 16/16, `tsc`, `vite build`,
-`cargo test` 17/17, `npm audit --omit=dev` 0; seen by eye in 0.5.1, see below):
-- C1 `connect-src 'self'` added. `npm run check` grew a guard that parses the
-  CSP out of `tauri.conf.json` and asserts the directive, since the reason it
-  is there is invisible from the string itself.
-- B1 `pushRecent` is best effort and runs after the write has been declared a
-  success, so a recent-list failure can no longer report a saved drawing as
-  unsaved.
-- B2 `committed` is lowered at the top of `show()` rather than inside
-  `applyScene`, closing the window where a capture could file one tab's scene
-  under another tab's id.
-- B3 three consecutive snapshot failures raise one warning per run, naming the
-  last error. Not while `ending`, and not awaited, so the snapshot queue never
-  waits on a dialog.
-- B4 `App.tsx` holds a `busy` ref: Open, Save, Save As and the three exports
-  run one at a time. Close and quit keep their own guards, and the save a
-  close prompt runs goes straight to `actions`, so it never waits on this one.
-- H1 `require_extension` is shared by `write_text_file` (`.excalidraw`, `.svg`)
-  and `write_binary_file` (`.png`), applied to the resolved path.
-- H2 `read_text_file` refuses anything that is not a regular file (a FIFO used
-  to block its thread for good) and anything over 256 MiB.
-- H3 `ensure_private_dir` moved to `store.rs` and now runs on `config_dir()`
-  at startup, so `recent.json` no longer sits in a world-readable directory.
-  `clear_session` deleted: never called, and a free way for a compromised
-  renderer to delete the recovery snapshots.
-- H4 `session/unreadable/` keeps its newest ten, is created privately, and no
-  longer renames a second failure over the first within the same second.
-To check by hand: export an SVG with text and confirm the fonts are inlined
-(`grep -c "@font-face"`, and that `src:` is a `data:font/woff2`, not a bare
-filename); two fast Ctrl+Shift+S raise one dialog; a read-only
-`XDG_CONFIG_HOME` produces exactly one autosave warning; Open, Save, Save As,
-both exports and Open Recent all still work after the extension rule.
-Still open from this review: none of the code items — see below. Also unverified: whether the JS shortcut mirror and
-the GTK menu accelerators can both fire for one keystroke — GTK3 activates
-window accelerators before the focused widget, so the mirror is probably dead
-code for those keys, but Save As and Export are where a double-fire would show.
-
-**T1, I1, I2 done 2026-09-22** (`npm run check` 25/25, `tsc`, `vite build`,
-`cargo test` 17/17; seen by eye in 0.5.1, see below):
-- T1 `src/lib/documentState.ts` holds the decisions `document.ts` used to make
-  inside the hook: `captureMark`/`nextRev`, `snapshotPlan`/`worthWriting`/
-  `nextWritten`, `recoverySubject`/`recoveredSession`, `activeFrom`/
-  `reopenedContent`. No runtime imports beyond `./tabs`, so `check.mjs` loads
-  it. The session shapes (`Session`, `SessionTab`, `TabSnapshot`) moved here
-  too, beside the code that builds and reads them; `api.ts` re-exports them.
-  Behaviour is unchanged — `written` is still pruned against the tab list as
-  it stands *after* the await rather than the list that was sent.
-  Nine new checks, 16 → 25. Each was confirmed to bite by breaking what it
-  covers: a recovered dirty tab coming back clean (stops at 22), the session
-  file rewritten on every pointer move (17), a tab already on disk sent again
-  (16).
-- I1 `.github/workflows/ci.yml`: `check` + `build` + `npm audit` on one job,
-  `cargo test` + `cargo clippy -D warnings` against the GTK/webkit2gtk system
-  libraries on the other. The first run went red on clippy, which had never
-  been asked anything before: three `needless_return`s, one lint, all of them
-  the `return rx.recv()...?` that ends the `#[cfg(target_os = "linux")]` block
-  in `set_menu_colors`, `set_prefer_dark_theme` and
-  `copy_image_to_clipboard`. Dropping the `return` makes the cfg block the
-  function's tail expression, which is what it already was on every other
-  platform. Fixed rather than allowed, and the gate stays at `-D warnings`:
-  a whole codebase's first clippy run costing three lines is an argument for
-  keeping it on. Install it with `sudo dnf install clippy` (Fedora's rustc
-  ships without it; the packaged version matches the toolchain).
-  cargo-audit is still not covered: it needs a source install per run or a
-  third-party action, and neither earns its keep yet.
-- I2 `isDark` deleted.
-
-Plan (user, 2026-09-22): phases 0–3 only — C1, B1–B4, H1–H4, one commit each,
-gated by `npm run check`, `tsc --noEmit` and `cargo test`. T1 (extracting the
-pure decision points of `document.ts` into `documentState.ts` so `check.mjs`
-can reach `snapshotPayload`, `restorePlan`, `captureMark` and `dirtyFor`) and
-I1/I2 are deferred, deliberately: the tests are worth more written against
-known-correct behaviour than codifying today's.
-
-**Verified by hand on 0.5.1, 2026-09-22** — installed from the RPM and run,
-rather than reasoned about:
-- C1 an SVG exported from a drawing with text is 35 kB and contains a
-  `data:font/woff2`, so the font is inlined and the file travels. This is the
-  defect the review was written for, and it is the first time the fix has been
-  seen rather than argued from the bundle source.
-- B4 two fast Ctrl+Shift+S raise one dialog.
-- B2 two drawings open, switching while editing: each tab keeps its own scene
-  and its own unsaved dot.
-- H1/H2 Open, Save, Save As, Open Recent and both exports all behave as
-  before — the write and read guards refuse nothing they should not.
-- Recovery after `kill -9` with unsaved work still restores.
-Not checked by hand, and still worth doing some time: the autosave warning
-(B3), which needs a read-only `XDG_CONFIG_HOME` to provoke.
-
-## Security pass 2026-09-29
-
-Baseline and result: `npm run check` 25/25, `tsc`, `vite build`, `cargo test`
-17/17, `cargo clippy -D warnings` clean. The file scope, ids, write guards and
-config permissions from the earlier reviews were re-read and hold; this pass
-looked at what a hostile *drawing* can reach.
-
-Established by experiment (WebKitGTK 2.54 via python gi, the app's CSP served
-as a header from a custom scheme — script in `/tmp`, not kept):
-- WebKit's `decide-policy` fires for **frames** as well as the page, so
-  `on_navigation` sees them. `about:srcdoc` reaches it and is refused by
-  `allowed_navigation`. That refusal is what stops an Excalidraw `iframe`
-  element (magic frame) from running the HTML a file carries in
-  `customData.generationData.html` — Excalidraw renders it as a srcdoc frame
-  with `allow-scripts` whatever `validateEmbeddable` says.
-- A remote `<iframe src=https://…>` never reaches the handler under our CSP.
-  Without the CSP it does, and `open_externally` would then open that URL in
-  the user's browser with no click. So the CSP's `default-src 'self'` (frames
-  fall back to it) is load-bearing, not just "offline".
-
-Done:
-- S1 `copy_image_to_clipboard` decodes with `PixbufLoader::with_type("png")`
-  rather than sniffing into any installed gdk-pixbuf loader in-process.
-- S2 capabilities: `dialog:default` → `dialog:allow-message` (confirm/ask go
-  through `plugin:dialog|message` in plugin-dialog 2.7.2; the page never opens
-  its own pickers). `core:window:allow-set-title` and `allow-close` dropped:
-  never called.
-- S3 `validateEmbeddable={false}`: embeds draw Excalidraw's placeholder with
-  the URL instead of an empty frame the CSP blocked. The navigation test now
-  covers `about:srcdoc`/`about:blank`; `check.mjs` asserts `default-src` is
-  `'self'` alone, no `frame-src`/`child-src`, and no `'unsafe-inline'`,
-  `'unsafe-eval'`, `data:`, `blob:` or `*` in `script-src` (confirmed to bite
-  by adding `'unsafe-inline'`).
-
-**Verified by hand on 0.5.2, 2026-09-29** (installed from the RPM):
-- S2 the Theme editor's "Unsaved theme — Discard / Keep editing" confirm
-  still appears.
-- S1 Copy image pastes into another app.
-- S3 with a scratch drawing holding a YouTube embeddable and an `iframe`
-  element whose `generationData.html` shows a red line and meta-refreshes to
-  example.com: the embeddable draws the placeholder with its URL and the
-  hyperlink popup, with no frame; the iframe element stays a blank box — the
-  red line never shows. (The placeholder text is faint only because the
-  scratch file's stroke is `#1e1e1e` on a dark canvas.)
-- S3 the embeddable's link, followed from the placeholder, opens in the
-  desktop browser.
-
-Considered, not done:
-- `app.security.freezePrototype` — worth trying, but freezing
-  `Object.prototype` can break a library at runtime in ways only use shows;
-  needs a session with the app open.
-- `on_navigation` opens every refused http(s) navigation externally, frames
-  included, with no user-gesture check (Tauri does not pass one). Safe today
-  only because the CSP stops remote frames and srcdoc is refused; if either
-  ever loosens, this becomes a drive-by browser open.
+| Review | What it covered |
+|---|---|
+| `2026-08-31.md` | First review against a running instance, and the fixes through 0.4.6 |
+| `2026-09-14.md` | Data loss, file access and autosave races; shipped as 0.5.0 |
+| `2026-09-22.md` | C1, B1–B4, H1–H4, T1, I1–I2; shipped as 0.5.1 |
+| `2026-09-29-security.md` | S1–S3: clipboard decoding, capabilities, embeds; shipped as 0.5.2 |
+| `2026-10-07.md` | D, F, V, K, R and T findings in seven phases; on `main`, not yet released |
 
 ## Kanagawa ERD library (2026-09-29)
 
@@ -1253,308 +568,6 @@ Open:
 - No **Kanagawa Dragon** theme preset; the Dragon shapes are drawn for a
   `#181616` canvas. The Wave and Lotus canvases match their presets exactly.
 
-## Review 2026-10-07 — findings, and the plan for them
-
-Three read-only reviewers over the whole app at 0.5.3 (`7b12c06`): frontend
-data safety, Rust and the trust boundary, and docs/build/release coherence.
-Baseline at review time: `tsc` clean, `npm run check` 26/26, `cargo test`
-17/17, `cargo clippy -D warnings` clean. **Nothing here was reproduced in a
-running window** — every finding is traced through the source and the
-Excalidraw 0.18.1 bundle (`node_modules/@excalidraw/excalidraw/dist/dev`), so
-each fix below starts by reproducing it where that is possible.
-
-Findings
-
-Data safety
-- D1 `show()` (`document.ts:260`) awaits `parseScene` and then applies the
-  scene without checking the tab is still the active one. Two overlapping
-  switches (A→B→C, B slow to parse) let B's parse land last: the canvas holds
-  B, `activeRef` and the tab bar say C, `savedVersion` is B's. The next capture
-  files B under C, and Ctrl+S writes B into C's file. Needs a parse slower than
-  the switch interval — large drawings, key-repeat on Ctrl+Tab.
-- D2 B2 of 2026-09-22 is incomplete. `onSceneChange` raises `committed`
-  unconditionally (`document.ts:611`), and Excalidraw calls `onChange` from
-  every `componentDidUpdate` (`index.js:30536`). `onLinkOpen` in `App.tsx:235`
-  is a new closure per render, so its memo comparator (`index.js:33038`) fails
-  and the render caused by `setActiveId` fires `onChange` while the canvas
-  still holds the outgoing tab. The `[tabs, activeId]` snapshot effect then
-  writes A's scene to `session/<B>.excalidraw`. Disk heals at the next autosave
-  (~1.5 s); a crash inside that window restores B holding A's drawing.
-- D3 `writeTo` (`document.ts:351-382`) reads `content` before the write awaits
-  and puts that copy back in the store afterwards. Draw during a slow save,
-  switch tab before it returns: `selectTab` captured the stroke, line 382
-  replaces it with the stale copy and marks the tab clean.
-- D4 `read_meta` (`session.rs:114`) turns any read or parse failure into
-  `None`, `load_session` reports "no session", and the first `save_session`
-  prunes every snapshot not in the new one-tab list. Same shape in the
-  renderer: the `finally` at `document.ts:805` sets `restored` even when
-  `restoreSession` threw.
-- D5 smaller, same area: `ending` (`document.ts:641`) is never reset if
-  `destroy()` rejects, leaving autosave dead; an unreadable *file-backed*
-  recovered tab does not have its snapshot moved to `unreadable/`
-  (`document.ts:282`); `openDrawing` checks `findByPath` before its awaits, so
-  two near-simultaneous opens of one path can make two tabs.
-
-Features that do not do what they say
-- F1 PNG scale has no effect. `exportToBlob` reads `appState.exportScale` only
-  when `maxWidthOrHeight` is set (`chunk-4FTI6OG3.js:21580`); otherwise it uses
-  `getDimensions?.(w,h) || {width,height}` and `scale: ret.scale ?? 1`
-  (`:21588`). `exports.ts:48` passes neither. Files and clipboard copies are
-  1× whatever the menu says. ("3×" was on the to-check-by-hand list and never
-  recorded as checked.)
-- F2 a drawing with no `.excalidraw` extension opens (MIME sniffing in
-  `excalidraw-desktop.xml`, `cli_drawings`, `read_text_file`) and then cannot
-  be saved: `write_text_file` (`files.rs:63`) applies `require_extension`.
-- F3 a second launch's files are emitted with no buffering (`lib.rs:171-185`)
-  and the listener exists only once Excalidraw has mounted
-  (`document.ts:813`). A second double-click during a cold start is dropped.
-  Timing-dependent, not reproduced.
-- F4 session-restored tabs open at scroll (0,0), 100 %. `documentState.ts:192`
-  assumes the snapshot's appState carries the viewport; `scrollX`/`scrollY`/
-  `zoom` are `export: false`.
-
-Theme engine against Excalidraw
-- V1 `toggleTheme: true` (`App.tsx:246`) leaves the main-menu item and
-  Alt+Shift+D able to switch on the inverting dark mode.
-- V2 `clearCanvas: true` resets appState to Excalidraw's defaults — white
-  canvas, `#1e1e1e` stroke — and nothing re-asserts the themed defaults until
-  the next scene load.
-- V3 three colour grammars: `color.ts:6` (`#` optional, 3/6 digits),
-  `chrome.rs:27` (`#` required, 3/4/6/8), `types.ts:60` `parseTheme` (any
-  non-empty string). `"2A2A37"` reaches CSS raw and `set_menu_colors` refuses
-  it; `apply.ts:72` swallows that. `parseTheme` does not check `id` against
-  `safe_id`, and delete/save act on `<id>.json` rather than the file the theme
-  was read from.
-- V4 the editor saves a theme with an empty name (`ThemeEditor.tsx:342`);
-  `parseTheme` rejects it on the next launch and the theme vanishes.
-- V5 `applyScene` spreads the whole `restoreAppState` result
-  (`document.ts:217`), so stroke width, font, roughness, active tool and the
-  open sidebar go back to default on every tab switch.
-- V6 undocumented: the theme's canvas colour is written into the user's file
-  on Save. The decision stands; the README does not mention it.
-
-Hardening (no high-severity finding; every path-taking command goes through
-`Allowed::check`)
-- K1 a crafted drawing's `files[*].dataURL` can be an `https://` URL. In the
-  app `img-src` blocks it; an exported SVG carries it as `<image href>`.
-  Traced in the bundle, export not produced.
-- K2 `dev_url` is compiled into the release config (`lib.rs:131`), so
-  navigation to `http://localhost:1420` is allowed; the unit test asserts the
-  `None` case the release build never takes. `allowed_navigation` also accepts
-  any host on the `tauri` scheme.
-- K3 `write_atomic` (`files.rs:121-147`): overwrites a read-only file without
-  a word, replaces a dangling symlink with a regular file, and treats a failed
-  chmod as fatal. First two confirmed by running a copy of the function.
-- K4 temp files from a kill mid-write are never swept from `session/`; the
-  temp-name prefix pushes names over ~215 bytes past `NAME_MAX`.
-- K5 `packaging/post-install.sh` and `post-remove.sh` have no `#!` line, which
-  dpkg wants. `recent.rs:33` discards its write error.
-
-Release and docs
-- R1 the binary built on Fedora 44 needs `GLIBC_2.39`; neither package
-  declares it. If the README's table is taken at face value, Debian 12, Ubuntu
-  22.04 and RHEL 9 install the package and fail at launch. (Their glibc
-  versions are from memory — check before rewriting the table.)
-- R2 `rust-version = "1.77"` against a lockfile that needs 1.88; README says
-  Node 20+, Vite needs `^20.19 || >=22.12`; no `engines`.
-- R3 `package-lock.json` is at 0.5.0, no git tags, a bump touches ~11 places.
-- R4 `scripts/build-er-library.mjs:11-15` is unseeded. Excalidraw dedupes
-  library items by element `id` and `versionNonce`, so a regenerated file
-  gives existing users a second copy of all 15 shapes.
-- R5 this file: the phase table still has tabs and the theme editor as "not
-  yet checked by eye" against later entries that record them verified; "Next
-  steps" describes 0.4.0; ~800 of ~1300 lines are review history.
-- R6 README: `index.html` does not set the asset path (`src/bootstrap.ts`
-  does); the architecture block omits `documentState.ts`, `color.ts`,
-  `bootstrap.ts`; `Ctrl+Q` missing from the shortcut table.
-
-Tests
-- T2 the gate covers pure functions only. Untested: `useDocument` (where D1–D5
-  live), `expandSelection`, `recent.rs`, `library.rs`. CI never runs
-  `tauri build`. No ESLint, so `react-hooks/exhaustive-deps` is unenforced
-  though `App.tsx` carries two disable comments for it.
-
-Plan — one commit per finding, gate green before each, as in 2026-09-22
-
-- **Phase 0 — one record of what is on the canvas (D1, D2).** Replace the
-  `committed` boolean with the id of the tab `applyScene` last put on screen
-  (`null` while a switch is in flight). `capture`, `onSceneChange` and
-  `writeTo` trust the canvas only when that id equals `activeRef.current`.
-  `show()` returns after its await if `activeRef.current !== id`. Memoise
-  `onLinkOpen` and `UIOptions` in `App.tsx` so a render stops firing
-  `onChange`. Put the "may the canvas be trusted" decision in
-  `documentState.ts` so the gate tests it. By hand: three tabs, one of them
-  several MB with images, hold Ctrl+Tab; `kill -9` right after a switch and
-  check each restored tab holds its own drawing.
-- **Phase 1 — the other ways work is lost (D3, D4, D5).** `writeTo` re-reads
-  the store after the await and updates only `savedVersion`, deriving `dirty`
-  from whether the stored scene is still what was written. `read_meta`
-  separates `NotFound` from every other failure; on failure, snapshots are
-  adopted as untitled dirty tabs rather than pruned, and `write_meta` moves
-  ahead of `prune`. `restored` is set only once a restore decision completed.
-  Rust tests for a corrupt and a missing `meta.json`.
-- **Phase 2 — features (F1–F4).** F1 pass `getDimensions` returning the scaled
-  size and `scale`; check a 3× export's pixel size by hand. F2 Save falls
-  through to Save As when the path fails the extension rule. F3 buffer in
-  Rust: append to `StartupFiles` until the renderer has drained it once. F4
-  `fit: content.view === null` in `show()`.
-- **Phase 3 — theme (V1–V6).** V1 `toggleTheme: false`. V2 re-assert the
-  themed appState in `onSceneChange` when `viewBackgroundColor` has left the
-  theme's (keeps the action). V3 one grammar — `#rgb`, `#rrggbb`,
-  `transparent` for fill only — enforced in `parseTheme` and the editor and
-  mirrored in `css_color`; `list_user_themes` returns the file name. V4 trim
-  and require a name. V5 carry `currentItem*` and the UI keys over from
-  `api.getAppState()`. V6 a README limitation.
-- **Phase 4 — hardening (K1–K5).** K1 drop `files` entries whose `dataURL` is
-  not `data:image/` after load. K2 `dev_url` only under `cfg!(dev)`, host
-  check on `tauri://`, and a test for the release case. K3 refuse a read-only
-  target with a clear message, resolve a symlink with `read_link`, chmod best
-  effort. K4 sweep `.*.tmp` from `session/` at startup, short fixed-length
-  temp names. K5 `#!/bin/sh`; surface the `recent.json` write error.
-- **Phase 5 — release and docs (R1–R6).** R1 needs a decision (below). R2 set
-  `rust-version` and `engines` to what the lockfiles need; README points apt
-  users at rustup. R3 one bump script, a gate assertion that all version
-  strings agree, tag from 0.5.4 on. R4 make the ER generator deterministic
-  *while keeping the committed ids* (read them back by item name), then a gate
-  check that both generators reproduce the committed bytes. R5 fix the phase
-  table now; split into a short state file and a review archive. R6 README
-  corrections.
-- **Phase 6 — tests and CI (T2).** Export and test `expandSelection`; tests
-  for `recent.rs`; ESLint with `react-hooks`; a CI job that runs
-  `tauri build`, `desktop-file-validate` and `rpm -qp --requires`.
-
-Ship phases 0–2 as 0.5.4 once seen by eye; 3–4 can follow in 0.5.5.
-
-Decided 2026-10-07
-- R1: the distribution table is narrowed to Fedora 44, the one system a build
-  from this machine is known to run on.
-- V2: "Reset the canvas" stays and the theme is re-applied after it.
-
-**Phase 0 done 2026-10-07** (`npm run check` 27/27, `tsc`, `vite build`,
-`cargo test` 17/17; **not yet seen by eye**):
-- D1, D2 `committed` is gone. `document.ts` keeps a `Canvas` record — which
-  tab's scene Excalidraw holds, and whether it has committed it — and
-  `capture`, `writeTo`, `onSceneChange` and `pristineActive` all ask
-  `onCanvas()` before reading the canvas as the active tab's. A change
-  Excalidraw reports while a switch is still parsing no longer counts as the
-  commit (`canvasChanged` only settles a scene that was handed over). `show()`
-  takes a turn number and gives up after its await if a later `show()` or
-  `applyScene` has run, or the active tab has moved. The four transitions
-  live in `documentState.ts` and the gate walks a switch through them.
-  `onLinkOpen` in `App.tsx` is a `useCallback`, so a render of ours stops
-  re-rendering Excalidraw. (`UIOptions` needed nothing: its comparator already
-  compares that prop key by key.)
-To check by hand: three tabs, one several MB with images; hold Ctrl+Tab and
-confirm the drawing on screen always matches the highlighted tab; `kill -9`
-straight after a switch and confirm each restored tab holds its own drawing;
-the unsaved dot still appears on the first stroke after a switch.
-
-**Phase 1 done 2026-10-07** (`npm run check` 28/28, `tsc`, `vite build`,
-`cargo test` 17/17, `cargo clippy -D warnings`; **not yet seen by eye**):
-- D3 `writeTo` reads the store again once the write has returned instead of
-  putting back the copy it sent. On the canvas throughout, it only moves
-  `savedVersion`. Otherwise `afterWrite` (`documentState.ts`, in the gate)
-  compares the stored scene with what went out: the same text is clean,
-  anything else keeps its content and revision and stays unsaved. A tab closed
-  mid-write is left alone.
-- D4 `read_meta` returns `Result<Option<_>>`: only `NotFound` is "no session".
-  When `meta.json` is missing or unreadable and snapshots are still there,
-  `load` adopts every one as an untitled drawing with unsaved changes after an
-  unclean exit, so the recovery prompt is what decides their fate.
-  `mark_clean_exit` leaves an unreadable list alone. `save` writes the list
-  before pruning. In the renderer, `loadSession` failing is no longer read as
-  "no session": if startup never gets to a restore decision the user is told
-  once, `restored` stays false (no snapshot, no clean-exit mark), and a
-  separate `starting` flag releases the second-launch queue.
-- D5 `resumeSession` undoes `endSession` when `destroy()` rejects, and forces
-  the next snapshot so the clean-exit mark comes back off. An unreadable
-  recovered tab that was dirty has its snapshot moved to `unreadable/` even
-  when it has a file. `openDrawing` looks for the path again after its awaits.
-To check by hand: put `{ not json` in `session/meta.json` with snapshots
-beside it, launch, and confirm the recovery prompt appears and Restore brings
-them back as untitled unsaved tabs; delete `meta.json` and repeat; Ctrl+S on a
-large drawing saved to a slow disk, draw during the write, switch tab, switch
-back — the stroke is there and the tab shows unsaved.
-
-**Phase 2 done 2026-10-07** (`npm run check` 29/29, `tsc`, `vite build`,
-`cargo test` 17/17, `cargo clippy -D warnings`; **not yet seen by eye**):
-- F1 `toPngBlob` passes `getDimensions`, returning the scaled size and the
-  scale, which is what `exportToBlob` sizes its canvas from.
-- F2 `savesInPlace` (`tabs.ts`, in the gate): Save on a tab whose file does
-  not end in `.excalidraw` goes to Save As, suggesting the same name. The
-  backend's refusal now reads "the name has to end in .excalidraw or .svg".
-- F3 `Allowed` and `StartupFiles` are managed on the builder rather than in
-  `setup`. A second launch appends its drawings to `StartupFiles` and emits
-  `open-files` with no payload; the renderer answers by taking the list, and
-  startup keeps taking it until it and the queue are both empty, so a drawing
-  sent before the listener existed is still found.
-- F4 `show()` fits a tab with no stored viewport to its content, unless it is
-  empty.
-To check by hand: export the same drawing at 1×, 2× and 3× and compare pixel
-sizes (`file out.png`), and paste a clipboard copy somewhere that shows its
-size; `cp a.excalidraw plan`, open `plan`, edit, Ctrl+S — a Save As dialog
-suggesting `plan`; double-click one drawing and a second straight after,
-before the window appears — both open; quit with a drawing scrolled far from
-the origin, relaunch — it is on screen.
-
-**Phase 3 done 2026-10-07** (`npm run check` 31/31, `tsc`, `vite build`,
-`cargo test` 17/17, `cargo clippy -D warnings`; **not yet seen by eye**):
-- V1 `toggleTheme: false`.
-- V2 `onSceneChange` re-applies the themed defaults when `canvasWasReset`
-  (`documentState.ts`, in the gate): the canvas is Excalidraw's own `#ffffff`
-  under a theme whose canvas is not. Any other colour is taken for a pick by
-  hand and left. A reset under a white-canvas theme is not detected, and its
-  near-black stroke is left alone — it is visible there.
-- V3 one grammar, `isColorValue(key, value)` in `types.ts`: `#rgb` or
-  `#rrggbb`, and `transparent` for `fill` only. `isHex` requires the `#`.
-  `parseTheme` enforces it, holds `id` to `safe_id`'s grammar and wants a
-  non-blank name; `css_color` in `chrome.rs` drops the 4- and 8-digit forms.
-  `ThemeFile` carries the file's stem and `readUserThemes` refuses a theme
-  whose id differs from it, so Save and Delete always act on the file the
-  theme came from. **An existing user theme that breaks one of these now
-  fails to load** and is named by Reload user themes; the README lists the
-  three rules.
-- V4 the editor trims the name and refuses to save an empty one.
-- V5 `applyScene` carries the `CARRIED` keys (the `currentItem*` tool
-  settings, the open sidebar, zen/view/snap modes) from the live appState
-  into every scene after the first of the run. The stroke colour is kept
-  unless it is Excalidraw's `#1e1e1e`; the fill is kept as it is. The active
-  tool is deliberately not carried.
-- V6 two entries under Known limitations in the README.
-To check by hand: Alt+Shift+D does nothing and the menu has no theme toggle;
-Reset the canvas on Kanagawa Wave leaves a dark canvas and a light stroke;
-set stroke width, font and a stroke colour, switch tab and back — all kept,
-and the Library sidebar stays open; a theme file with `"surface": "2A2A37"`,
-and one named differently from its id, are each listed by Reload user themes;
-Save with an empty name is refused.
-
-**Phase 4 done 2026-10-07** (`npm run check` 32/32, `tsc`, `vite build`,
-`cargo test` 20/20, `cargo clippy -D warnings`; **not yet seen by eye**):
-- K1 `parseScene` keeps only the file entries whose `dataURL` is a
-  `data:image/` URL (`embeddedFiles`, `documentState.ts`, in the gate). An
-  image that was a remote URL shows as missing, and is gone from the file on
-  the next Save.
-- K2 `dev_url` is read only under `cfg!(dev)`, and `allowed_navigation` wants
-  `tauri://localhost`, not any host on that scheme.
-- K3 `write_atomic` goes through `resolve_target`: an existing file that
-  cannot be opened for writing is refused as read-only, and so is a link to a
-  file that does not exist. **Deviation from the plan:** the plan said to
-  follow a dangling link with `read_link`; refusing it is narrower, since the
-  extension rule and the scope check have only seen the link's own name. A
-  chmod the filesystem refuses is fatal only when the new file would be open
-  to someone the old one was not.
-- K4 temp files are `.excalidraw-desktop-<pid>-<nanos>-<n>.tmp`, no longer
-  carrying the target's name, and `sweep_temp_files` removes them from the
-  config directory, `session/` and `themes/` at startup.
-- K5 both package scripts start with `#!/bin/sh`. `push_recent` and
-  `clear_recent` return their write error; Save and Open still treat the
-  recent list as best effort, and Clear recent files reports a failure.
-To check by hand: `chmod 444` a drawing, open, edit, Ctrl+S — "read-only",
-file unchanged; `touch ~/.config/excalidraw-desktop/session/.excalidraw-desktop-1-2-3.tmp`,
-launch, and it is gone; a drawing whose `files` entry has an `https://`
-`dataURL` exports an SVG with no `http` in it; install the `.deb` somewhere
-Debian-based if one is ever to hand.
-
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that
@@ -1607,13 +620,14 @@ verification needs a human looking at the titlebar.
 ```bash
 npm start                      # tauri dev
 npx tsc --noEmit               # typecheck
-npm run check                  # theme + tab module assertions
+npm run check                  # the gate: pure modules, versions, bundled libraries
+npm run bump -- 0.5.4          # every place the version is written, at once
 cargo test --lib --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path src-tauri/Cargo.toml
-npm run bundle                 # RPM
+npm run bundle                 # RPM and deb
 
 # inspecting the package without installing it
-R="src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.4.0-1.x86_64.rpm"
+R="$(ls -t src-tauri/target/release/bundle/rpm/*.rpm | head -1)"
 rpm -qip "$R"; rpm -qlp "$R"; rpm -qp --scripts "$R"
 rpm2cpio "$R" | (cd /tmp && cpio -idm)   # then read /tmp/usr/share/applications/*.desktop
 ```

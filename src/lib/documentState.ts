@@ -4,8 +4,8 @@
  * What is here is what the hook has to get *right* — which tabs the session
  * file still needs, what a recovered snapshot is worth, when a revision has
  * actually moved — as opposed to how it talks to React, Excalidraw and Tauri.
- * Nearly every one of these has been a bug at least once (see the review
- * sections in PROGRESS.md), and none of them could be reached from a test
+ * Nearly every one of these has been a bug at least once (see
+ * `docs/reviews/`), and none of them could be reached from a test
  * while it lived inside the hook.
  *
  * Deliberately free of runtime imports beyond `./tabs`, so the assertions in
