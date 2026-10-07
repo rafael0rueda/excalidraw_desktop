@@ -1449,6 +1449,33 @@ confirm the drawing on screen always matches the highlighted tab; `kill -9`
 straight after a switch and confirm each restored tab holds its own drawing;
 the unsaved dot still appears on the first stroke after a switch.
 
+**Phase 1 done 2026-10-07** (`npm run check` 28/28, `tsc`, `vite build`,
+`cargo test` 17/17, `cargo clippy -D warnings`; **not yet seen by eye**):
+- D3 `writeTo` reads the store again once the write has returned instead of
+  putting back the copy it sent. On the canvas throughout, it only moves
+  `savedVersion`. Otherwise `afterWrite` (`documentState.ts`, in the gate)
+  compares the stored scene with what went out: the same text is clean,
+  anything else keeps its content and revision and stays unsaved. A tab closed
+  mid-write is left alone.
+- D4 `read_meta` returns `Result<Option<_>>`: only `NotFound` is "no session".
+  When `meta.json` is missing or unreadable and snapshots are still there,
+  `load` adopts every one as an untitled drawing with unsaved changes after an
+  unclean exit, so the recovery prompt is what decides their fate.
+  `mark_clean_exit` leaves an unreadable list alone. `save` writes the list
+  before pruning. In the renderer, `loadSession` failing is no longer read as
+  "no session": if startup never gets to a restore decision the user is told
+  once, `restored` stays false (no snapshot, no clean-exit mark), and a
+  separate `starting` flag releases the second-launch queue.
+- D5 `resumeSession` undoes `endSession` when `destroy()` rejects, and forces
+  the next snapshot so the clean-exit mark comes back off. An unreadable
+  recovered tab that was dirty has its snapshot moved to `unreadable/` even
+  when it has a file. `openDrawing` looks for the path again after its awaits.
+To check by hand: put `{ not json` in `session/meta.json` with snapshots
+beside it, launch, and confirm the recovery prompt appears and Restore brings
+them back as untitled unsaved tabs; delete `meta.json` and repeat; Ctrl+S on a
+large drawing saved to a slow disk, draw during the write, switch tab, switch
+back — the stroke is there and the tab shows unsaved.
+
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that
