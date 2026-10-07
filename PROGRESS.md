@@ -1,6 +1,6 @@
 # Project state & how to resume
 
-Last updated: 2026-09-29
+Last updated: 2026-10-07
 
 ## Decisions already made (do not re-litigate)
 
@@ -1252,6 +1252,185 @@ Wave, Dragon and Lotus.
 Open:
 - No **Kanagawa Dragon** theme preset; the Dragon shapes are drawn for a
   `#181616` canvas. The Wave and Lotus canvases match their presets exactly.
+
+## Review 2026-10-07 — findings, and the plan for them
+
+Three read-only reviewers over the whole app at 0.5.3 (`7b12c06`): frontend
+data safety, Rust and the trust boundary, and docs/build/release coherence.
+Baseline at review time: `tsc` clean, `npm run check` 26/26, `cargo test`
+17/17, `cargo clippy -D warnings` clean. **Nothing here was reproduced in a
+running window** — every finding is traced through the source and the
+Excalidraw 0.18.1 bundle (`node_modules/@excalidraw/excalidraw/dist/dev`), so
+each fix below starts by reproducing it where that is possible.
+
+Findings
+
+Data safety
+- D1 `show()` (`document.ts:260`) awaits `parseScene` and then applies the
+  scene without checking the tab is still the active one. Two overlapping
+  switches (A→B→C, B slow to parse) let B's parse land last: the canvas holds
+  B, `activeRef` and the tab bar say C, `savedVersion` is B's. The next capture
+  files B under C, and Ctrl+S writes B into C's file. Needs a parse slower than
+  the switch interval — large drawings, key-repeat on Ctrl+Tab.
+- D2 B2 of 2026-09-22 is incomplete. `onSceneChange` raises `committed`
+  unconditionally (`document.ts:611`), and Excalidraw calls `onChange` from
+  every `componentDidUpdate` (`index.js:30536`). `onLinkOpen` in `App.tsx:235`
+  is a new closure per render, so its memo comparator (`index.js:33038`) fails
+  and the render caused by `setActiveId` fires `onChange` while the canvas
+  still holds the outgoing tab. The `[tabs, activeId]` snapshot effect then
+  writes A's scene to `session/<B>.excalidraw`. Disk heals at the next autosave
+  (~1.5 s); a crash inside that window restores B holding A's drawing.
+- D3 `writeTo` (`document.ts:351-382`) reads `content` before the write awaits
+  and puts that copy back in the store afterwards. Draw during a slow save,
+  switch tab before it returns: `selectTab` captured the stroke, line 382
+  replaces it with the stale copy and marks the tab clean.
+- D4 `read_meta` (`session.rs:114`) turns any read or parse failure into
+  `None`, `load_session` reports "no session", and the first `save_session`
+  prunes every snapshot not in the new one-tab list. Same shape in the
+  renderer: the `finally` at `document.ts:805` sets `restored` even when
+  `restoreSession` threw.
+- D5 smaller, same area: `ending` (`document.ts:641`) is never reset if
+  `destroy()` rejects, leaving autosave dead; an unreadable *file-backed*
+  recovered tab does not have its snapshot moved to `unreadable/`
+  (`document.ts:282`); `openDrawing` checks `findByPath` before its awaits, so
+  two near-simultaneous opens of one path can make two tabs.
+
+Features that do not do what they say
+- F1 PNG scale has no effect. `exportToBlob` reads `appState.exportScale` only
+  when `maxWidthOrHeight` is set (`chunk-4FTI6OG3.js:21580`); otherwise it uses
+  `getDimensions?.(w,h) || {width,height}` and `scale: ret.scale ?? 1`
+  (`:21588`). `exports.ts:48` passes neither. Files and clipboard copies are
+  1× whatever the menu says. ("3×" was on the to-check-by-hand list and never
+  recorded as checked.)
+- F2 a drawing with no `.excalidraw` extension opens (MIME sniffing in
+  `excalidraw-desktop.xml`, `cli_drawings`, `read_text_file`) and then cannot
+  be saved: `write_text_file` (`files.rs:63`) applies `require_extension`.
+- F3 a second launch's files are emitted with no buffering (`lib.rs:171-185`)
+  and the listener exists only once Excalidraw has mounted
+  (`document.ts:813`). A second double-click during a cold start is dropped.
+  Timing-dependent, not reproduced.
+- F4 session-restored tabs open at scroll (0,0), 100 %. `documentState.ts:192`
+  assumes the snapshot's appState carries the viewport; `scrollX`/`scrollY`/
+  `zoom` are `export: false`.
+
+Theme engine against Excalidraw
+- V1 `toggleTheme: true` (`App.tsx:246`) leaves the main-menu item and
+  Alt+Shift+D able to switch on the inverting dark mode.
+- V2 `clearCanvas: true` resets appState to Excalidraw's defaults — white
+  canvas, `#1e1e1e` stroke — and nothing re-asserts the themed defaults until
+  the next scene load.
+- V3 three colour grammars: `color.ts:6` (`#` optional, 3/6 digits),
+  `chrome.rs:27` (`#` required, 3/4/6/8), `types.ts:60` `parseTheme` (any
+  non-empty string). `"2A2A37"` reaches CSS raw and `set_menu_colors` refuses
+  it; `apply.ts:72` swallows that. `parseTheme` does not check `id` against
+  `safe_id`, and delete/save act on `<id>.json` rather than the file the theme
+  was read from.
+- V4 the editor saves a theme with an empty name (`ThemeEditor.tsx:342`);
+  `parseTheme` rejects it on the next launch and the theme vanishes.
+- V5 `applyScene` spreads the whole `restoreAppState` result
+  (`document.ts:217`), so stroke width, font, roughness, active tool and the
+  open sidebar go back to default on every tab switch.
+- V6 undocumented: the theme's canvas colour is written into the user's file
+  on Save. The decision stands; the README does not mention it.
+
+Hardening (no high-severity finding; every path-taking command goes through
+`Allowed::check`)
+- K1 a crafted drawing's `files[*].dataURL` can be an `https://` URL. In the
+  app `img-src` blocks it; an exported SVG carries it as `<image href>`.
+  Traced in the bundle, export not produced.
+- K2 `dev_url` is compiled into the release config (`lib.rs:131`), so
+  navigation to `http://localhost:1420` is allowed; the unit test asserts the
+  `None` case the release build never takes. `allowed_navigation` also accepts
+  any host on the `tauri` scheme.
+- K3 `write_atomic` (`files.rs:121-147`): overwrites a read-only file without
+  a word, replaces a dangling symlink with a regular file, and treats a failed
+  chmod as fatal. First two confirmed by running a copy of the function.
+- K4 temp files from a kill mid-write are never swept from `session/`; the
+  temp-name prefix pushes names over ~215 bytes past `NAME_MAX`.
+- K5 `packaging/post-install.sh` and `post-remove.sh` have no `#!` line, which
+  dpkg wants. `recent.rs:33` discards its write error.
+
+Release and docs
+- R1 the binary built on Fedora 44 needs `GLIBC_2.39`; neither package
+  declares it. If the README's table is taken at face value, Debian 12, Ubuntu
+  22.04 and RHEL 9 install the package and fail at launch. (Their glibc
+  versions are from memory — check before rewriting the table.)
+- R2 `rust-version = "1.77"` against a lockfile that needs 1.88; README says
+  Node 20+, Vite needs `^20.19 || >=22.12`; no `engines`.
+- R3 `package-lock.json` is at 0.5.0, no git tags, a bump touches ~11 places.
+- R4 `scripts/build-er-library.mjs:11-15` is unseeded. Excalidraw dedupes
+  library items by element `id` and `versionNonce`, so a regenerated file
+  gives existing users a second copy of all 15 shapes.
+- R5 this file: the phase table still has tabs and the theme editor as "not
+  yet checked by eye" against later entries that record them verified; "Next
+  steps" describes 0.4.0; ~800 of ~1300 lines are review history.
+- R6 README: `index.html` does not set the asset path (`src/bootstrap.ts`
+  does); the architecture block omits `documentState.ts`, `color.ts`,
+  `bootstrap.ts`; `Ctrl+Q` missing from the shortcut table.
+
+Tests
+- T2 the gate covers pure functions only. Untested: `useDocument` (where D1–D5
+  live), `expandSelection`, `recent.rs`, `library.rs`. CI never runs
+  `tauri build`. No ESLint, so `react-hooks/exhaustive-deps` is unenforced
+  though `App.tsx` carries two disable comments for it.
+
+Plan — one commit per finding, gate green before each, as in 2026-09-22
+
+- **Phase 0 — one record of what is on the canvas (D1, D2).** Replace the
+  `committed` boolean with the id of the tab `applyScene` last put on screen
+  (`null` while a switch is in flight). `capture`, `onSceneChange` and
+  `writeTo` trust the canvas only when that id equals `activeRef.current`.
+  `show()` returns after its await if `activeRef.current !== id`. Memoise
+  `onLinkOpen` and `UIOptions` in `App.tsx` so a render stops firing
+  `onChange`. Put the "may the canvas be trusted" decision in
+  `documentState.ts` so the gate tests it. By hand: three tabs, one of them
+  several MB with images, hold Ctrl+Tab; `kill -9` right after a switch and
+  check each restored tab holds its own drawing.
+- **Phase 1 — the other ways work is lost (D3, D4, D5).** `writeTo` re-reads
+  the store after the await and updates only `savedVersion`, deriving `dirty`
+  from whether the stored scene is still what was written. `read_meta`
+  separates `NotFound` from every other failure; on failure, snapshots are
+  adopted as untitled dirty tabs rather than pruned, and `write_meta` moves
+  ahead of `prune`. `restored` is set only once a restore decision completed.
+  Rust tests for a corrupt and a missing `meta.json`.
+- **Phase 2 — features (F1–F4).** F1 pass `getDimensions` returning the scaled
+  size and `scale`; check a 3× export's pixel size by hand. F2 Save falls
+  through to Save As when the path fails the extension rule. F3 buffer in
+  Rust: append to `StartupFiles` until the renderer has drained it once. F4
+  `fit: content.view === null` in `show()`.
+- **Phase 3 — theme (V1–V6).** V1 `toggleTheme: false`. V2 re-assert the
+  themed appState in `onSceneChange` when `viewBackgroundColor` has left the
+  theme's (keeps the action). V3 one grammar — `#rgb`, `#rrggbb`,
+  `transparent` for fill only — enforced in `parseTheme` and the editor and
+  mirrored in `css_color`; `list_user_themes` returns the file name. V4 trim
+  and require a name. V5 carry `currentItem*` and the UI keys over from
+  `api.getAppState()`. V6 a README limitation.
+- **Phase 4 — hardening (K1–K5).** K1 drop `files` entries whose `dataURL` is
+  not `data:image/` after load. K2 `dev_url` only under `cfg!(dev)`, host
+  check on `tauri://`, and a test for the release case. K3 refuse a read-only
+  target with a clear message, resolve a symlink with `read_link`, chmod best
+  effort. K4 sweep `.*.tmp` from `session/` at startup, short fixed-length
+  temp names. K5 `#!/bin/sh`; surface the `recent.json` write error.
+- **Phase 5 — release and docs (R1–R6).** R1 needs a decision (below). R2 set
+  `rust-version` and `engines` to what the lockfiles need; README points apt
+  users at rustup. R3 one bump script, a gate assertion that all version
+  strings agree, tag from 0.5.4 on. R4 make the ER generator deterministic
+  *while keeping the committed ids* (read them back by item name), then a gate
+  check that both generators reproduce the committed bytes. R5 fix the phase
+  table now; split into a short state file and a review archive. R6 README
+  corrections.
+- **Phase 6 — tests and CI (T2).** Export and test `expandSelection`; tests
+  for `recent.rs`; ESLint with `react-hooks`; a CI job that runs
+  `tauri build`, `desktop-file-validate` and `rpm -qp --requires`.
+
+Ship phases 0–2 as 0.5.4 once seen by eye; 3–4 can follow in 0.5.5.
+
+Open decisions
+- R1: narrow the distribution table to what a Fedora 44 build can serve
+  (cheap, honest), or build releases in an old-glibc container (keeps the
+  table, adds a build step). Default if nothing is said: narrow the table and
+  declare the libc dependency so install fails instead of launch.
+- V2: keep "Reset the canvas" and re-theme after it (planned), or disable it.
 
 ## Gotchas
 
