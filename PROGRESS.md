@@ -1476,6 +1476,27 @@ them back as untitled unsaved tabs; delete `meta.json` and repeat; Ctrl+S on a
 large drawing saved to a slow disk, draw during the write, switch tab, switch
 back — the stroke is there and the tab shows unsaved.
 
+**Phase 2 done 2026-10-07** (`npm run check` 29/29, `tsc`, `vite build`,
+`cargo test` 17/17, `cargo clippy -D warnings`; **not yet seen by eye**):
+- F1 `toPngBlob` passes `getDimensions`, returning the scaled size and the
+  scale, which is what `exportToBlob` sizes its canvas from.
+- F2 `savesInPlace` (`tabs.ts`, in the gate): Save on a tab whose file does
+  not end in `.excalidraw` goes to Save As, suggesting the same name. The
+  backend's refusal now reads "the name has to end in .excalidraw or .svg".
+- F3 `Allowed` and `StartupFiles` are managed on the builder rather than in
+  `setup`. A second launch appends its drawings to `StartupFiles` and emits
+  `open-files` with no payload; the renderer answers by taking the list, and
+  startup keeps taking it until it and the queue are both empty, so a drawing
+  sent before the listener existed is still found.
+- F4 `show()` fits a tab with no stored viewport to its content, unless it is
+  empty.
+To check by hand: export the same drawing at 1×, 2× and 3× and compare pixel
+sizes (`file out.png`), and paste a clipboard copy somewhere that shows its
+size; `cp a.excalidraw plan`, open `plan`, edit, Ctrl+S — a Save As dialog
+suggesting `plan`; double-click one drawing and a second straight after,
+before the window appears — both open; quit with a drawing scrolled far from
+the origin, relaunch — it is on screen.
+
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that
