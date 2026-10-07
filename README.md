@@ -82,14 +82,14 @@ The packages are not published anywhere; build them first with `npm run bundle`
 `src-tauri/target/release/bundle/`. The quotes in the commands below matter —
 the file names contain a space.
 
-The commands name version 0.5.3. If you built a different version, use the one
+The commands name version 0.5.4. If you built a different version, use the one
 in `package.json`. Earlier builds stay in that directory, so check you pick the
 newest file.
 
 ### Fedora
 
 ```bash
-sudo dnf install "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.3-1.x86_64.rpm"
+sudo dnf install "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.4-1.x86_64.rpm"
 sudo dnf remove excalidraw-desktop     # to uninstall
 ```
 
@@ -100,10 +100,10 @@ system it is being installed on.
 
 ```bash
 # openSUSE
-sudo zypper install --allow-unsigned-rpm "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.3-1.x86_64.rpm"
+sudo zypper install --allow-unsigned-rpm "src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.4-1.x86_64.rpm"
 
 # Debian, Ubuntu and their derivatives
-sudo apt install "./src-tauri/target/release/bundle/deb/Excalidraw Desktop_0.5.3_amd64.deb"
+sudo apt install "./src-tauri/target/release/bundle/deb/Excalidraw Desktop_0.5.4_amd64.deb"
 ```
 
 The leading `./` is required for `apt` — without a path separator it looks for
@@ -122,7 +122,7 @@ binary in place —
 — or install it by hand, which is all the packages do anyway:
 
 ```bash
-stage="src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.3-1.x86_64"
+stage="src-tauri/target/release/bundle/rpm/Excalidraw Desktop-0.5.4-1.x86_64"
 
 sudo install -Dm755 src-tauri/target/release/excalidraw-desktop /usr/bin/excalidraw-desktop
 sudo install -Dm644 packaging/excalidraw-desktop.xml \
