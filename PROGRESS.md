@@ -1528,6 +1528,33 @@ and the Library sidebar stays open; a theme file with `"surface": "2A2A37"`,
 and one named differently from its id, are each listed by Reload user themes;
 Save with an empty name is refused.
 
+**Phase 4 done 2026-10-07** (`npm run check` 32/32, `tsc`, `vite build`,
+`cargo test` 20/20, `cargo clippy -D warnings`; **not yet seen by eye**):
+- K1 `parseScene` keeps only the file entries whose `dataURL` is a
+  `data:image/` URL (`embeddedFiles`, `documentState.ts`, in the gate). An
+  image that was a remote URL shows as missing, and is gone from the file on
+  the next Save.
+- K2 `dev_url` is read only under `cfg!(dev)`, and `allowed_navigation` wants
+  `tauri://localhost`, not any host on that scheme.
+- K3 `write_atomic` goes through `resolve_target`: an existing file that
+  cannot be opened for writing is refused as read-only, and so is a link to a
+  file that does not exist. **Deviation from the plan:** the plan said to
+  follow a dangling link with `read_link`; refusing it is narrower, since the
+  extension rule and the scope check have only seen the link's own name. A
+  chmod the filesystem refuses is fatal only when the new file would be open
+  to someone the old one was not.
+- K4 temp files are `.excalidraw-desktop-<pid>-<nanos>-<n>.tmp`, no longer
+  carrying the target's name, and `sweep_temp_files` removes them from the
+  config directory, `session/` and `themes/` at startup.
+- K5 both package scripts start with `#!/bin/sh`. `push_recent` and
+  `clear_recent` return their write error; Save and Open still treat the
+  recent list as best effort, and Clear recent files reports a failure.
+To check by hand: `chmod 444` a drawing, open, edit, Ctrl+S — "read-only",
+file unchanged; `touch ~/.config/excalidraw-desktop/session/.excalidraw-desktop-1-2-3.tmp`,
+launch, and it is gone; a drawing whose `files` entry has an `https://`
+`dataURL` exports an SVG with no `http` in it; install the `.deb` somewhere
+Debian-based if one is ever to hand.
+
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that
