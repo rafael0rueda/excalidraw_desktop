@@ -1425,12 +1425,29 @@ Plan — one commit per finding, gate green before each, as in 2026-09-22
 
 Ship phases 0–2 as 0.5.4 once seen by eye; 3–4 can follow in 0.5.5.
 
-Open decisions
-- R1: narrow the distribution table to what a Fedora 44 build can serve
-  (cheap, honest), or build releases in an old-glibc container (keeps the
-  table, adds a build step). Default if nothing is said: narrow the table and
-  declare the libc dependency so install fails instead of launch.
-- V2: keep "Reset the canvas" and re-theme after it (planned), or disable it.
+Decided 2026-10-07
+- R1: the distribution table is narrowed to Fedora 44, the one system a build
+  from this machine is known to run on.
+- V2: "Reset the canvas" stays and the theme is re-applied after it.
+
+**Phase 0 done 2026-10-07** (`npm run check` 27/27, `tsc`, `vite build`,
+`cargo test` 17/17; **not yet seen by eye**):
+- D1, D2 `committed` is gone. `document.ts` keeps a `Canvas` record — which
+  tab's scene Excalidraw holds, and whether it has committed it — and
+  `capture`, `writeTo`, `onSceneChange` and `pristineActive` all ask
+  `onCanvas()` before reading the canvas as the active tab's. A change
+  Excalidraw reports while a switch is still parsing no longer counts as the
+  commit (`canvasChanged` only settles a scene that was handed over). `show()`
+  takes a turn number and gives up after its await if a later `show()` or
+  `applyScene` has run, or the active tab has moved. The four transitions
+  live in `documentState.ts` and the gate walks a switch through them.
+  `onLinkOpen` in `App.tsx` is a `useCallback`, so a render of ours stops
+  re-rendering Excalidraw. (`UIOptions` needed nothing: its comparator already
+  compares that prop key by key.)
+To check by hand: three tabs, one several MB with images; hold Ctrl+Tab and
+confirm the drawing on screen always matches the highlighted tab; `kill -9`
+straight after a switch and confirm each restored tab holds its own drawing;
+the unsaved dot still appears on the first stroke after a switch.
 
 ## Gotchas
 
