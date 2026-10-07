@@ -111,6 +111,29 @@ export function nextRev(previous: TabContent | undefined, scene: string): number
   return (previous?.rev ?? 0) + 1;
 }
 
+// ------------------------------------------------------------------- saving
+
+/**
+ * A tab's stored content and unsaved mark once `sent` has reached its file,
+ * for a tab that is not on the canvas when the write returns.
+ *
+ * `now` is what the store holds *after* the write, not the copy that went
+ * out: the tab can be drawn in and then left while a slow write is still in
+ * flight, and putting the pre-write copy back threw that stroke away and
+ * called the tab saved. `sentVersion` is the scene version of what was
+ * written, or null when the tab was never on the canvas to measure.
+ */
+export function afterWrite(
+  now: TabContent,
+  sent: string,
+  sentVersion: number | null,
+): { content: TabContent; dirty: boolean } {
+  if (now.scene === sent) {
+    return { content: { ...now, savedVersion: sentVersion ?? UNPARSED }, dirty: false };
+  }
+  return { content: { ...now, savedVersion: sentVersion ?? NEVER_SAVED }, dirty: true };
+}
+
 // ----------------------------------------------------------------- autosave
 
 export interface SnapshotPlan {

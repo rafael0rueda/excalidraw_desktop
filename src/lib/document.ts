@@ -20,6 +20,7 @@ import {
 import {
   CANVAS_IN_FLIGHT,
   activeFrom,
+  afterWrite,
   canvasChanged,
   canvasHanded,
   canvasHolds,
@@ -41,6 +42,7 @@ import {
   serializeScene,
 } from "./scene";
 import {
+  NEVER_SAVED,
   UNPARSED,
   findByPath,
   newTabId,
@@ -102,6 +104,8 @@ export interface DocumentActions {
   confirmDiscard: () => Promise<boolean>;
   /** Records an orderly shutdown. Call immediately before destroying the window. */
   endSession: () => Promise<void>;
+  /** Undoes `endSession` when the window turned out not to close after all. */
+  resumeSession: () => void;
 }
 
 /**
@@ -296,15 +300,15 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         // Not shown as an empty canvas: the tab would keep its path, and the
         // next Save would write that empty canvas over the user's file. The
         // tab is closed instead. A drawing with a file leaves the file as it
-        // is; an autosave-only one has its snapshot moved aside first, since
+        // is. One whose snapshot holds work no file has — never saved, or
+        // recovered with unsaved changes — has it moved aside first, since
         // the next snapshot would otherwise prune the only copy.
         const tab = tabsRef.current.find((t) => t.id === id);
         let note = "";
-        if (tab?.path) {
-          note = "\n\nThe file on disk has not been changed.";
-        } else {
+        if (tab?.path) note = "\n\nThe file on disk has not been changed.";
+        if (!tab?.path || tab.dirty) {
           const kept = await keepUnreadableSnapshot(id).catch(() => null);
-          if (kept) note = `\n\nIts autosave was kept at ${kept}.`;
+          if (kept) note += `\n\nIts autosave was kept at ${kept}.`;
         }
         await message(
           `${tab ? tabTitle(tab) : "A drawing"} could not be read and was closed.${note}\n\n${String(err)}`,
@@ -390,19 +394,33 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       // not save" over a drawing that had already reached disk, and left the
       // tab dirty under its old path. `openDrawing` treats it the same way.
       await pushRecent(target).catch(() => {});
-      let dirty = tabsRef.current.find((tab) => tab.id === id)?.dirty ?? false;
-      if (id === activeRef.current) {
-        if (writtenVersion !== null) savedVersion.current = writtenVersion;
-        store.current.set(id, { ...content, savedVersion: savedVersion.current });
-        // Recomputed against the scene as it stands *now*, not assumed clean:
-        // an edit that landed during the write above must still show dirty,
+      // The tab was closed while the write was in flight.
+      if (!store.current.has(id)) return true;
+      // Everything from here reads the store as it stands *now*. `content` is
+      // the copy that went out, and the tab may have been drawn in, captured
+      // and even left since: writing `content` back threw that work away.
+      const shown = id === activeRef.current && onCanvas() && !!api;
+      let dirty: boolean;
+      if (shown && writtenVersion !== null) {
+        savedVersion.current = writtenVersion;
+        store.current.set(id, { ...store.current.get(id)!, savedVersion: writtenVersion });
+        // Recomputed against the scene as it stands, not assumed clean: an
+        // edit that landed during the write above must still show dirty,
         // since disk only ever received `writtenVersion`.
-        if (activeAndCommitted) dirty = sceneVersion(api!.getSceneElements()) !== savedVersion.current;
+        dirty = sceneVersion(api!.getSceneElements()) !== writtenVersion;
       } else {
-        // Worked out the next time the tab is shown, which is the only moment
-        // its elements exist as anything but text.
-        store.current.set(id, { ...content, savedVersion: UNPARSED });
-        dirty = false;
+        // Not on the canvas when the write started, or not on it now. If it
+        // has come on screen in between, the store is brought up to date first.
+        if (shown) capture();
+        const after = afterWrite(store.current.get(id)!, content.scene, writtenVersion);
+        dirty = after.dirty;
+        if (shown) {
+          // `UNPARSED` is for a tab still to be shown; this one is on screen,
+          // holding exactly what was written.
+          savedVersion.current = dirty ? NEVER_SAVED : sceneVersion(api!.getSceneElements());
+          after.content.savedVersion = savedVersion.current;
+        }
+        store.current.set(id, after.content);
       }
       const next = tabsRef.current.map((tab) =>
         tab.id === id ? { ...tab, path: target, dirty } : tab,
@@ -668,6 +686,15 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     await markCleanExit().catch(() => {});
   }, [snapshot]);
 
+  const resumeSession = useCallback(() => {
+    if (!ending.current) return;
+    ending.current = false;
+    // Forgotten, so the next snapshot is written whether or not anything has
+    // moved: it is what takes the clean-exit mark back off the session file.
+    writtenMeta.current = "";
+    void snapshot();
+  }, [snapshot]);
+
   // ------------------------------------------------------------ open / start
 
   /** The active tab is worth reusing when it holds nothing the user would miss. */
@@ -715,6 +742,14 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         return;
       }
 
+      // Looked for again: the same file may have been opened while this one
+      // was being read, by a second launch handing it over, say.
+      const meanwhile = findByPath(tabsRef.current, chosen);
+      if (meanwhile) {
+        await selectTab(meanwhile.id);
+        return;
+      }
+
       capture();
       // Reuse an untouched tab rather than leaving an empty one behind.
       const file = chosen;
@@ -736,7 +771,10 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
 
   const restoreSession = useCallback(async () => {
     if (!api) return;
-    const session = await loadSession().catch(() => null);
+    // A failure here is left to throw. Read as "no session", it had the first
+    // snapshot prune recovery files nobody had looked at; see the startup
+    // effect for what happens instead.
+    const session = await loadSession();
     if (!session || !session.tabs.length) {
       // Nothing to restore: still route the default tab through `show()`
       // rather than leaving it un-applied. `applyScene` merges the theme into
@@ -809,18 +847,36 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   // Guarded rather than cancelled on cleanup: StrictMode runs effects twice in
   // development, and startup must not ask the user to recover twice.
   const startupDone = useRef(false);
+  /** True until startup has finished; a second launch's drawings wait in `queued`. */
+  const starting = useRef(true);
   /** Drawings a second launch sent before startup finished, opened once it has. */
   const queued = useRef<string[]>([]);
   useEffect(() => {
     if (!api || startupDone.current) return;
     startupDone.current = true;
     void (async () => {
+      // Whether startup got as far as deciding what to do with the last
+      // session. If it did not, the snapshots on disk have not been offered
+      // to anyone, and autosave stays off for this run: its first write would
+      // prune them to the one empty tab on screen.
+      let decided = false;
+      try {
+        await restoreSession();
+        decided = true;
+      } catch (err) {
+        await message(
+          "The last session could not be read, so nothing was restored. Its snapshots " +
+            "have been left as they are, and autosave is off until the app is restarted " +
+            "so that it does not overwrite them.\n\nSaving a drawing to its own file " +
+            `still works.\n\n${String(err)}`,
+          { title: "Could not restore the last session", kind: "warning" },
+        ).catch(() => {});
+      }
       try {
         // The session comes back first and the command line lands on top of it,
         // as extra tabs. Opening only the named file would leave the other tabs
         // out of the next snapshot, and the snapshot is pruned to what is open
         // — so double-clicking a drawing would quietly discard the rest.
-        await restoreSession();
         for (const file of await startupFiles().catch(() => [])) {
           await openDrawing(file);
         }
@@ -828,7 +884,8 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         // open is not left behind in the queue.
         while (queued.current.length) await openDrawing(queued.current.shift()!);
       } finally {
-        restored.current = true;
+        restored.current = decided;
+        starting.current = false;
       }
     })();
   }, [api, openDrawing, restoreSession]);
@@ -841,7 +898,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       // Opened now, during startup, a tab would be thrown away again when
       // `restoreSession` replaces the whole tab set — while the recovery
       // prompt is up, say.
-      if (!restored.current) {
+      if (starting.current) {
         queued.current.push(...payload);
         return;
       }
@@ -880,8 +937,9 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       onSceneChange,
       confirmDiscard,
       endSession,
+      resumeSession,
     }),
-    [newTab, openDrawing, closeTab, selectTab, selectRelative, save, saveAs, onSceneChange, confirmDiscard, endSession],
+    [newTab, openDrawing, closeTab, selectTab, selectRelative, save, saveAs, onSceneChange, confirmDiscard, endSession, resumeSession],
   );
   return { state, actions };
 }

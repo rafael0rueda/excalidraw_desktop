@@ -294,6 +294,27 @@ check("the canvas is a tab's only once that tab's scene has been committed", () 
   assert.equal(t.canvasChanged(canvas), canvas, "later changes leave it alone");
 });
 
+check("a save keeps what was drawn while it was being written", () => {
+  // Nothing moved during the write: the tab is clean at the version that went out.
+  const quiet = t.afterWrite(content("sent", 4, 10), "sent", 12);
+  assert.equal(quiet.dirty, false);
+  assert.deepEqual(quiet.content, content("sent", 4, 12));
+  // A tab that was never on the canvas works its version out when it is shown.
+  assert.equal(t.afterWrite(content("sent", 4, 10), "sent", null).content.savedVersion, t.UNPARSED);
+
+  // A stroke was drawn and the tab left before the write returned.
+  const drawn = t.afterWrite(content("sent plus a stroke", 5, 10), "sent", 12);
+  assert.equal(drawn.dirty, true, "the file does not have the stroke");
+  assert.equal(drawn.content.scene, "sent plus a stroke", "and the store must not lose it");
+  assert.equal(drawn.content.rev, 5, "nor rewind, or autosave skips it");
+  assert.equal(drawn.content.savedVersion, 12);
+  assert.equal(
+    t.afterWrite(content("sent plus a stroke", 5, 10), "sent", null).content.savedVersion,
+    t.NEVER_SAVED,
+    "with no version to compare against, it stays unsaved until it is saved",
+  );
+});
+
 check("only an unclean exit with unsaved work is worth a recovery prompt", () => {
   const scene = (id, path, dirty) => ({ id, path, dirty, scene: "{}" });
   const session = (tabs, clean_exit) => ({ tabs, active: null, clean_exit });

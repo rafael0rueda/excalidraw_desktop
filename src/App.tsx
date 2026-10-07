@@ -134,7 +134,14 @@ export default function App() {
     try {
       if (!(await actions.confirmDiscard())) return;
       await actions.endSession();
-      await getCurrentWindow().destroy();
+      try {
+        await getCurrentWindow().destroy();
+      } catch (err) {
+        // Still open, then: without this autosave stayed off for the rest of
+        // the run and the session file went on saying the exit was clean.
+        actions.resumeSession();
+        throw err;
+      }
     } finally {
       quitting.current = false;
     }
