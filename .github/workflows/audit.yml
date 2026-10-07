@@ -1,0 +1,27 @@
+# Known advisories against what the app ships.
+#
+# On a schedule rather than on every push: an advisory is news about a
+# dependency, not about a commit, and as a step in CI it turned unrelated
+# pushes red on the day one was published. A failure here means read the
+# report, not that the last change broke something.
+name: Audit
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high

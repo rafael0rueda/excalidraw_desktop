@@ -1,5 +1,5 @@
 # The gate every change in this repo is already held to by hand:
-#   npm run check && npx tsc --noEmit && npx vite build && cargo test
+#   npm run check && npm run lint && npx tsc --noEmit && npx vite build && cargo test
 # See PROGRESS.md for the state of the project and docs/reviews/ for why each
 # check exists.
 name: CI
@@ -13,6 +13,9 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   frontend:
@@ -28,10 +31,14 @@ jobs:
       # Excalidraw, no Tauri — esbuild bundles the pure modules and asserts
       # over them.
       - run: npm run check
+      # Only the React hooks rules; see eslint.config.js.
+      - run: npm run lint
       # `build` is `assets && tsc --noEmit && vite build`: the font copy has
       # to happen first or Excalidraw resolves its fonts from a CDN.
       - run: npm run build
-      - run: npm audit --omit=dev --audit-level=high
+      # `npm audit` is not here: it fails on advisories published since the
+      # last push, which says nothing about the push. It has a workflow of its
+      # own, audit.yml.
 
   rust:
     runs-on: ubuntu-latest
@@ -62,3 +69,58 @@ jobs:
       # Never run before this workflow existed — the toolchain on the machine
       # this was developed on is Fedora's, which ships no clippy.
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+  # The packages themselves. Nothing above builds them, so a broken desktop
+  # template, file map or icon path used to be found only by hand, at release.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the system libraries Tauri builds against, and the tools that read a package
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            patchelf \
+            rpm \
+            desktop-file-utils
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # A release build with LTO; nothing in common with the test job's.
+          key: package
+      - run: npm ci
+      - run: npm run bundle
+      - name: The RPM asks for the shared libraries, by soname
+        run: |
+          rpm -qp --requires src-tauri/target/release/bundle/rpm/*.rpm | tee requires.txt
+          grep -qF 'libwebkit2gtk-4.1.so.0()(64bit)' requires.txt
+          grep -qF 'libgtk-3.so.0()(64bit)' requires.txt
+          grep -qF 'libc.so.6(GLIBC_' requires.txt
+      - name: The deb asks for them by package, and its scripts can be run
+        run: |
+          deb="$(ls src-tauri/target/release/bundle/deb/*.deb)"
+          dpkg-deb -f "$deb" Depends | tee depends.txt
+          grep -qF 'libwebkit2gtk-4.1-0' depends.txt
+          grep -qF 'libgtk-3-0' depends.txt
+          grep -qF 'libc6 (>=' depends.txt
+          dpkg-deb -e "$deb" control
+          head -1 control/postinst | grep -qxF '#!/bin/sh'
+          head -1 control/postrm | grep -qxF '#!/bin/sh'
+      - name: The desktop entry is valid and opens files
+        run: |
+          entry="$(find src-tauri/target/release/bundle/deb -name '*.desktop' | head -1)"
+          test -n "$entry"
+          desktop-file-validate "$entry"
+          grep -q '^Exec=.*%F' "$entry"
+          grep -q '^MimeType=.*application/vnd.excalidraw+json' "$entry"
