@@ -275,6 +275,25 @@ check("a capture mark moves with anything worth serialising for", () => {
   assert.notEqual(mark, t.captureMark("a", 12, 3, "#1f1f28", 1), "an image added");
 });
 
+check("the canvas is a tab's only once that tab's scene has been committed", () => {
+  // Tab `a` is on screen and the user switches to `b`.
+  let canvas = t.canvasChanged(t.canvasHanded("a"));
+  assert.equal(t.canvasHolds(canvas, "a"), true);
+  assert.equal(t.canvasHolds(canvas, "b"), false, "the active id moves before the canvas does");
+
+  canvas = t.CANVAS_IN_FLIGHT;
+  // Excalidraw reports a change of its own while `b` is still being parsed.
+  canvas = t.canvasChanged(canvas);
+  assert.equal(t.canvasHolds(canvas, "b"), false, "a change mid-switch is not the new scene landing");
+  assert.equal(t.canvasHolds(canvas, "a"), false, "and the tab being left has been captured already");
+
+  canvas = t.canvasHanded("b");
+  assert.equal(t.canvasHolds(canvas, "b"), false, "handed over is not yet on screen");
+  canvas = t.canvasChanged(canvas);
+  assert.equal(t.canvasHolds(canvas, "b"), true);
+  assert.equal(t.canvasChanged(canvas), canvas, "later changes leave it alone");
+});
+
 check("only an unclean exit with unsaved work is worth a recovery prompt", () => {
   const scene = (id, path, dirty) => ({ id, path, dirty, scene: "{}" });
   const session = (tabs, clean_exit) => ({ tabs, active: null, clean_exit });

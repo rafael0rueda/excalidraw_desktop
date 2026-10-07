@@ -18,7 +18,11 @@ import {
   writeTextFile,
 } from "./api";
 import {
+  CANVAS_IN_FLIGHT,
   activeFrom,
+  canvasChanged,
+  canvasHanded,
+  canvasHolds,
   captureMark,
   nextRev,
   nextWritten,
@@ -27,6 +31,7 @@ import {
   reopenedContent,
   snapshotPlan,
   worthWriting,
+  type Canvas,
 } from "./documentState";
 import {
   currentView,
@@ -131,12 +136,19 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   const savedVersion = useRef(0);
 
   /**
-   * False between deciding to put a scene on screen and Excalidraw committing
-   * it. `getSceneElements()` still reports the outgoing drawing for that whole
-   * window — which starts at `show()`, before the scene has even been parsed —
-   * so capturing then would file one tab's scene under another tab's id.
+   * Which tab's drawing Excalidraw holds. Between deciding to put a scene on
+   * screen and Excalidraw committing it, `getSceneElements()` still reports
+   * the outgoing drawing — a window that starts at `show()`, before the scene
+   * has even been parsed — so everything that reads the canvas as the active
+   * tab's asks `onCanvas()` first.
    */
-  const committed = useRef(true);
+  const canvas = useRef<Canvas>({ tab: initial.id, committed: true });
+  const onCanvas = useCallback(() => canvasHolds(canvas.current, activeRef.current), []);
+  /**
+   * Counts scene replacements. A `show()` that finds this moved when its parse
+   * returns has been overtaken and must not apply what it parsed.
+   */
+  const turn = useRef(0);
 
   const emptyContent = useCallback(
     (): TabContent => ({
@@ -175,7 +187,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
    * do not move the mark, and saving or switching tabs must never miss one.
    */
   const capture = useCallback((opts: { onlyIfChanged?: boolean } = {}) => {
-    if (!api || !committed.current) return;
+    if (!api || !onCanvas()) return;
     const id = activeRef.current;
     const prev = store.current.get(id);
     const all = api.getSceneElementsIncludingDeleted();
@@ -195,7 +207,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       savedVersion: savedVersion.current,
       rev: nextRev(prev, scene),
     });
-  }, [api]);
+  }, [api, onCanvas]);
 
   /** Puts an already-parsed scene on screen and records it as tab `id`. */
   const applyScene = useCallback(
@@ -213,7 +225,8 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
             zoom: { value: opts.view.zoom } as AppState["zoom"],
           }
         : {};
-      committed.current = false;
+      turn.current += 1;
+      canvas.current = canvasHanded(id);
       api.updateScene({
         elements: scene.elements,
         appState: { ...scene.appState, ...view, ...themedRef.current },
@@ -261,17 +274,25 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     async (id: string): Promise<void> => {
       if (!api) return;
       const content = contentOf(id);
-      // Lowered here rather than in `applyScene`, which is only reached after
+      // Given up here rather than in `applyScene`, which is only reached after
       // the parse below has awaited. In that window `activeRef` already names
       // the incoming tab while the canvas still holds the outgoing one, so a
       // capture landing there filed one drawing under another tab's id. The
       // caller has already captured what it is leaving, so suppressing
       // captures from here until the new scene is committed loses nothing.
-      committed.current = false;
+      canvas.current = CANVAS_IN_FLIGHT;
+      // Two switches in quick succession both wait on a parse, and the slower
+      // one finishing last used to put its drawing on screen under the other
+      // tab's name — where the next capture, and the next Save, took it for
+      // that tab's own. Only the newest switch gets to apply.
+      const mine = ++turn.current;
+      const overtaken = () => mine !== turn.current || activeRef.current !== id;
       let scene: ParsedScene;
       try {
         scene = await parseScene(content.scene);
       } catch (err) {
+        // Left for the next time the tab is shown, when it fails the same way.
+        if (overtaken()) return;
         // Not shown as an empty canvas: the tab would keep its path, and the
         // next Save would write that empty canvas over the user's file. The
         // tab is closed instead. A drawing with a file leaves the file as it
@@ -301,6 +322,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         }
         return;
       }
+      if (overtaken()) return;
       applyScene(id, content.scene, scene, {
         view: content.view,
         // A tab restored from a session has not been parsed yet, so its saved
@@ -355,7 +377,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       // this from the live scene *after* the await would let a stroke drawn
       // while the write is in flight pass as having reached disk, when only
       // the version captured here actually did.
-      const activeAndCommitted = id === activeRef.current && committed.current && !!api;
+      const activeAndCommitted = id === activeRef.current && onCanvas() && !!api;
       const writtenVersion = activeAndCommitted ? sceneVersion(api!.getSceneElements()) : null;
       try {
         await writeTextFile(target, content.scene);
@@ -392,7 +414,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       setTabs(next);
       return true;
     },
-    [api, capture],
+    [api, capture, onCanvas],
   );
 
   const saveTabAs = useCallback(
@@ -606,9 +628,12 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
 
   const onSceneChange = useCallback(() => {
     if (!api) return;
-    // Excalidraw has committed whatever we last handed it, so the scene on
-    // screen is once again the active tab's.
-    committed.current = true;
+    // Excalidraw has committed whatever we last handed it — if we have handed
+    // it anything. It also reports changes of its own accord (a re-render, the
+    // pointer moving), and one arriving while a switch is still parsing used
+    // to pass for that commit, with the outgoing drawing still on screen.
+    canvas.current = canvasChanged(canvas.current);
+    if (!onCanvas()) return;
     const dirty = sceneVersion(api.getSceneElements()) !== savedVersion.current;
     setTabs((prev) =>
       prev.some((tab) => tab.id === activeRef.current && tab.dirty !== dirty)
@@ -616,7 +641,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         : prev,
     );
     scheduleSnapshot();
-  }, [api, scheduleSnapshot]);
+  }, [api, onCanvas, scheduleSnapshot]);
 
   // Opening, saving, switching and closing are discrete events rather than
   // bursts, so record them straight away.
@@ -649,9 +674,9 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   const pristineActive = useCallback(() => {
     const tab = tabsRef.current.find((t) => t.id === activeRef.current);
     if (!tab || tab.path || tab.dirty) return null;
-    if (api && committed.current && api.getSceneElements().length) return null;
+    if (api && onCanvas() && api.getSceneElements().length) return null;
     return tab.id;
-  }, [api]);
+  }, [api, onCanvas]);
 
   const openDrawing = useCallback(
     async (target?: string) => {

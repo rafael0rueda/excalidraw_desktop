@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Excalidraw } from "@excalidraw/excalidraw";
-import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import type { ExcalidrawImperativeAPI, ExcalidrawProps } from "@excalidraw/excalidraw/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import TabBar from "./components/TabBar";
 import ThemeEditor from "./components/ThemeEditor";
@@ -112,6 +112,18 @@ export default function App() {
     setTransparent: (transparent) => exportPrefs.update({ transparent }),
     setEmbedScene: (embed_scene) => exportPrefs.update({ embed_scene }),
   };
+
+  // Kept to one identity: Excalidraw compares its props shallowly, and a new
+  // function here on every render of ours re-rendered it and had it report a
+  // change each time — a tab switch included, before the new scene was up.
+  const onLinkOpen = useCallback<NonNullable<ExcalidrawProps["onLinkOpen"]>>(
+    (element, event) => {
+      // Followed by us rather than in the webview; see `openLink`.
+      event.preventDefault();
+      if (api && element.link) openLink(api, element.link);
+    },
+    [api],
+  );
 
   // One quit at a time: Ctrl+Q again, or the window's X while the first quit's
   // prompt is still up, would otherwise run a second one alongside it.
@@ -232,11 +244,7 @@ export default function App() {
           // draws Excalidraw's own placeholder naming the URL instead, and its
           // link still opens in the browser through `onLinkOpen`.
           validateEmbeddable={false}
-          onLinkOpen={(element, event) => {
-            // Followed by us rather than in the webview; see `openLink`.
-            event.preventDefault();
-            if (api && element.link) openLink(api, element.link);
-          }}
+          onLinkOpen={onLinkOpen}
           UIOptions={{
             canvasActions: {
               loadScene: false,

@@ -41,6 +41,45 @@ export interface Session {
   clean_exit: boolean;
 }
 
+// ------------------------------------------------------------------- canvas
+
+/**
+ * Which tab's drawing the one Excalidraw instance holds.
+ *
+ * `tab` is null from the moment a switch starts until the incoming scene is
+ * handed over: the canvas still shows the outgoing drawing for that whole
+ * window, while the active id already names the incoming one. `committed` is
+ * false until Excalidraw has reported a change *after* the hand-over — it
+ * reports changes for its own reasons too (a re-render, the pointer moving),
+ * and one of those arriving mid-switch says nothing about our scene.
+ */
+export interface Canvas {
+  tab: string | null;
+  committed: boolean;
+}
+
+/** A switch has started; whatever is on screen belongs to no tab until `canvasHanded`. */
+export const CANVAS_IN_FLIGHT: Canvas = { tab: null, committed: false };
+
+/** Tab `id`'s scene has been handed to Excalidraw, which has not committed it yet. */
+export function canvasHanded(id: string): Canvas {
+  return { tab: id, committed: false };
+}
+
+/** Excalidraw reported a change: a scene that was handed over is now on screen. */
+export function canvasChanged(canvas: Canvas): Canvas {
+  return canvas.tab !== null && !canvas.committed ? { ...canvas, committed: true } : canvas;
+}
+
+/**
+ * Whether what Excalidraw reports may be read as tab `active`'s drawing.
+ * Capturing, saving or marking a tab unsaved on anything else files one
+ * drawing under another tab's id.
+ */
+export function canvasHolds(canvas: Canvas, active: string): boolean {
+  return canvas.committed && canvas.tab === active;
+}
+
 // ------------------------------------------------------------------ capture
 
 /**
