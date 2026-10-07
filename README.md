@@ -457,6 +457,7 @@ src-tauri/src/          Rust backend
   chrome.rs             Paints the GTK menu bar and menus in the theme's colours
 scripts/copy-assets.mjs Copies Excalidraw fonts into public/ for offline use
 scripts/check.mjs       Assertions over the pure modules and bundled libraries (`npm run check`)
+eslint.config.js        The React hooks rules, and only those (`npm run lint`)
 scripts/version.mjs     Every place the version is written; `npm run bump -- 0.5.4` sets them all
 scripts/build-er-library.mjs          Writes the ER shapes into resources/libraries/
 scripts/build-kanagawa-erd-library.mjs  Writes the Kanagawa ERD shapes from

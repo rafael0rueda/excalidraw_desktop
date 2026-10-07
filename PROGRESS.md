@@ -324,6 +324,13 @@ What a human has actually seen, and on which version:
 | Embedded web content is refused; its link opens in the browser | 0.5.2 |
 | The Kanagawa ERD shapes insert and their connectors behave as arrows | 0.5.2 |
 
+Open, and not ours to fix: `npm audit --omit=dev` reports high advisories in
+two of Excalidraw 0.18.1's own dependencies — `katex` 0.16 (through the
+Mermaid dialog) and `braces` (through `sass`'s file watcher, which the app
+never runs; no fixed version exists). Clearing `katex` means overriding it
+past what `mermaid` asks for, which needs the Mermaid dialog tried by hand.
+`.github/workflows/audit.yml` runs the audit weekly.
+
 Never checked by hand:
 - Double-clicking a `.excalidraw` file in Files, the app's icon on such files,
   and opening several at once. (Checked from the command line only.)
@@ -621,6 +628,7 @@ verification needs a human looking at the titlebar.
 npm start                      # tauri dev
 npx tsc --noEmit               # typecheck
 npm run check                  # the gate: pure modules, versions, bundled libraries
+npm run lint                   # the React hooks rules, nothing else
 npm run bump -- 0.5.4          # every place the version is written, at once
 cargo test --lib --manifest-path src-tauri/Cargo.toml
 cargo build --manifest-path src-tauri/Cargo.toml
