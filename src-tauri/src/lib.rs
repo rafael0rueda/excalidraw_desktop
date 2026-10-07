@@ -116,7 +116,9 @@ fn allowed_navigation(url: &Url, dev_url: Option<&Url>) -> bool {
     if url.scheme() == "blob" {
         return true;
     }
-    let ours = url.scheme() == "tauri" || dev_url.is_some_and(|dev| dev.origin() == url.origin());
+    // The bundled page is `tauri://localhost/` and nothing else on that scheme.
+    let bundled = url.scheme() == "tauri" && url.host_str() == Some("localhost");
+    let ours = bundled || dev_url.is_some_and(|dev| dev.origin() == url.origin());
     ours && url.query().is_none()
 }
 
@@ -142,7 +144,14 @@ fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>
         .find(|w| w.label == "main")
         .cloned()
         .ok_or("tauri.conf.json has no main window")?;
-    let dev_url = app.config().build.dev_url.clone();
+    // `dev_url` is compiled into the config of a release build too, where
+    // nothing of ours is listening on it: left in, whatever does listen on
+    // that port would have been a page this window agreed to load.
+    let dev_url = if cfg!(dev) {
+        app.config().build.dev_url.clone()
+    } else {
+        None
+    };
     let navigating = app.handle().clone();
     let opening = app.handle().clone();
     tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
@@ -218,6 +227,11 @@ pub fn run() {
             // failures, and a config directory we cannot tighten is not a
             // reason to refuse to start.
             let _ = store::ensure_private_dir(&store::config_dir());
+            // Whatever a run that died mid-write left behind. This is the
+            // only instance and nothing is writing yet.
+            for dir in ["", "session", "themes"] {
+                files::sweep_temp_files(&store::config_dir().join(dir));
+            }
             // Named on the command line by the user, so the renderer may read them.
             let files = startup_drawings();
             let allowed = app.state::<scope::Allowed>();
@@ -301,6 +315,7 @@ mod tests {
         let dev = Url::parse("http://localhost:1420").unwrap();
         let page = |s: &str| allowed_navigation(&Url::parse(s).unwrap(), Some(&dev));
         assert!(page("tauri://localhost/"));
+        assert!(!page("tauri://elsewhere/"), "only the bundled page lives on that scheme");
         assert!(page("http://localhost:1420/"));
         assert!(page("blob:tauri://localhost/2f6c0e1a"), "a library export is a blob download");
         assert!(!page("tauri://localhost/?element=abc"), "an element link would reload the app");
