@@ -1,3 +1,4 @@
+#!/bin/sh
 # Our MIME definition has just gone; rebuild the database so nothing keeps
 # claiming .excalidraw files on our behalf. Runs on upgrades too, where the
 # replacement file is already in place and this is simply a no-op refresh.

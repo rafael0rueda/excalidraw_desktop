@@ -30,12 +30,11 @@ fn load() -> Vec<RecentEntry> {
         .unwrap_or_default()
 }
 
-fn store(entries: &[RecentEntry]) {
-    if let Ok(json) = serde_json::to_string_pretty(entries) {
-        // Atomic like every other file here: a crash mid-write would leave a
-        // file that no longer parses, and so an empty list.
-        let _ = write_atomic(&recent_path(), json.as_bytes());
-    }
+fn store(entries: &[RecentEntry]) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
+    // Atomic like every other file here: a crash mid-write would leave a
+    // file that no longer parses, and so an empty list.
+    write_atomic(&recent_path(), json.as_bytes())
 }
 
 #[tauri::command(async)]
@@ -54,12 +53,12 @@ pub fn list_recent(allowed: State<'_, Allowed>) -> Vec<RecentEntry> {
 }
 
 #[tauri::command(async)]
-pub fn push_recent(allowed: State<'_, Allowed>, path: String) -> Vec<RecentEntry> {
+pub fn push_recent(allowed: State<'_, Allowed>, path: String) -> Result<Vec<RecentEntry>, String> {
     let _recent = RECENT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     // The list is what `list_recent` allows, so the renderer must not be able
     // to put just any path on it.
     if allowed.check(&path).is_err() {
-        return load();
+        return Ok(load());
     }
     let name = Path::new(&path)
         .file_name()
@@ -78,13 +77,15 @@ pub fn push_recent(allowed: State<'_, Allowed>, path: String) -> Vec<RecentEntry
         },
     );
     entries.truncate(MAX_RECENT);
-    store(&entries);
-    entries
+    // Reported rather than swallowed: handing back the new list as though it
+    // had been kept told the caller something that was not true.
+    store(&entries)?;
+    Ok(entries)
 }
 
 #[tauri::command(async)]
-pub fn clear_recent() -> Vec<RecentEntry> {
+pub fn clear_recent() -> Result<Vec<RecentEntry>, String> {
     let _recent = RECENT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    store(&[]);
-    Vec::new()
+    store(&[])?;
+    Ok(Vec::new())
 }

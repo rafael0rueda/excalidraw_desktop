@@ -1,3 +1,4 @@
+#!/bin/sh
 # Refresh the databases the desktop reads, so the association works without a
 # logout. Fedora runs all three from rpm file triggers and Debian runs them
 # from dpkg triggers, which makes these belt and braces on both and the whole

@@ -1,4 +1,5 @@
 import type { Resource } from "@tauri-apps/api/core";
+import { message } from "@tauri-apps/plugin-dialog";
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { listRecent, clearRecent, type RecentEntry } from "./api";
 import { tabTitle, type TabMeta } from "./tabs";
@@ -127,7 +128,11 @@ async function recentSubmenu(
           id: "recent-clear",
           text: "Clear recent files",
           action: () => {
-            void clearRecent().then(() => buildMenu(handlers, theme, latestTabs ?? tabs, exporting));
+            // Rebuilt either way: after a failure the list is still there, and
+            // the menu should go on showing it.
+            void clearRecent()
+              .catch((err) => message(String(err), { title: "Could not clear recent files", kind: "error" }))
+              .then(() => buildMenu(handlers, theme, latestTabs ?? tabs, exporting));
           },
         }),
       ),
