@@ -334,6 +334,15 @@ Ten colours, expanded into Excalidraw's ~64 CSS variables for you. Use **View �
 Theme → Reload user themes** after editing; files that do not parse are listed
 with the reason. Reusing a built-in `id` overrides that theme.
 
+Three rules a hand-written file has to keep, each of which is reported by
+*Reload user themes* when it is broken:
+
+- **The file is named after its `id`:** `my-theme.json` for the theme above.
+  The id itself is lower-case letters, digits and dashes.
+- **A colour is `#rgb` or `#rrggbb`**, `#` included. Colour names, `rgb()` and
+  eight-digit hex with alpha are not accepted.
+- **`transparent` is for `fill` only.**
+
 Preferences live in `~/.config/excalidraw-desktop/settings.json`
 (`theme`, `light_theme`, `dark_theme`), but there is nothing in there the
 editor panel does not also expose.
@@ -391,6 +400,14 @@ file** — saving stays something you ask for.
 
 ## Known limitations
 
+- **The theme owns the canvas colour, and Save writes it into the drawing.**
+  A drawing's own background is replaced by the theme's when it is opened, and
+  the file you save carries the theme's. Saved under a dark theme, it opens
+  with that dark canvas on excalidraw.com or for anyone you send it to. The
+  background picker in Excalidraw's menu changes the canvas only until the next
+  tab switch.
+- **Excalidraw's own light/dark toggle is switched off.** Its dark mode inverts
+  the canvas; use a dark theme instead.
 - **The grid colour is not themeable.** Excalidraw 0.18.1 hardcodes it
   (`#dddddd` / `#e5e5e5`) in its renderer, with no `appState` or CSS hook.
 - **The colour-picker palette is not themeable** either — `UIOptions` exposes no

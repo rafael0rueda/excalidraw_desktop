@@ -1497,6 +1497,37 @@ suggesting `plan`; double-click one drawing and a second straight after,
 before the window appears — both open; quit with a drawing scrolled far from
 the origin, relaunch — it is on screen.
 
+**Phase 3 done 2026-10-07** (`npm run check` 31/31, `tsc`, `vite build`,
+`cargo test` 17/17, `cargo clippy -D warnings`; **not yet seen by eye**):
+- V1 `toggleTheme: false`.
+- V2 `onSceneChange` re-applies the themed defaults when `canvasWasReset`
+  (`documentState.ts`, in the gate): the canvas is Excalidraw's own `#ffffff`
+  under a theme whose canvas is not. Any other colour is taken for a pick by
+  hand and left. A reset under a white-canvas theme is not detected, and its
+  near-black stroke is left alone — it is visible there.
+- V3 one grammar, `isColorValue(key, value)` in `types.ts`: `#rgb` or
+  `#rrggbb`, and `transparent` for `fill` only. `isHex` requires the `#`.
+  `parseTheme` enforces it, holds `id` to `safe_id`'s grammar and wants a
+  non-blank name; `css_color` in `chrome.rs` drops the 4- and 8-digit forms.
+  `ThemeFile` carries the file's stem and `readUserThemes` refuses a theme
+  whose id differs from it, so Save and Delete always act on the file the
+  theme came from. **An existing user theme that breaks one of these now
+  fails to load** and is named by Reload user themes; the README lists the
+  three rules.
+- V4 the editor trims the name and refuses to save an empty one.
+- V5 `applyScene` carries the `CARRIED` keys (the `currentItem*` tool
+  settings, the open sidebar, zen/view/snap modes) from the live appState
+  into every scene after the first of the run. The stroke colour is kept
+  unless it is Excalidraw's `#1e1e1e`; the fill is kept as it is. The active
+  tool is deliberately not carried.
+- V6 two entries under Known limitations in the README.
+To check by hand: Alt+Shift+D does nothing and the menu has no theme toggle;
+Reset the canvas on Kanagawa Wave leaves a dark canvas and a light stroke;
+set stroke width, font and a stroke colour, switch tab and back — all kept,
+and the Library sidebar stays open; a theme file with `"surface": "2A2A37"`,
+and one named differently from its id, are each listed by Reload user themes;
+Save with an empty name is refused.
+
 ## Gotchas
 
 - **The debug binary is not standalone.** `cargo build` produces a binary that
