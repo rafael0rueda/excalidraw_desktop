@@ -5,11 +5,15 @@
   "type": "module",
   "description": "Local-first Excalidraw desktop app for Fedora Linux",
   "license": "MIT",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "assets": "node scripts/copy-assets.mjs",
     "dev": "npm run assets && vite",
     "build": "npm run assets && tsc --noEmit && vite build",
     "check": "node scripts/check.mjs",
+    "bump": "node scripts/version.mjs",
     "tauri": "tauri",
     "start": "npm run assets && tauri dev",
     "bundle": "npm run assets && tauri build"

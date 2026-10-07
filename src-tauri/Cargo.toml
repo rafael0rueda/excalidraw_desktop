@@ -5,7 +5,9 @@ description = "Local-first Excalidraw desktop app"
 authors = ["rafa"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.77"
+# What the locked dependencies need, not what this crate's own code needs:
+# `cargo metadata` over Cargo.lock is where the number comes from.
+rust-version = "1.88"
 
 [lib]
 name = "excalidraw_desktop_lib"
