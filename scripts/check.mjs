@@ -26,6 +26,7 @@ writeFileSync(
    export { PRESET_THEMES, FALLBACK_THEME_ID } from "${process.cwd()}/src/theme/presets";
    export * from "${process.cwd()}/src/lib/tabs";
    export * from "${process.cwd()}/src/lib/documentState";
+   export * from "${process.cwd()}/src/lib/selection";
    export * from "${process.cwd()}/src/lib/shortcuts";`,
 );
 const bundle = join(out, "bundle.mjs");
@@ -190,6 +191,26 @@ check("a file already open is found rather than opened twice", () => {
   ];
   assert.equal(t.findByPath(tabs, "/tmp/one.excalidraw").id, "a");
   assert.equal(t.findByPath(tabs, "/tmp/two.excalidraw"), undefined);
+});
+
+check("exporting the selection takes labels and frame contents with it", () => {
+  const all = [
+    { id: "box", frameId: null },
+    { id: "box-label", frameId: null, containerId: "box" },
+    { id: "frame", frameId: null },
+    { id: "in-frame", frameId: "frame" },
+    // Bound to something a frame pulls in: neither selected nor framed itself.
+    { id: "in-frame-label", frameId: null, containerId: "in-frame" },
+    { id: "elsewhere", frameId: null },
+    { id: "elsewhere-label", frameId: null, containerId: "elsewhere" },
+  ];
+  const picked = (ids) => [...t.expandSelection(all, Object.fromEntries(ids.map((id) => [id, true])))].sort();
+
+  assert.deepEqual(picked(["box"]), ["box", "box-label"], "a container brings its label");
+  assert.deepEqual(picked(["frame"]), ["frame", "in-frame", "in-frame-label"], "a frame brings what is in it");
+  assert.deepEqual(picked([]), []);
+  // Excalidraw keeps deselected ids in the map as `false`.
+  assert.deepEqual([...t.expandSelection(all, { box: false, elsewhere: true })].sort(), ["elsewhere", "elsewhere-label"]);
 });
 
 check("shortcuts follow the layout for letters and the position for digits", () => {
