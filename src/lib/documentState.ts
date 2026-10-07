@@ -41,6 +41,28 @@ export interface Session {
   clean_exit: boolean;
 }
 
+// -------------------------------------------------------------------- files
+
+/**
+ * The images of a drawing that are actually inside it.
+ *
+ * A file entry's `dataURL` is meant to be a `data:` URL, but nothing in the
+ * format says so, and a drawing from someone else can carry `https://…`
+ * there instead. The page's own policy refuses to fetch it, but an SVG export
+ * writes it out as `<image href>`, and whoever opens that SVG fetches it — a
+ * beacon inside a file that looks self-contained. Such entries are dropped on
+ * the way in, and their elements show as missing images.
+ */
+export function embeddedFiles<T extends { dataURL?: unknown }>(
+  files: Record<string, T> | null | undefined,
+): Record<string, T> {
+  const kept: Record<string, T> = {};
+  for (const [id, file] of Object.entries(files ?? {})) {
+    if (typeof file.dataURL === "string" && /^data:image\//i.test(file.dataURL)) kept[id] = file;
+  }
+  return kept;
+}
+
 // ------------------------------------------------------------------- canvas
 
 /**

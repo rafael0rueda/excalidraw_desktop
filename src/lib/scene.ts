@@ -1,6 +1,7 @@
 import { getSceneVersion, serializeAsJSON, loadFromBlob } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
+import { embeddedFiles } from "./documentState";
 import type { TabView } from "./tabs";
 
 /**
@@ -35,5 +36,6 @@ export function currentView(api: ExcalidrawImperativeAPI): TabView {
 /** Parses `.excalidraw` JSON text back into a scene Excalidraw can consume. */
 export async function parseScene(text: string) {
   const blob = new Blob([text], { type: "application/json" });
-  return loadFromBlob(blob, null, null);
+  const scene = await loadFromBlob(blob, null, null);
+  return { ...scene, files: embeddedFiles(scene.files) };
 }

@@ -305,6 +305,18 @@ check("a capture mark moves with anything worth serialising for", () => {
   assert.notEqual(mark, t.captureMark("a", 12, 3, "#1f1f28", 1), "an image added");
 });
 
+check("an image a drawing does not actually contain is dropped on the way in", () => {
+  const files = {
+    a: { id: "a", dataURL: "data:image/png;base64,AAAA" },
+    b: { id: "b", dataURL: "https://example.com/beacon.png" },
+    c: { id: "c", dataURL: "DATA:IMAGE/svg+xml;base64,AAAA" },
+    d: { id: "d", dataURL: "data:text/html,<script>1</script>" },
+    e: { id: "e" },
+  };
+  assert.deepEqual(Object.keys(t.embeddedFiles(files)), ["a", "c"]);
+  assert.deepEqual(t.embeddedFiles(null), {});
+});
+
 check("the canvas is a tab's only once that tab's scene has been committed", () => {
   // Tab `a` is on screen and the user switches to `b`.
   let canvas = t.canvasChanged(t.canvasHanded("a"));
