@@ -47,6 +47,7 @@ import {
   findByPath,
   newTabId,
   relativeId,
+  savesInPlace,
   successorId,
   tabTitle,
   type TabContent,
@@ -329,6 +330,11 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       if (overtaken()) return;
       applyScene(id, content.scene, scene, {
         view: content.view,
+        // A tab coming back from a session or its own file has no viewport of
+        // its own yet, and a drawing does not carry one: left alone it opened
+        // at the origin, which for a drawing made anywhere else is a blank
+        // canvas.
+        fit: content.view === null && scene.elements.length > 0,
         // A tab restored from a session has not been parsed yet, so its saved
         // version is worked out here rather than at startup.
         savedVersion: content.savedVersion === UNPARSED ? undefined : content.savedVersion,
@@ -465,7 +471,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     async (id: string) => {
       const tab = tabsRef.current.find((t) => t.id === id);
       if (!tab) return false;
-      return tab.path ? writeTo(id, tab.path) : saveTabAs(id);
+      return tab.path && savesInPlace(tab.path) ? writeTo(id, tab.path) : saveTabAs(id);
     },
     [saveTabAs, writeTo],
   );
@@ -877,12 +883,14 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         // as extra tabs. Opening only the named file would leave the other tabs
         // out of the next snapshot, and the snapshot is pruned to what is open
         // — so double-clicking a drawing would quietly discard the rest.
-        for (const file of await startupFiles().catch(() => [])) {
-          await openDrawing(file);
+        // Asked again until both come back empty: a second launch may hand
+        // drawings over while these open, and one that did so before the
+        // listener below was registered is waiting in the backend's list.
+        for (;;) {
+          const files = [...queued.current.splice(0), ...(await startupFiles().catch(() => []))];
+          if (!files.length) break;
+          for (const file of files) await openDrawing(file);
         }
-        // Checked again after every await, so a drawing arriving while these
-        // open is not left behind in the queue.
-        while (queued.current.length) await openDrawing(queued.current.shift()!);
       } finally {
         restored.current = decided;
         starting.current = false;
@@ -894,15 +902,19 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   // instead, as tabs on the window already open.
   useEffect(() => {
     if (!api) return;
-    const pending = listen<string[]>(OPEN_FILES_EVENT, async ({ payload }) => {
+    const pending = listen(OPEN_FILES_EVENT, async () => {
+      // The event only says there is something to collect. The drawings
+      // themselves wait in the backend, so one sent before this listener
+      // existed is still there for startup to find.
+      const files = await startupFiles().catch(() => []);
       // Opened now, during startup, a tab would be thrown away again when
       // `restoreSession` replaces the whole tab set — while the recovery
       // prompt is up, say.
       if (starting.current) {
-        queued.current.push(...payload);
+        queued.current.push(...files);
         return;
       }
-      for (const file of payload) await openDrawing(file);
+      for (const file of files) await openDrawing(file);
     });
     return () => {
       void pending.then((unlisten) => unlisten());

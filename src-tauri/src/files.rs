@@ -18,7 +18,8 @@ fn require_extension(path: &Path, extensions: &[&str]) -> Result<(), String> {
     if extensions.iter().any(|want| found.eq_ignore_ascii_case(want)) {
         return Ok(());
     }
-    Err(format!("{}: not a {} file", path.display(), extensions.join(" or ")))
+    let wanted: Vec<String> = extensions.iter().map(|ext| format!(".{ext}")).collect();
+    Err(format!("{}: the name has to end in {}", path.display(), wanted.join(" or ")))
 }
 
 // File commands run on Tauri's thread pool rather than inline in the IPC

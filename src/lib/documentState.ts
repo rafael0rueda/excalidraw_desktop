@@ -251,8 +251,8 @@ export function recoveredSession(session: Session): {
   for (const tab of session.tabs) {
     contents.set(tab.id, {
       scene: tab.scene,
-      // No stored view: the snapshot's own appState puts the user back at the
-      // viewport they were working in.
+      // No stored view, and a snapshot does not carry one either: the tab is
+      // fitted to its content the first time it is shown.
       view: null,
       savedVersion: tab.dirty ? NEVER_SAVED : UNPARSED,
       rev: 1,

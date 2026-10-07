@@ -52,6 +52,16 @@ export function basename(path: string): string {
   return path.split("/").pop() || path;
 }
 
+/**
+ * Whether Save can write straight back to `path`. The backend writes a drawing
+ * only under its own extension, and a drawing can be opened from a file that
+ * has none — the file manager recognises one by its contents — so Save on
+ * such a tab asks where to put it instead of failing.
+ */
+export function savesInPlace(path: string): boolean {
+  return /\.excalidraw$/i.test(basename(path));
+}
+
 export function tabTitle(tab: TabMeta): string {
   return tab.path ? basename(tab.path) : "Untitled";
 }

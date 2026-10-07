@@ -15,11 +15,22 @@ use tauri::{Emitter, Manager, Url};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_window_state::StateFlags;
 
-/// Drawings named on the command line. A file-manager double click arrives this
-/// way, and the desktop entry's `%F` may name several at once.
-/// Taken once, so a reload does not reopen them over the user's current work.
+/// Drawings waiting for the renderer to open them: those named on the command
+/// line — a file-manager double click arrives this way, and the desktop
+/// entry's `%F` may name several at once — and those a second launch has
+/// handed over since. Taken, not read, so a reload does not reopen them over
+/// the user's current work.
 #[derive(Default)]
 struct StartupFiles(Mutex<Vec<String>>);
+
+impl StartupFiles {
+    fn add(&self, files: Vec<String>) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .extend(files);
+    }
+}
 
 #[tauri::command]
 fn startup_files(state: tauri::State<'_, StartupFiles>) -> Vec<String> {
@@ -30,7 +41,10 @@ fn startup_files(state: tauri::State<'_, StartupFiles>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Carries the drawings from a second launch to the window already open.
+/// Tells the window already open that a second launch has added to
+/// `StartupFiles`. It carries no paths: an event sent before the renderer is
+/// listening is simply lost, and a drawing double-clicked while the app was
+/// still starting went with it.
 const OPEN_FILES_EVENT: &str = "open-files";
 
 /// Sets the window title.
@@ -170,19 +184,23 @@ pub fn run() {
         // two would prune each other's session snapshots.
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let files = cli_drawings(&argv, Path::new(&cwd));
-            if let Some(allowed) = app.try_state::<scope::Allowed>() {
-                for file in &files {
-                    allowed.allow(Path::new(file));
-                }
+            let allowed = app.state::<scope::Allowed>();
+            for file in &files {
+                allowed.allow(Path::new(file));
             }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
             if !files.is_empty() {
-                let _ = app.emit(OPEN_FILES_EVENT, files);
+                app.state::<StartupFiles>().add(files);
+                let _ = app.emit(OPEN_FILES_EVENT, ());
             }
         }))
+        // Here rather than in `setup`, so that a second launch arriving while
+        // this one is still starting finds them.
+        .manage(scope::Allowed::default())
+        .manage(StartupFiles::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         // Everything but visibility: the window stays hidden until the theme is
@@ -202,12 +220,11 @@ pub fn run() {
             let _ = store::ensure_private_dir(&store::config_dir());
             // Named on the command line by the user, so the renderer may read them.
             let files = startup_drawings();
-            let allowed = scope::Allowed::default();
+            let allowed = app.state::<scope::Allowed>();
             for file in &files {
                 allowed.allow(Path::new(file));
             }
-            app.manage(allowed);
-            app.manage(StartupFiles(Mutex::new(files)));
+            app.state::<StartupFiles>().add(files);
             create_main_window(app)?;
             // Setup runs on the GTK main thread, where the signal has to be subscribed.
             #[cfg(target_os = "linux")]

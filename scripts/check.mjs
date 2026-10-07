@@ -127,6 +127,15 @@ check("a tab is titled by its file, and an unsaved one is Untitled", () => {
   assert.equal(t.basename("plan.excalidraw"), "plan.excalidraw");
 });
 
+check("Save writes in place only to a name the backend will write", () => {
+  assert.equal(t.savesInPlace("/home/rafa/plan.excalidraw"), true);
+  assert.equal(t.savesInPlace("/home/rafa/PLAN.EXCALIDRAW"), true);
+  // Opened by content, from the file manager or the command line.
+  assert.equal(t.savesInPlace("/home/rafa/plan"), false);
+  assert.equal(t.savesInPlace("/home/rafa/drawing.json"), false);
+  assert.equal(t.savesInPlace("/home/rafa/notes.excalidraw/plan"), false, "the directory's name is not the file's");
+});
+
 check("tab ids are ids the backend will accept as file names", () => {
   // Mirrors `safe_id` in src-tauri/src/store.rs, which is what a tab id has to
   // satisfy before it names a snapshot.
