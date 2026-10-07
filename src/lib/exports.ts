@@ -45,15 +45,20 @@ function sceneFor(api: ExcalidrawImperativeAPI, opts: ExportOptions) {
 export async function toPngBlob(api: ExcalidrawImperativeAPI, opts: ExportOptions = {}) {
   const { elements, appState, files } = sceneFor(api, opts);
   if (!elements.length) throw new Error("Nothing to export.");
+  const scale = opts.scale ?? 2;
   return exportToBlob({
     elements,
     files,
     appState: {
       ...appState,
       exportBackground: !opts.transparent,
-      exportScale: opts.scale ?? 2,
+      exportScale: scale,
       exportEmbedScene: !!opts.embedScene,
     },
+    // What actually sizes the image. `exportToBlob` reads `exportScale` only
+    // when `maxWidthOrHeight` is given; without this every export came out at
+    // 1x whatever the menu said.
+    getDimensions: (width: number, height: number) => ({ width: width * scale, height: height * scale, scale }),
     mimeType: "image/png",
     quality: 1,
   });
