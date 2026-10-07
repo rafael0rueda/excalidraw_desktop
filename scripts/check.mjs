@@ -11,6 +11,9 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
+import * as erLibrary from "./build-er-library.mjs";
+import * as kanagawaLibrary from "./build-kanagawa-erd-library.mjs";
+import { versions } from "./version.mjs";
 
 const out = mkdtempSync(join(tmpdir(), "excalidraw-theme-"));
 const entry = join(out, "entry.ts");
@@ -198,6 +201,16 @@ check("shortcuts follow the layout for letters and the position for digits", () 
   assert.equal(t.shortcutKey("1", "Numpad1"), "1");
   assert.equal(t.shortcutKey("б", "Comma"), ",");
   assert.equal(t.shortcutKey("PageDown", "PageDown"), "PageDown");
+});
+
+check("every place the version is written agrees", () => {
+  const found = versions();
+  const distinct = [...new Set(found.map(([, version]) => version))];
+  assert.equal(
+    distinct.length,
+    1,
+    `run \`npm run bump -- <version>\`:\n${found.map(([file, version]) => `  ${version}  ${file}`).join("\n")}`,
+  );
 });
 
 check("the CSP lets the page fetch its own assets", () => {
@@ -428,6 +441,21 @@ check("a tab reopened from its own file is clean and unparsed", () => {
     savedVersion: t.UNPARSED,
     rev: 1,
   });
+});
+
+check("the bundled libraries are exactly what their generators write", () => {
+  // Excalidraw tells library items apart by element id and versionNonce. A
+  // generator that drifts from its committed file hands everyone who already
+  // has the shapes a second copy of each, so the bytes are held still here.
+  const committed = readFileSync(erLibrary.OUT_PATH, "utf8");
+  assert.equal(erLibrary.buildLibrary(committed), committed, "run: node scripts/build-er-library.mjs");
+  for (const [name, text] of Object.entries(kanagawaLibrary.buildLibraries())) {
+    assert.equal(
+      text,
+      readFileSync(join(kanagawaLibrary.OUT_DIR, name), "utf8"),
+      `${name}: run node scripts/build-kanagawa-erd-library.mjs`,
+    );
+  }
 });
 
 check("every bundled library is one Excalidraw 0.18.1 can insert", () => {

@@ -1,17 +1,67 @@
 // Generates resources/libraries/entity-relationship.excalidrawlib
 // Run with: node scripts/build-er-library.mjs
-import { writeFileSync, mkdirSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+//
+// A rebuild with no change to the shapes writes the same bytes, and
+// scripts/check.mjs fails if it does not. That matters beyond tidiness:
+// Excalidraw tells library items apart by their elements' `id` and
+// `versionNonce`, so a shape that came out with new ones would be added a
+// second time to the library of everyone who already has it.
+//
+// The ids the committed file carries were random when it was first written.
+// They are kept by reading that file back: a shape that still has the same
+// name and the same elements, in the same order, takes its ids, seeds and
+// timestamps from it. Only a new or reshaped item gets fresh ones, and those
+// come from a seeded generator, so they too are the same on every run.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const OUT_PATH = join(__dirname, "..", "resources", "libraries", "entity-relationship.excalidrawlib");
+export const OUT_PATH = join(__dirname, "..", "resources", "libraries", "entity-relationship.excalidrawlib");
 
-const now = Date.now();
-const rndInt = () => Math.floor(Math.random() * 2 ** 31);
+// When the library was first generated. A fixed moment, not the time of the
+// run, which would change every file on every rebuild.
+const now = 1788808532723;
+
+// mulberry32: small, and the same sequence on every machine.
+let state = 0x45522d31;
+function random() {
+  state = (state + 0x6d2b79f5) | 0;
+  let t = Math.imul(state ^ (state >>> 15), 1 | state);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+const rndInt = () => Math.floor(random() * 2 ** 31);
 function cryptoId() {
-  return randomBytes(12).toString("hex");
+  let id = "";
+  while (id.length < 24) id += Math.floor(random() * 16).toString(16);
+  return id;
+}
+
+/**
+ * `item` with the identity `previous` gave the same shape, if it did: the
+ * same name over the same sequence of element types.
+ */
+function withIdentityOf(item, previous) {
+  const was = previous.find((p) => p.name === item.name);
+  const same =
+    was &&
+    was.elements.length === item.elements.length &&
+    was.elements.every((el, i) => el.type === item.elements[i].type);
+  if (!same) return item;
+  return {
+    ...item,
+    id: was.id,
+    created: was.created,
+    elements: item.elements.map((el, i) => ({
+      ...el,
+      id: was.elements[i].id,
+      seed: was.elements[i].seed,
+      versionNonce: was.elements[i].versionNonce,
+      updated: was.elements[i].updated,
+      groupIds: was.elements[i].groupIds,
+    })),
+  };
 }
 
 const STROKE = "#1e1e1e";
@@ -265,13 +315,20 @@ for (const [name, startArrowhead, endArrowhead, strokeStyle] of crowfoot) {
   items.push(libItem(name, els));
 }
 
-const lib = {
-  type: "excalidrawlib",
-  version: 2,
-  source: "https://github.com/rafael0rueda/excalidraw_desktop",
-  libraryItems: items,
-};
+/** The library file's text, given the text of the one it replaces (or null). */
+export function buildLibrary(previousText) {
+  const previous = previousText ? JSON.parse(previousText).libraryItems : [];
+  const lib = {
+    type: "excalidrawlib",
+    version: 2,
+    source: "https://github.com/rafael0rueda/excalidraw_desktop",
+    libraryItems: items.map((item) => withIdentityOf(item, previous)),
+  };
+  return JSON.stringify(lib, null, 2) + "\n";
+}
 
-mkdirSync(dirname(OUT_PATH), { recursive: true });
-writeFileSync(OUT_PATH, JSON.stringify(lib, null, 2) + "\n");
-console.log(`Wrote ${items.length} library items to ${OUT_PATH}`);
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  mkdirSync(dirname(OUT_PATH), { recursive: true });
+  writeFileSync(OUT_PATH, buildLibrary(existsSync(OUT_PATH) ? readFileSync(OUT_PATH, "utf8") : null));
+  console.log(`Wrote ${items.length} library items to ${OUT_PATH}`);
+}

@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const OUT_DIR = join(__dirname, "..", "resources", "libraries");
+export const OUT_DIR = join(__dirname, "..", "resources", "libraries");
 
 const code = readFileSync(join(__dirname, "kanagawa-erd-library.js"), "utf8");
 const context = {};
@@ -32,10 +32,20 @@ vm.createContext(context);
 vm.runInContext(`${code}\n;this.KanagawaERD = KanagawaERD;`, context);
 const K = context.KanagawaERD;
 
-mkdirSync(OUT_DIR, { recursive: true });
-for (const key of Object.keys(K.THEMES)) {
-  const lib = { ...K.toLibrary(key), source: "https://github.com/rafael0rueda/excalidraw_desktop" };
-  const file = join(OUT_DIR, `kanagawa-erd-${key}.excalidrawlib`);
-  writeFileSync(file, JSON.stringify(lib) + "\n");
-  console.log(`Wrote ${lib.libraryItems.length} library items to ${file}`);
+/** File name → text, for each of the three colourways. */
+export function buildLibraries() {
+  const files = {};
+  for (const key of Object.keys(K.THEMES)) {
+    const lib = { ...K.toLibrary(key), source: "https://github.com/rafael0rueda/excalidraw_desktop" };
+    files[`kanagawa-erd-${key}.excalidrawlib`] = JSON.stringify(lib) + "\n";
+  }
+  return files;
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  mkdirSync(OUT_DIR, { recursive: true });
+  for (const [name, text] of Object.entries(buildLibraries())) {
+    writeFileSync(join(OUT_DIR, name), text);
+    console.log(`Wrote ${JSON.parse(text).libraryItems.length} library items to ${join(OUT_DIR, name)}`);
+  }
 }
