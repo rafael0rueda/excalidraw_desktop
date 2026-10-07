@@ -299,15 +299,13 @@ carries the theme's canvas colour — so startup, restore and autosave all ran.
 
 ## Where things stand
 
-**0.5.3 is the last version built and installed.** Everything from review
-2026-10-07 — seven phases, `docs/reviews/2026-10-07.md` — is on `main` and has
-passed the gate, and **none of it has been seen in a running window.**
+**0.5.4 is built, installed and tagged (`v0.5.4`).** It carries everything from
+review 2026-10-07 — seven phases, `docs/reviews/2026-10-07.md`. Rafa checked
+phases 0 to 5 by hand on the installed RPM the same day and reported each one
+"Ok".
 
-Next, in order:
-1. Run through the "To check by hand" lists in `docs/reviews/2026-10-07.md`,
-   one per phase.
-2. `npm run bump -- 0.5.4`, `npm run bundle`, install the RPM, commit, and
-   `git tag v0.5.4`. There are no tags before that one.
+Nothing is queued. A release from here is `npm run bump -- <version>`,
+`npm run bundle`, install the RPM, commit, and tag.
 
 What a human has actually seen, and on which version:
 
@@ -323,6 +321,7 @@ What a human has actually seen, and on which version:
 | Two fast Ctrl+Shift+S raise one dialog | 0.5.1 |
 | Embedded web content is refused; its link opens in the browser | 0.5.2 |
 | The Kanagawa ERD shapes insert and their connectors behave as arrows | 0.5.2 |
+| The by-hand lists of review 2026-10-07, phases 0 to 5 (one "Ok" per phase) | 0.5.4 |
 
 Open, and not ours to fix: `npm audit --omit=dev` reports high advisories in
 two of Excalidraw 0.18.1's own dependencies — `katex` 0.16 (through the
@@ -343,7 +342,6 @@ Never checked by hand:
 - The header-bar buttons of native dialogs (the 0.4.6 fix was never recorded
   as seen).
 - The `.deb`, which has never been installed anywhere.
-- PNG export at 2× and 3× — until 2026-10-07 the scale had no effect at all.
 
 ## Packaging (phase 8, built)
 
