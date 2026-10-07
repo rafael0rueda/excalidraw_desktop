@@ -57,6 +57,7 @@ export default function ThemeEditor({ theme, onClose }: ThemeEditorProps) {
   // means the one render that follows `apply()` always disarms it, whether or
   // not it actually changed anything.
   const adopt = useRef(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberate, see above; the flag stops the loop
   useEffect(() => {
     if (!adopt.current) return;
     adopt.current = false;
