@@ -26,7 +26,9 @@ pub struct MenuColors {
 /// user wrote, but a value from a file should not be able to write CSS rules.
 fn css_color(value: &str) -> Result<&str, String> {
     let hex = value.strip_prefix('#').is_some_and(|rest| {
-        matches!(rest.len(), 3 | 4 | 6 | 8) && rest.chars().all(|c| c.is_ascii_hexdigit())
+        // `#rgb` or `#rrggbb`, the same two forms `isColorValue` accepts in
+        // the renderer. A theme either paints everywhere or is refused.
+        matches!(rest.len(), 3 | 6) && rest.chars().all(|c| c.is_ascii_hexdigit())
     });
     if hex || value == "transparent" {
         Ok(value)
@@ -241,13 +243,15 @@ mod tests {
 
     #[test]
     fn only_colours_reach_the_stylesheet() {
-        for good in ["#fff", "#1F1F28", "#1f1f28ff", "transparent"] {
+        for good in ["#fff", "#1F1F28", "transparent"] {
             assert!(css_color(good).is_ok(), "{good:?} should be accepted");
         }
         for bad in [
             "",
             "red",
             "#12345",
+            // CSS, but not a form the renderer's own check lets a theme hold.
+            "#1f1f28ff",
             "#nothex",
             "#fff; } * { background-image: url(x)",
         ] {

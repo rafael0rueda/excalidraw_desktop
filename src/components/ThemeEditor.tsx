@@ -103,11 +103,18 @@ export default function ThemeEditor({ theme, onClose }: ThemeEditorProps) {
 
   /** Saving also puts the theme on screen for good, in whichever slot applies. */
   const commit = useCallback(
-    async (next: Theme) => {
+    async (draft: Theme) => {
+      // A theme saved with no name was written and then refused the next time
+      // the themes were read, so it vanished on the following launch.
+      const next = { ...draft, name: draft.name.trim() };
+      if (!next.name) {
+        await message("Give the theme a name first.", { title: "Cannot save theme", kind: "error" });
+        return;
+      }
       const invalid = invalidKeys(next);
       if (invalid.length) {
         const named = invalid.map((key) => FIELDS.find((f) => f.key === key)?.label ?? key);
-        await message(`Not a colour: ${named.join(", ")}.\n\nUse a hex value like #1f1f28.`, {
+        await message(`Not a colour: ${named.join(", ")}.\n\nUse a hex value like #1f1f28, # included.`, {
           title: "Cannot save theme",
           kind: "error",
         });
@@ -310,7 +317,7 @@ export default function ThemeEditor({ theme, onClose }: ThemeEditorProps) {
                   </span>
                   <input
                     type="text"
-                    className={`hex${isColorValue(value) ? "" : " invalid"}`}
+                    className={`hex${isColorValue(key, value) ? "" : " invalid"}`}
                     value={value}
                     spellCheck={false}
                     onChange={(e) => setColor(key, e.target.value.trim())}
@@ -320,7 +327,8 @@ export default function ThemeEditor({ theme, onClose }: ThemeEditorProps) {
             })}
           </div>
           <p className="hint">
-            <code>transparent</code> is accepted for Fill.
+            Hex values, <code>#</code> included. <code>transparent</code> is accepted for Fill
+            only.
           </p>
         </section>
 

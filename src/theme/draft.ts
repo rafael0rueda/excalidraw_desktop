@@ -1,13 +1,7 @@
 /** Pure helpers behind the theme editor, kept out of the component so they can be tested. */
-import { isHex } from "./color";
-import { THEME_COLOR_KEYS, type Theme } from "./types";
+import { THEME_COLOR_KEYS, isColorValue, type Theme, type ThemeColors } from "./types";
 
-/** The one non-colour value a field may hold, and only `fill` really wants it. */
-export const TRANSPARENT = "transparent";
-
-export function isColorValue(value: string): boolean {
-  return isHex(value) || value === TRANSPARENT;
-}
+export { TRANSPARENT, isColorValue } from "./types";
 
 /** Turns a display name into an id the backend will accept. */
 export function slugify(name: string): string {
@@ -36,12 +30,12 @@ export function uniqueId(base: string, taken: Set<string>): string {
 export function paintable(draft: Theme, fallback: Theme): Theme {
   const colors = { ...draft.colors };
   for (const key of THEME_COLOR_KEYS) {
-    if (!isColorValue(colors[key])) colors[key] = fallback.colors[key];
+    if (!isColorValue(key, colors[key])) colors[key] = fallback.colors[key];
   }
   return { ...draft, colors };
 }
 
 /** Colour fields the user has left in a state we cannot save. */
-export function invalidKeys(theme: Theme): string[] {
-  return THEME_COLOR_KEYS.filter((key) => !isColorValue(theme.colors[key]));
+export function invalidKeys(theme: Theme): (keyof ThemeColors)[] {
+  return THEME_COLOR_KEYS.filter((key) => !isColorValue(key, theme.colors[key]));
 }

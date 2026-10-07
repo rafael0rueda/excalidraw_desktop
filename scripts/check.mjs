@@ -62,6 +62,27 @@ check("parseTheme reports what is missing rather than throwing", () => {
   assert.deepEqual(t.parseTheme(partial), { error: 'x: missing "colors.surface"' });
 });
 
+check("a theme colour is #rgb or #rrggbb, and transparent only as the fill", () => {
+  for (const good of ["#fff", "#1F1F28", "#1f1f28"]) assert.equal(t.isColorValue("surface", good), true, good);
+  // `1f1f28` was accepted once and written into a CSS variable as it stood;
+  // `#1f1f28ff` is CSS, but the backend and the editor disagreed about it.
+  for (const bad of ["1f1f28", "#1f1f28ff", "#12", "red", "", "transparent"]) {
+    assert.equal(t.isColorValue("surface", bad), false, bad);
+  }
+  assert.equal(t.isColorValue("fill", "transparent"), true);
+
+  const theme = JSON.parse(JSON.stringify(t.PRESET_THEMES[0]));
+  const withColor = (key, value) => t.parseTheme({ ...theme, colors: { ...theme.colors, [key]: value } });
+  assert.match(withColor("surface", "2A2A37").error, /"colors\.surface" is not a colour/);
+  assert.match(withColor("accent", "transparent").error, /"colors\.accent" is not a colour/);
+  assert.match(withColor("fill", "red").error, /or "transparent"/);
+
+  // The id becomes a file name, so it is held to what the backend accepts.
+  assert.match(t.parseTheme({ ...theme, id: "My Theme" }).error, /"id" may only use/);
+  assert.match(t.parseTheme({ ...theme, id: "../escape" }).error, /"id" may only use/);
+  assert.match(t.parseTheme({ ...theme, name: "   " }).error, /missing "name"/);
+});
+
 check("cssVariables emits well-formed declarations for every preset", () => {
   for (const preset of t.PRESET_THEMES) {
     const vars = t.cssVariables(preset);
@@ -301,6 +322,14 @@ check("the canvas is a tab's only once that tab's scene has been committed", () 
   canvas = t.canvasChanged(canvas);
   assert.equal(t.canvasHolds(canvas, "b"), true);
   assert.equal(t.canvasChanged(canvas), canvas, "later changes leave it alone");
+});
+
+check("a canvas reset is told apart from a theme that is simply white", () => {
+  assert.equal(t.canvasWasReset("#ffffff", "#1f1f28"), true, "Reset the canvas on a dark theme");
+  assert.equal(t.canvasWasReset("#FFFFFF", "#1f1f28"), true);
+  assert.equal(t.canvasWasReset("#1f1f28", "#1f1f28"), false);
+  assert.equal(t.canvasWasReset("#ffffff", "#ffffff"), false, "nothing to put back");
+  assert.equal(t.canvasWasReset("#fdf6e3", "#1f1f28"), false, "a colour picked by hand is left alone");
 });
 
 check("a save keeps what was drawn while it was being written", () => {

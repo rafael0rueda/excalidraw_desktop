@@ -1,3 +1,5 @@
+import { isHex } from "./color";
+
 /**
  * A theme is deliberately small and hand-authorable: ten colours the user can
  * reason about, expanded into Excalidraw's ~30 CSS custom properties by
@@ -49,6 +51,22 @@ export const THEME_COLOR_KEYS: (keyof ThemeColors)[] = [
   "fill",
 ];
 
+/** The one non-colour value a field may hold, and only `fill` may hold it. */
+export const TRANSPARENT = "transparent";
+
+/**
+ * The one grammar for a theme colour: `#rgb` or `#rrggbb`, and `transparent`
+ * for the fill. The editor, the loader and the backend's `css_color` used to
+ * disagree, so a value one of them accepted painted the page and left the
+ * menu bar behind, or the other way round.
+ */
+export function isColorValue(key: keyof ThemeColors, value: string): boolean {
+  return isHex(value) || (key === "fill" && value === TRANSPARENT);
+}
+
+/** What the backend's `safe_id` accepts: the id is also the theme's file name. */
+const THEME_ID = /^[a-z0-9-]{1,64}$/;
+
 /** Follow the desktop's light/dark preference instead of pinning one theme. */
 export const SYSTEM_THEME = "system";
 
@@ -62,7 +80,10 @@ export function parseTheme(value: unknown): { theme: Theme } | { error: string }
   const raw = value as Record<string, unknown>;
 
   if (typeof raw.id !== "string" || !raw.id) return { error: "missing \"id\"" };
-  if (typeof raw.name !== "string" || !raw.name) return { error: `${raw.id}: missing "name"` };
+  if (!THEME_ID.test(raw.id)) {
+    return { error: `${raw.id}: "id" may only use lower-case letters, digits and dashes` };
+  }
+  if (typeof raw.name !== "string" || !raw.name.trim()) return { error: `${raw.id}: missing "name"` };
 
   const colors = raw.colors;
   if (typeof colors !== "object" || colors === null) return { error: `${raw.id}: missing "colors"` };
@@ -71,6 +92,10 @@ export function parseTheme(value: unknown): { theme: Theme } | { error: string }
   for (const key of THEME_COLOR_KEYS) {
     const colour = (colors as Record<string, unknown>)[key];
     if (typeof colour !== "string" || !colour) return { error: `${raw.id}: missing "colors.${key}"` };
+    if (!isColorValue(key, colour)) {
+      const also = key === "fill" ? `, or "${TRANSPARENT}"` : "";
+      return { error: `${raw.id}: "colors.${key}" is not a colour — use #rgb or #rrggbb${also}` };
+    }
     out[key] = colour;
   }
 

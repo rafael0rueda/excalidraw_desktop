@@ -61,6 +61,9 @@ pub fn themes_dir_path() -> String {
 /// no way to reach the renderer's own error reporting.
 #[derive(Serialize)]
 pub struct ThemeFile {
+    /// The file's name without its extension. Themes are saved and deleted as
+    /// `<id>.json`, so the renderer refuses one whose id says otherwise.
+    pub name: String,
     pub value: Option<serde_json::Value>,
     pub error: Option<String>,
 }
@@ -84,15 +87,18 @@ fn list_theme_files_at(dir: &std::path::Path) -> Vec<ThemeFile> {
         .iter()
         .map(|p| {
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("<unknown>");
+            let stem = p.file_stem().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
             let result = std::fs::read_to_string(p)
                 .map_err(|e| e.to_string())
                 .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()));
             match result {
                 Ok(value) => ThemeFile {
+                    name: stem,
                     value: Some(value),
                     error: None,
                 },
                 Err(e) => ThemeFile {
+                    name: stem,
                     value: None,
                     error: Some(format!("{name}: {e}")),
                 },
@@ -344,11 +350,13 @@ mod tests {
             .find(|f| f.error.is_none())
             .expect("the valid file still parses");
         assert_eq!(good.value.as_ref().unwrap()["id"], "good");
+        assert_eq!(good.name, "good", "the renderer holds the theme's id to this");
 
         let broken = files
             .iter()
             .find(|f| f.value.is_none())
             .expect("the broken file is reported, not dropped");
         assert!(broken.error.as_ref().unwrap().starts_with("broken.json: "));
+        assert_eq!(broken.name, "broken");
     }
 }

@@ -77,8 +77,13 @@ async function readUserThemes(): Promise<{ themes: Theme[]; errors: string[] }> 
       continue;
     }
     const parsed = parseTheme(file.value);
-    if ("theme" in parsed) themes.push(parsed.theme);
-    else errors.push(parsed.error);
+    if ("error" in parsed) errors.push(parsed.error);
+    // Saving and deleting a theme go by `<id>.json`. A file called anything
+    // else could be loaded and edited, but Save then wrote a second file and
+    // Delete removed nothing, so the theme came back on the next launch.
+    else if (parsed.theme.id !== file.name) {
+      errors.push(`${file.name}.json: its "id" is "${parsed.theme.id}", so it has to be named ${parsed.theme.id}.json`);
+    } else themes.push(parsed.theme);
   }
   return { themes, errors };
 }

@@ -3,7 +3,9 @@
 type RGB = [number, number, number];
 
 function parse(hex: string): RGB | null {
-  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  // The `#` is required. Without one the value is not CSS, and it used to be
+  // accepted here and then written into a custom property as it stood.
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
   if (!m) return null;
   let body = m[1];
   if (body.length === 3) body = body.split("").map((c) => c + c).join("");

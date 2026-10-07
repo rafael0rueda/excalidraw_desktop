@@ -99,6 +99,8 @@ export const themesDirPath = () => invoke<string>("themes_dir_path");
  * schema of `value` itself.
  */
 export interface ThemeFile {
+  /** The file's name without `.json`, which is the id its theme has to carry. */
+  name: string;
   value: unknown | null;
   error: string | null;
 }
