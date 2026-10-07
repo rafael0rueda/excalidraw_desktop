@@ -80,6 +80,19 @@ export function canvasHolds(canvas: Canvas, active: string): boolean {
   return canvas.committed && canvas.tab === active;
 }
 
+/** The canvas colour Excalidraw's own "Reset the canvas" leaves behind. */
+const FACTORY_CANVAS = "#ffffff";
+
+/**
+ * Whether the canvas has dropped back to Excalidraw's own defaults under a
+ * theme that does not use them. "Reset the canvas" replaces the whole
+ * appState, and on a dark theme that is a white canvas with near-black strokes
+ * until something re-applies the theme.
+ */
+export function canvasWasReset(shown: string, themed: string): boolean {
+  return shown.toLowerCase() === FACTORY_CANVAS && themed.toLowerCase() !== FACTORY_CANVAS;
+}
+
 // ------------------------------------------------------------------ capture
 
 /**

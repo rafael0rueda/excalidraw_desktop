@@ -258,7 +258,9 @@ export default function App() {
               saveToActiveFile: false,
               export: false,
               saveAsImage: false,
-              toggleTheme: true,
+              // Excalidraw's own dark mode inverts the canvas, which is the
+              // one thing every theme here is built to avoid.
+              toggleTheme: false,
               clearCanvas: true,
               changeViewBackgroundColor: true,
             },

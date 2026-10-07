@@ -24,6 +24,7 @@ import {
   canvasChanged,
   canvasHanded,
   canvasHolds,
+  canvasWasReset,
   captureMark,
   nextRev,
   nextWritten,
@@ -91,6 +92,34 @@ export interface ThemedDefaults {
   currentItemBackgroundColor: string;
 }
 
+/**
+ * Editor state that is the user's rather than any one drawing's. None of it is
+ * in a `.excalidraw` file, so a parsed scene carries Excalidraw's defaults for
+ * all of it, and applying those on every tab switch put the stroke width, the
+ * font and the open sidebar back to where a fresh install has them.
+ */
+const CARRIED = [
+  "currentItemStrokeWidth",
+  "currentItemStrokeStyle",
+  "currentItemRoughness",
+  "currentItemOpacity",
+  "currentItemFillStyle",
+  "currentItemFontFamily",
+  "currentItemFontSize",
+  "currentItemTextAlign",
+  "currentItemStartArrowhead",
+  "currentItemEndArrowhead",
+  "currentItemRoundness",
+  "currentItemArrowType",
+  "openSidebar",
+  "zenModeEnabled",
+  "viewModeEnabled",
+  "objectsSnapModeEnabled",
+] as const satisfies readonly (keyof AppState)[];
+
+/** Excalidraw's own stroke colour: on screen only when nobody has chosen one. */
+const FACTORY_STROKE = "#1e1e1e";
+
 export interface DocumentActions {
   newTab: () => Promise<void>;
   openDrawing: (path?: string) => Promise<void>;
@@ -149,6 +178,8 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
    */
   const canvas = useRef<Canvas>({ tab: initial.id, committed: true });
   const onCanvas = useCallback(() => canvasHolds(canvas.current, activeRef.current), []);
+  /** Whether a scene has been put on screen yet this run; see `applyScene`. */
+  const applied = useRef(false);
   /**
    * Counts scene replacements. A `show()` that finds this moved when its parse
    * returns has been overtaken and must not apply what it parsed.
@@ -230,11 +261,34 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
             zoom: { value: opts.view.zoom } as AppState["zoom"],
           }
         : {};
+      const themed = themedRef.current;
+      const live = api.getAppState();
+      // Nothing to carry into the first scene of the run: all there is yet is
+      // what Excalidraw started with.
+      const first = !applied.current;
+      applied.current = true;
+      const kept = first
+        ? {}
+        : (Object.fromEntries(CARRIED.map((key) => [key, live[key]])) as Pick<
+            AppState,
+            (typeof CARRIED)[number]
+          >);
+      // A colour picked by hand stays picked. One still on Excalidraw's
+      // default was picked by nobody and would be invisible on a dark canvas.
+      const stroke = live.currentItemStrokeColor;
+      const colours: ThemedDefaults = first
+        ? themed
+        : {
+            viewBackgroundColor: themed.viewBackgroundColor,
+            currentItemStrokeColor:
+              stroke.toLowerCase() === FACTORY_STROKE ? themed.currentItemStrokeColor : stroke,
+            currentItemBackgroundColor: live.currentItemBackgroundColor,
+          };
       turn.current += 1;
       canvas.current = canvasHanded(id);
       api.updateScene({
         elements: scene.elements,
-        appState: { ...scene.appState, ...view, ...themedRef.current },
+        appState: { ...scene.appState, ...view, ...kept, ...colours },
         // Scene initialisation, not an edit: putting it on the undo stack would
         // let Ctrl+Z rewind past the drawing that is now on screen.
         captureUpdate: CaptureUpdateAction.NEVER,
@@ -658,6 +712,12 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     // to pass for that commit, with the outgoing drawing still on screen.
     canvas.current = canvasChanged(canvas.current);
     if (!onCanvas()) return;
+    // "Reset the canvas" hands back Excalidraw's own appState. The update below
+    // comes round here again, by which time the colours match and it is skipped.
+    const themed = themedRef.current;
+    if (canvasWasReset(api.getAppState().viewBackgroundColor, themed.viewBackgroundColor)) {
+      api.updateScene({ appState: { ...themed }, captureUpdate: CaptureUpdateAction.NEVER });
+    }
     const dirty = sceneVersion(api.getSceneElements()) !== savedVersion.current;
     setTabs((prev) =>
       prev.some((tab) => tab.id === activeRef.current && tab.dirty !== dirty)
