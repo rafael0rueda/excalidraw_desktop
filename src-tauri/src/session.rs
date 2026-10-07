@@ -111,9 +111,47 @@ fn meta_path() -> PathBuf {
     session_dir().join("meta.json")
 }
 
-fn read_meta() -> Option<SessionMeta> {
-    let text = std::fs::read_to_string(meta_path()).ok()?;
-    serde_json::from_str(&text).ok()
+/// `Ok(None)` is a session that was never written. A file that is there and
+/// cannot be read or parsed is an error, and callers must not take it for the
+/// same thing: the snapshots beside it are then all that is left of the list
+/// of what was open.
+fn read_meta() -> Result<Option<SessionMeta>, String> {
+    let text = match std::fs::read_to_string(meta_path()) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", meta_path().display())),
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|e| format!("{}: {e}", meta_path().display()))
+}
+
+/// The session to assume when `meta.json` is missing or unreadable while
+/// snapshots are still there: every one of them an untitled drawing with
+/// unsaved changes, after an unclean exit. That is the reading under which
+/// nothing is thrown away without the user being asked — reporting "no
+/// session" instead had the next snapshot prune them all.
+fn orphaned_meta() -> SessionMeta {
+    let mut ids: Vec<String> = snapshot_files()
+        .iter()
+        .filter(|path| **path != legacy_scene_path())
+        .filter_map(|path| path.file_stem()?.to_str().map(str::to_owned))
+        .filter(|id| safe_id(id).is_ok())
+        .collect();
+    ids.sort();
+    SessionMeta {
+        tabs: ids
+            .into_iter()
+            .map(|id| TabMeta {
+                id,
+                path: None,
+                dirty: true,
+            })
+            .collect(),
+        // For a pre-tabs `scene.excalidraw`, which `load` adopts on its own.
+        dirty: true,
+        ..Default::default()
+    }
 }
 
 fn write_meta(meta: &SessionMeta) -> Result<(), String> {
@@ -166,7 +204,9 @@ fn save(allowed: &Allowed, tabs: Vec<TabInput>, active: Option<String>) -> Resul
             write_atomic(&scene_path(&tab.id), scene.as_bytes())?;
         }
     }
-    prune(&tabs);
+    // The list before the prune: a crash between the two then leaves a
+    // snapshot nothing names, which the next save removes, rather than a list
+    // naming snapshots that are gone.
     write_meta(&SessionMeta {
         tabs: tabs
             .iter()
@@ -182,7 +222,9 @@ fn save(allowed: &Allowed, tabs: Vec<TabInput>, active: Option<String>) -> Resul
         saved_at: now(),
         clean_exit: false,
         ..Default::default()
-    })
+    })?;
+    prune(&tabs);
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -192,7 +234,10 @@ pub fn load_session(allowed: State<'_, Allowed>) -> Option<Session> {
 
 fn load(allowed: &Allowed) -> Option<Session> {
     let _session = session_lock();
-    let meta = read_meta()?;
+    let meta = match read_meta() {
+        Ok(Some(meta)) => meta,
+        Ok(None) | Err(_) => orphaned_meta(),
+    };
 
     let mut tabs: Vec<SessionTab> = meta
         .tabs
@@ -244,7 +289,9 @@ fn load(allowed: &Allowed) -> Option<Session> {
 #[tauri::command(async)]
 pub fn mark_clean_exit() -> Result<(), String> {
     let _session = session_lock();
-    let Some(mut meta) = read_meta() else {
+    // Nothing to mark, or nothing readable to mark: an unreadable file is
+    // left for the next launch to recover from, not replaced.
+    let Ok(Some(mut meta)) = read_meta() else {
         return Ok(());
     };
     meta.clean_exit = true;
@@ -392,6 +439,36 @@ mod tests {
         let s = load(&allowed).unwrap();
         assert_eq!(s.tabs.len(), 1);
         assert!(!s.clean_exit, "a fresh snapshot reopens the recovery window");
+
+        // --- a list that cannot be read costs the drawings their names, not
+        // their contents: they come back as unsaved work to be asked about
+        save(
+            &allowed,
+            vec![
+                tab("aaa", Some("/tmp/a.excalidraw"), Some("{\"scene\":1}")),
+                tab("bbb", None, Some("{\"scene\":2}")),
+            ],
+            Some("bbb".into()),
+        )
+        .unwrap();
+        mark_clean_exit().unwrap();
+        for broken in [&b"{ not json"[..], br#"{"tabs":[{"id":"aaa","path":null}]}"#] {
+            std::fs::write(meta_path(), broken).unwrap();
+            assert!(read_meta().is_err());
+            let s = load(&allowed).expect("the snapshots are still a session");
+            assert_eq!(s.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["aaa", "bbb"]);
+            assert!(s.tabs.iter().all(|t| t.dirty && t.path.is_none()));
+            assert_eq!(s.tabs[1].scene, "{\"scene\":2}");
+            assert!(!s.clean_exit, "so that recovery is offered");
+            // Quitting without touching anything must not paper over it.
+            mark_clean_exit().unwrap();
+            assert!(read_meta().is_err(), "an unreadable list is not rewritten as a clean exit");
+        }
+        // The same when the list is gone altogether.
+        std::fs::remove_file(meta_path()).unwrap();
+        assert!(matches!(read_meta(), Ok(None)));
+        assert_eq!(load(&allowed).expect("still a session").tabs.len(), 2);
+        save(&allowed, vec![tab("bbb", None, None)], Some("bbb".into())).unwrap();
 
         // --- an id that would escape the directory is refused outright
         assert!(save(&allowed, vec![tab("../escape", None, Some("x"))], None).is_err());
