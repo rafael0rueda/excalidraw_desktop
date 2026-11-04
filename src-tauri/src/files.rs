@@ -36,7 +36,7 @@ const MAX_TEXT_BYTES: u64 = 256 * 1024 * 1024;
 /// `read_to_string` on a FIFO or a character device blocks the thread it runs
 /// on for good, with nothing on screen to say why. `cli_drawings` already
 /// refuses those with `is_file`; this is the same check on the other way in.
-fn readable(path: &Path, max: u64) -> Result<(), String> {
+pub(crate) fn readable(path: &Path, max: u64) -> Result<(), String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if !meta.is_file() {
         return Err(format!("{}: not a regular file", path.display()));
@@ -146,6 +146,16 @@ fn resolve_target(path: &Path) -> Result<std::path::PathBuf, String> {
     // the *link's* own directory entry would destroy the symlink and replace
     // it with a plain file, leaving whatever it pointed to untouched.
     if let Ok(real) = std::fs::canonicalize(path) {
+        // Before the probe below: opening a FIFO for writing blocks until
+        // something reads it, so the save would never return (review
+        // 2026-11-04, SEC-4). Nothing but a regular file is a drawing to
+        // replace.
+        if std::fs::metadata(&real).is_ok_and(|meta| !meta.is_file()) {
+            return Err(format!(
+                "{}: not a regular file. Save under another name.",
+                real.display()
+            ));
+        }
         // Renaming over a file needs only its directory to be writable, so a
         // file the user has made read-only was replaced without a word. Every
         // other editor refuses; so does this one.
@@ -250,6 +260,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn saving_over_a_fifo_is_refused_rather_than_blocking() {
+        let dir = scratch_dir("fifo");
+        let fifo = dir.join("pipe.excalidraw");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+        assert!(made.success());
+        // Without the check this blocks forever in `open(O_WRONLY)`.
+        let err = write_atomic(&fifo, b"{}").unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

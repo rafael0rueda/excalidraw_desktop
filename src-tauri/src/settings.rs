@@ -72,6 +72,9 @@ pub struct ThemeFile {
 /// parses; this only reports what stops a file from reaching that point.
 /// Split out from the command so a test can point it at a scratch directory
 /// instead of `config_dir()`'s process-wide `XDG_CONFIG_HOME`.
+/// A theme is ten colours and a name. Anything near this size is not one.
+const MAX_THEME_BYTES: u64 = 1 << 20;
+
 fn list_theme_files_at(dir: &std::path::Path) -> Vec<ThemeFile> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -88,8 +91,10 @@ fn list_theme_files_at(dir: &std::path::Path) -> Vec<ThemeFile> {
         .map(|p| {
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("<unknown>");
             let stem = p.file_stem().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
-            let result = std::fs::read_to_string(p)
-                .map_err(|e| e.to_string())
+            // A FIFO named `x.json` would block every launch, and a link to
+            // `/dev/zero` would be read without end (review 2026-11-04, SEC-3).
+            let result = crate::files::readable(p, MAX_THEME_BYTES)
+                .and_then(|()| std::fs::read_to_string(p).map_err(|e| e.to_string()))
                 .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()));
             match result {
                 Ok(value) => ThemeFile {
@@ -327,6 +332,21 @@ mod tests {
     fn theme_ids_stay_inside_the_themes_directory() {
         assert!(theme_file("solarized-light-2").is_ok());
         assert!(theme_file("../escape").is_err());
+    }
+
+    #[test]
+    fn a_theme_file_that_is_not_a_regular_file_is_reported_without_blocking() {
+        let dir = std::env::temp_dir().join(format!("excalidraw-theme-fifo-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let made = std::process::Command::new("mkfifo").arg(dir.join("pipe.json")).status().unwrap();
+        assert!(made.success());
+        // Without the check this blocks forever in `read_to_string`.
+        let files = list_theme_files_at(&dir);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].value.is_none());
+        assert!(files[0].error.as_deref().unwrap_or_default().contains("not a regular file"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A file that is not valid JSON must still surface as *something* the

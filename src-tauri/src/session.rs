@@ -199,6 +199,18 @@ fn save(allowed: &Allowed, tabs: Vec<TabInput>, active: Option<String>) -> Resul
         safe_id(&tab.id)?;
     }
     ensure_private_dir(&session_dir())?;
+    // A path is checked by resolving its directory, which fails while a USB
+    // drive or sshfs mount is away. Dropping it then turned the tab into an
+    // untitled one for good if the app quit or crashed before the mount came
+    // back (review 2026-11-04, BE-7). A path the last list already recorded
+    // for the same tab was allowed when it was written, so keeping it
+    // widens nothing `load` will allow.
+    let previous = read_meta().ok().flatten();
+    let recorded = |id: &str, path: &str| {
+        previous.as_ref().is_some_and(|meta| {
+            meta.tabs.iter().any(|t| t.id == id && t.path.as_deref() == Some(path))
+        })
+    };
     for tab in &tabs {
         if let Some(scene) = &tab.scene {
             write_atomic(&scene_path(&tab.id), scene.as_bytes())?;
@@ -214,7 +226,7 @@ fn save(allowed: &Allowed, tabs: Vec<TabInput>, active: Option<String>) -> Resul
                 id: t.id.clone(),
                 // `load` allows every path it reads back, so only a path that
                 // is already allowed may be written here.
-                path: t.path.clone().filter(|p| allowed.check(p).is_ok()),
+                path: t.path.clone().filter(|p| allowed.check(p).is_ok() || recorded(&t.id, p)),
                 dirty: t.dirty,
             })
             .collect(),
@@ -477,6 +489,20 @@ mod tests {
         // --- a path nothing allowed is not recorded, so a restart cannot allow it
         save(&allowed, vec![tab("ddd", Some("/etc/passwd"), Some("{}"))], None).unwrap();
         assert_eq!(load(&Allowed::default()).unwrap().tabs[0].path, None);
+
+        // --- a recorded path survives its mount going away, an unrecorded one does not
+        let mount = dir.join("mount");
+        std::fs::create_dir_all(&mount).unwrap();
+        let away = mount.join("usb.excalidraw");
+        let away = away.to_str().unwrap();
+        allowed.allow(Path::new(away)).unwrap();
+        save(&allowed, vec![tab("eee", Some(away), Some("{}"))], None).unwrap();
+        std::fs::remove_dir_all(&mount).unwrap();
+        assert!(allowed.check(away).is_err(), "unreachable, as when unplugged");
+        save(&allowed, vec![tab("eee", Some(away), None)], None).unwrap();
+        assert_eq!(load(&Allowed::default()).unwrap().tabs[0].path.as_deref(), Some(away));
+        save(&allowed, vec![tab("fff", Some(away), Some("{}"))], None).unwrap();
+        assert_eq!(load(&Allowed::default()).unwrap().tabs[0].path, None, "not for another tab");
 
         // --- an unreadable snapshot is moved aside, where pruning cannot reach it
         save(&allowed, vec![tab("bbb", None, Some("not a drawing"))], Some("bbb".into())).unwrap();

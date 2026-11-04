@@ -9,6 +9,7 @@ mod session;
 mod settings;
 mod store;
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, Url};
@@ -90,9 +91,85 @@ fn cli_drawings(args: &[String], cwd: &Path) -> Vec<String> {
         .collect()
 }
 
+/// The argument list as strings, keeping each argument's position.
+///
+/// One that is not valid UTF-8 becomes an empty string, which names no file,
+/// rather than a panic: `std::env::args()` aborts the whole process on such
+/// a name (review 2026-11-04, BE-1).
+fn string_args(args: impl IntoIterator<Item = OsString>) -> Vec<String> {
+    args.into_iter()
+        .map(|arg| arg.into_string().unwrap_or_default())
+        .collect()
+}
+
+/// Starts this program over without any argument that is not valid UTF-8.
+///
+/// A drawing named `caf\xE9.excalidraw` (from an old zip or a FAT stick) is
+/// passed straight through by the desktop entry's `%F`. The single-instance
+/// plugin reads `std::env::args()` itself, which panics on such a name, and
+/// with `panic = "abort"` the app dumped core before a window appeared. The
+/// plugin cannot be changed from here, so the process is replaced by one
+/// whose arguments it can read. Such a name could not reach the renderer
+/// anyway, since paths cross into it as strings. Nothing happens when every
+/// argument is valid, which is every ordinary launch.
+fn reexec_without_non_utf8_args() {
+    use std::os::unix::process::CommandExt;
+    let args: Vec<OsString> = std::env::args_os().collect();
+    if args.iter().all(|arg| arg.to_str().is_some()) {
+        return;
+    }
+    let mut kept = Vec::new();
+    for arg in args.iter().skip(1) {
+        match arg.to_str() {
+            Some(arg) => kept.push(arg),
+            None => eprintln!(
+                "excalidraw-desktop: not opening {}: the name is not valid UTF-8",
+                Path::new(arg).display()
+            ),
+        }
+    }
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            eprintln!("excalidraw-desktop: cannot restart without those arguments: {e}");
+            std::process::exit(1);
+        }
+    };
+    let mut command = std::process::Command::new(&exe);
+    if let Some(arg0) = args.first().and_then(|arg| arg.to_str()) {
+        command.arg0(arg0);
+    }
+    // Only returns if the exec failed.
+    let e = command.args(kept).exec();
+    eprintln!("excalidraw-desktop: cannot restart without those arguments: {e}");
+    std::process::exit(1);
+}
+
+/// Keeps the instance lock's file open, and so the lock held, until exit.
+struct InstanceLock(#[allow(dead_code)] Option<std::fs::File>);
+
+/// Says why this copy is closing. GTK directly rather than the dialog
+/// plugin: this runs in `setup`, on the main thread, before any window or
+/// event loop exists for the plugin to use.
+fn already_running(why: &str) {
+    use gtk::prelude::{DialogExt, GtkWindowExt, WidgetExt};
+    eprintln!("excalidraw-desktop: {why}");
+    let dialog = gtk::MessageDialog::new(
+        None::<&gtk::Window>,
+        gtk::DialogFlags::MODAL,
+        gtk::MessageType::Warning,
+        gtk::ButtonsType::Close,
+        why,
+    );
+    dialog.set_title("Already running");
+    dialog.run();
+    dialog.close();
+    dialog.hide();
+}
+
 /// What this process was asked to open when it started.
 fn startup_drawings() -> Vec<String> {
-    let args: Vec<String> = std::env::args().collect();
+    let args = string_args(std::env::args_os());
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     cli_drawings(&args, &cwd)
 }
@@ -187,6 +264,9 @@ fn show_eventually(app: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before the builder: the single-instance plugin reads the arguments as
+    // soon as it is set up.
+    reexec_without_non_utf8_args();
     tauri::Builder::default()
         // First, as the plugin requires. Without it a double-clicked drawing
         // would start a second app against the same config directory, and the
@@ -227,6 +307,18 @@ pub fn run() {
             // failures, and a config directory we cannot tighten is not a
             // reason to refuse to start.
             let _ = store::ensure_private_dir(&store::config_dir());
+            // Before the sweep below, which is only safe with no other copy
+            // running. The plugin above normally guarantees that; this is for
+            // when it could not (see `store::instance_lock`).
+            match store::instance_lock() {
+                Ok(lock) => {
+                    app.manage(InstanceLock(lock));
+                }
+                Err(why) => {
+                    already_running(&why);
+                    std::process::exit(0);
+                }
+            }
             // Whatever a run that died mid-write left behind. This is the
             // only instance and nothing is writing yet.
             for dir in ["", "session", "themes"] {
@@ -283,6 +375,20 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_that_is_not_utf8_names_no_file_and_keeps_the_rest_in_place() {
+        use std::os::unix::ffi::OsStringExt;
+        let args = vec![
+            OsString::from("excalidraw-desktop"),
+            OsString::from_vec(b"caf\xE9.excalidraw".to_vec()),
+            OsString::from("plan.excalidraw"),
+        ];
+        assert_eq!(
+            string_args(args),
+            vec!["excalidraw-desktop", "", "plan.excalidraw"]
+        );
+    }
 
     #[test]
     fn drawings_are_picked_out_of_an_argument_list() {
