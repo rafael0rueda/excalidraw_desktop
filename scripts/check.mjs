@@ -54,7 +54,11 @@ check("every preset is a valid theme", () => {
 check("preset ids are ids the backend will accept", () => {
   // Mirrors `theme_file` in src-tauri/src/settings.rs, which is what a user
   // theme overriding a preset has to satisfy.
-  for (const { id } of t.PRESET_THEMES) assert.match(id, /^[a-z0-9-]{1,64}$/);
+  for (const { id } of t.PRESET_THEMES) assert.match(id, t.ID_PATTERN);
+  // The Rust side's copy of the rule, which the renderer's must not outgrow.
+  const store = readFileSync("src-tauri/src/store.rs", "utf8");
+  assert.ok(store.includes(`id.len() <= ${t.MAX_ID_LENGTH}`), "safe_id's length limit");
+  assert.ok(store.includes("c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'"), "safe_id's characters");
 });
 
 check("parseTheme reports what is missing rather than throwing", () => {
@@ -111,7 +115,7 @@ check("slugify produces backend-safe ids", () => {
   assert.equal(t.slugify("Kanagawa Wave"), "kanagawa-wave");
   assert.equal(t.slugify("  My Théme!! "), "my-th-me");
   assert.equal(t.slugify("---"), "");
-  assert.match(t.slugify("x".repeat(200)), /^x{64}$/);
+  assert.equal(t.slugify("x".repeat(200)), "x".repeat(t.MAX_ID_LENGTH));
 });
 
 check("uniqueId walks past collisions", () => {
@@ -173,7 +177,7 @@ check("Save writes in place only to a name the backend will write", () => {
 check("tab ids are ids the backend will accept as file names", () => {
   // Mirrors `safe_id` in src-tauri/src/store.rs, which is what a tab id has to
   // satisfy before it names a snapshot.
-  for (let i = 0; i < 5; i++) assert.match(t.newTabId(), /^[a-z0-9-]{1,64}$/);
+  for (let i = 0; i < 5; i++) assert.match(t.newTabId(), t.ID_PATTERN);
   assert.equal(new Set([t.newTabId(), t.newTabId(), t.newTabId()]).size, 3);
 });
 
@@ -229,6 +233,86 @@ check("exporting the selection takes labels and frame contents with it", () => {
   assert.deepEqual(picked([]), []);
   // Excalidraw keeps deselected ids in the map as `false`.
   assert.deepEqual([...t.expandSelection(all, { box: false, elsewhere: true })].sort(), ["elsewhere", "elsewhere-label"]);
+});
+
+check("every command the renderer invokes exists, is registered, and takes the arguments it is sent", () => {
+  // Nothing else would notice a rename: the app cannot be driven headlessly,
+  // so a mismatch first shows as "command not found" in a window (review
+  // 2026-11-04, ST-5). Tauri maps camelCase argument names to snake_case.
+  const api = readFileSync("src/lib/api.ts", "utf8");
+  const snake = (name) => name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+  const sent = new Map();
+  for (const m of api.matchAll(/invoke<[^>]*>\("([a-z_]+)"(?:,\s*(\{[^}]*\}|\w+))?/g)) {
+    const arg = m[2];
+    // A raw body (`invoke(cmd, bytes)`) reaches the command as its request.
+    const args = !arg ? [] : arg.startsWith("{") ? arg.slice(1, -1).split(",").map((a) => a.trim().split(":")[0].trim()).filter(Boolean).map(snake).sort() : null;
+    sent.set(m[1], args);
+  }
+  const rust = new Map();
+  for (const file of readdirSync("src-tauri/src")) {
+    const src = readFileSync(join("src-tauri/src", file), "utf8");
+    for (const m of src.matchAll(/#\[tauri::command[^\]]*\]\s*(?:pub(?:\([a-z]+\))?\s+)?(?:async\s+)?fn\s+([a-z_]+)(?:<[^>]*>)?\(([^)]*)\)/g)) {
+      const params = m[2].split(/,(?![^<]*>)/).map((p) => p.trim()).filter(Boolean);
+      const injected = /State<|AppHandle|Window\b|WebviewWindow|Request</;
+      rust.set(m[1], {
+        args: params.filter((p) => !injected.test(p)).map((p) => p.split(":")[0].replace(/^mut\s+/, "").trim()).sort(),
+        raw: params.some((p) => /Request</.test(p)),
+      });
+    }
+  }
+  const lib = readFileSync("src-tauri/src/lib.rs", "utf8");
+  const registered = new Set(
+    lib.split("generate_handler![")[1].split("]")[0].split(",").map((n) => n.trim().split("::").pop()).filter(Boolean),
+  );
+  assert.ok(sent.size > 20, "the invoke pattern still finds the calls");
+  for (const [name, args] of sent) {
+    const command = rust.get(name);
+    assert.ok(command, `${name}: no #[tauri::command] by that name`);
+    assert.ok(registered.has(name), `${name}: not in generate_handler!`);
+    if (args === null) assert.ok(command.raw, `${name}: sent a raw body, but takes no Request`);
+    else assert.deepEqual(args, command.args, `${name}: arguments`);
+  }
+  for (const name of registered) assert.ok(sent.has(name), `${name}: registered but never invoked`);
+
+  // The events and the header, which are spelled once on each side.
+  const constant = (src, name) => new RegExp(`${name}(?::\\s*&str)?\\s*=\\s*"([^"]+)"`).exec(src)?.[1];
+  const settings = readFileSync("src-tauri/src/settings.rs", "utf8");
+  const files = readFileSync("src-tauri/src/files.rs", "utf8");
+  assert.equal(constant(api, "OPEN_FILES_EVENT"), constant(lib, "OPEN_FILES_EVENT"));
+  assert.equal(constant(api, "COLOR_SCHEME_EVENT"), constant(settings, "COLOR_SCHEME_EVENT"));
+  assert.ok(api.includes(`"${constant(files, "PATH_HEADER")}"`), "the x-path header");
+});
+
+check("the README's shortcut table is the table the app binds", () => {
+  const readme = readFileSync("README.md", "utf8");
+  const section = readme.split("## Keyboard shortcuts")[1].split("\n## ")[0];
+  const rows = section.split("\n").filter((line) => /^\| `/.test(line));
+  const documented = new Set(rows.flatMap((row) => [...row.split("|")[1].matchAll(/`([^`]+)`/g)].map((m) => m[1])));
+  const bound = new Set([...t.SHORTCUTS.map(t.shortcutLabel), "Ctrl+1", "Ctrl+9"]);
+  assert.deepEqual([...documented].sort(), [...bound].sort());
+});
+
+check("each shortcut is bound once, and each menu action has exactly one accelerator", () => {
+  const keys = t.SHORTCUTS.map((s) => `${s.key}/${s.shift}`);
+  assert.equal(new Set(keys).size, keys.length, "no key bound twice");
+  for (const action of new Set(t.SHORTCUTS.map((s) => s.action))) {
+    assert.equal(t.SHORTCUTS.filter((s) => s.action === action && s.menu).length, 1, action);
+  }
+  assert.equal(t.accelerator("saveAs"), "CmdOrCtrl+Shift+S");
+  assert.equal(t.accelerator("nextTab"), "CmdOrCtrl+PageDown");
+  assert.equal(t.shortcutAction("s", true), "saveAs");
+  assert.equal(t.shortcutAction("PageUp", true), "previousTab", "Shift does not change PageUp");
+  assert.equal(t.shortcutAction("Tab", true), "previousTab");
+  assert.equal(t.shortcutAction("q", false), "quit", "Ctrl+Q is in the listener too");
+  assert.equal(t.shortcutAction("p", true), null, "Ctrl+Shift+P is Excalidraw's");
+});
+
+check("a default colour nobody chose is free for a theme to replace", () => {
+  assert.ok(t.isUnclaimed("#1E1E1E", t.FACTORY.stroke), "Excalidraw's own, in any case");
+  assert.ok(t.isUnclaimed("#DCD7BA", t.FACTORY.stroke, "#DCD7BA"), "still the outgoing theme's");
+  assert.ok(!t.isUnclaimed("#ff0000", t.FACTORY.stroke, "#DCD7BA"), "picked by hand");
+  assert.ok(t.isUnclaimed("transparent", t.FACTORY.fill));
+  assert.ok(!t.isUnclaimed("#ff0000", t.FACTORY.stroke, null));
 });
 
 check("shortcuts follow the layout for letters and the position for digits", () => {

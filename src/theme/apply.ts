@@ -1,6 +1,7 @@
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { setMenuColors, setPreferDarkTheme } from "../lib/api";
+import { FACTORY, isUnclaimed } from "../lib/documentState";
 import type { Theme } from "./types";
 import { cssVariables } from "./variables";
 
@@ -80,15 +81,6 @@ function paintMenuBar(theme: Theme): void {
 }
 
 /**
- * Excalidraw's factory defaults. A current colour still sitting on one of these
- * was not chosen by anybody — it arrives with a reset scene, or inside a file
- * saved from stock Excalidraw — so a theme is free to replace it. Without this,
- * loading a drawing leaves new strokes black on a dark canvas: invisible.
- */
-const FACTORY_STROKE = "#1e1e1e";
-const FACTORY_FILL = "transparent";
-
-/**
  * Paints a theme onto the running Excalidraw instance.
  *
  * `previous` is the theme currently in effect, and exists so a switch does not
@@ -119,10 +111,11 @@ export function applyTheme(
   const state = api.getAppState();
   const stroke = state.currentItemStrokeColor;
   const fill = state.currentItemBackgroundColor;
-  const strokeIsFree =
-    previous === null || stroke === previous.colors.stroke || stroke.toLowerCase() === FACTORY_STROKE;
-  const fillIsFree =
-    previous === null || fill === previous.colors.fill || fill.toLowerCase() === FACTORY_FILL;
+  // Excalidraw's own defaults count as unclaimed too: `currentItemStrokeColor`
+  // is never stored in a file, so a load fills in `#1e1e1e`, which would draw
+  // invisible strokes on a dark canvas.
+  const strokeIsFree = previous === null || isUnclaimed(stroke, FACTORY.stroke, previous.colors.stroke);
+  const fillIsFree = previous === null || isUnclaimed(fill, FACTORY.fill, previous.colors.fill);
 
   // NEVER moves Excalidraw's undo baseline along with the change. Left at the
   // default, the baseline keeps the outgoing canvas colour, so the user's next

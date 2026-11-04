@@ -2,6 +2,7 @@ import type { Resource } from "@tauri-apps/api/core";
 import { message } from "@tauri-apps/plugin-dialog";
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { listRecent, clearRecent, type RecentEntry } from "./api";
+import { accelerator } from "./shortcuts";
 import { tabTitle, type TabMeta } from "./tabs";
 import { SYSTEM_THEME } from "../theme/types";
 import { KANAGAWA_ERD_VARIANTS, type KanagawaErdVariant } from "./library";
@@ -176,7 +177,7 @@ async function themeSubmenu(made: Resource[], theme: ThemeMenu) {
       MenuItem.new({
         id: "theme-edit",
         text: "Customise themes…",
-        accelerator: "CmdOrCtrl+,",
+        accelerator: accelerator("editTheme"),
         action: theme.edit,
       }),
     ),
@@ -220,7 +221,7 @@ async function tabsSubmenu(made: Resource[], tabs: TabsMenu, entries: TabEntry[]
       MenuItem.new({
         id: "tab-next",
         text: "Next Tab",
-        accelerator: "CmdOrCtrl+PageDown",
+        accelerator: accelerator("nextTab"),
         action: tabs.next,
       }),
     ),
@@ -231,7 +232,7 @@ async function tabsSubmenu(made: Resource[], tabs: TabsMenu, entries: TabEntry[]
       MenuItem.new({
         id: "tab-previous",
         text: "Previous Tab",
-        accelerator: "CmdOrCtrl+PageUp",
+        accelerator: accelerator("previousTab"),
         action: tabs.previous,
       }),
     ),
@@ -277,15 +278,15 @@ export async function buildMenu(
       Submenu.new({
         text: "File",
         items: [
-          await keep(made, MenuItem.new({ id: "new", text: "New Tab", accelerator: "CmdOrCtrl+T", action: handlers.newTab })),
-          await keep(made, MenuItem.new({ id: "open", text: "Open…", accelerator: "CmdOrCtrl+O", action: handlers.open })),
+          await keep(made, MenuItem.new({ id: "new", text: "New Tab", accelerator: accelerator("newTab"), action: handlers.newTab })),
+          await keep(made, MenuItem.new({ id: "open", text: "Open…", accelerator: accelerator("open"), action: handlers.open })),
           await recentSubmenu(made, handlers, theme, tabs, exporting, recents),
           await keep(made, PredefinedMenuItem.new({ item: "Separator" })),
-          await keep(made, MenuItem.new({ id: "save", text: "Save", accelerator: "CmdOrCtrl+S", action: handlers.save })),
-          await keep(made, MenuItem.new({ id: "saveas", text: "Save As…", accelerator: "CmdOrCtrl+Shift+S", action: handlers.saveAs })),
+          await keep(made, MenuItem.new({ id: "save", text: "Save", accelerator: accelerator("save"), action: handlers.save })),
+          await keep(made, MenuItem.new({ id: "saveas", text: "Save As…", accelerator: accelerator("saveAs"), action: handlers.saveAs })),
           await keep(made, PredefinedMenuItem.new({ item: "Separator" })),
-          await keep(made, MenuItem.new({ id: "close", text: "Close Tab", accelerator: "CmdOrCtrl+W", action: handlers.closeTab })),
-          await keep(made, MenuItem.new({ id: "quit", text: "Quit", accelerator: "CmdOrCtrl+Q", action: handlers.quit })),
+          await keep(made, MenuItem.new({ id: "close", text: "Close Tab", accelerator: accelerator("closeTab"), action: handlers.closeTab })),
+          await keep(made, MenuItem.new({ id: "quit", text: "Quit", accelerator: accelerator("quit"), action: handlers.quit })),
         ],
       }),
     );
@@ -298,11 +299,11 @@ export async function buildMenu(
       Submenu.new({
         text: "Export",
         items: [
-          await keep(made, MenuItem.new({ id: "png", text: "Export PNG…", accelerator: "CmdOrCtrl+Shift+E", action: handlers.exportPng })),
+          await keep(made, MenuItem.new({ id: "png", text: "Export PNG…", accelerator: accelerator("exportPng"), action: handlers.exportPng })),
           await keep(made, MenuItem.new({ id: "pngsel", text: "Export selection as PNG…", action: handlers.exportPngSelection })),
           await keep(made, MenuItem.new({ id: "svg", text: "Export SVG…", action: handlers.exportSvg })),
           await keep(made, PredefinedMenuItem.new({ item: "Separator" })),
-          await keep(made, MenuItem.new({ id: "copyimg", text: "Copy image to clipboard", accelerator: "CmdOrCtrl+Shift+C", action: handlers.copyImage })),
+          await keep(made, MenuItem.new({ id: "copyimg", text: "Copy image to clipboard", accelerator: accelerator("copyImage"), action: handlers.copyImage })),
           await keep(made, PredefinedMenuItem.new({ item: "Separator" })),
           await keep(
             made,

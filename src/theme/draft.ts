@@ -1,5 +1,5 @@
 /** Pure helpers behind the theme editor, kept out of the component so they can be tested. */
-import { THEME_COLOR_KEYS, isColorValue, type Theme, type ThemeColors } from "./types";
+import { MAX_ID_LENGTH, THEME_COLOR_KEYS, isColorValue, type Theme, type ThemeColors } from "./types";
 
 export { TRANSPARENT, isColorValue } from "./types";
 
@@ -9,7 +9,7 @@ export function slugify(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
+    .slice(0, MAX_ID_LENGTH);
 }
 
 /** `base`, or `base-2`, `base-3`… until it collides with nothing. */

@@ -64,8 +64,14 @@ export function isColorValue(key: keyof ThemeColors, value: string): boolean {
   return isHex(value) || (key === "fill" && value === TRANSPARENT);
 }
 
-/** What the backend's `safe_id` accepts: the id is also the theme's file name. */
-const THEME_ID = /^[a-z0-9-]{1,64}$/;
+/**
+ * The id rule: what `safe_id` in src-tauri/src/store.rs accepts, since theme
+ * and tab ids both become file names. This is the renderer's one copy of it.
+ * `scripts/check.mjs` holds the Rust side to the same length, and checks tab
+ * ids, preset ids and `slugify` against this (review 2026-11-04, ST-6).
+ */
+export const MAX_ID_LENGTH = 64;
+export const ID_PATTERN = new RegExp(`^[a-z0-9-]{1,${MAX_ID_LENGTH}}$`);
 
 /** Follow the desktop's light/dark preference instead of pinning one theme. */
 export const SYSTEM_THEME = "system";
@@ -80,7 +86,7 @@ export function parseTheme(value: unknown): { theme: Theme } | { error: string }
   const raw = value as Record<string, unknown>;
 
   if (typeof raw.id !== "string" || !raw.id) return { error: "missing \"id\"" };
-  if (!THEME_ID.test(raw.id)) {
+  if (!ID_PATTERN.test(raw.id)) {
     return { error: `${raw.id}: "id" may only use lower-case letters, digits and dashes` };
   }
   if (typeof raw.name !== "string" || !raw.name.trim()) return { error: `${raw.id}: missing "name"` };
