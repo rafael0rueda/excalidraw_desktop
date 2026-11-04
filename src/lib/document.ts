@@ -26,6 +26,8 @@ import {
   canvasHolds,
   canvasWasReset,
   captureMark,
+  FACTORY,
+  isUnclaimed,
   nextRev,
   nextWritten,
   recoveredSession,
@@ -116,9 +118,6 @@ const CARRIED = [
   "viewModeEnabled",
   "objectsSnapModeEnabled",
 ] as const satisfies readonly (keyof AppState)[];
-
-/** Excalidraw's own stroke colour: on screen only when nobody has chosen one. */
-const FACTORY_STROKE = "#1e1e1e";
 
 export interface DocumentActions {
   newTab: () => Promise<void>;
@@ -281,7 +280,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         : {
             viewBackgroundColor: themed.viewBackgroundColor,
             currentItemStrokeColor:
-              stroke.toLowerCase() === FACTORY_STROKE ? themed.currentItemStrokeColor : stroke,
+              isUnclaimed(stroke, FACTORY.stroke) ? themed.currentItemStrokeColor : stroke,
             currentItemBackgroundColor: live.currentItemBackgroundColor,
           };
       turn.current += 1;

@@ -102,8 +102,22 @@ export function canvasHolds(canvas: Canvas, active: string): boolean {
   return canvas.committed && canvas.tab === active;
 }
 
-/** The canvas colour Excalidraw's own "Reset the canvas" leaves behind. */
-const FACTORY_CANVAS = "#ffffff";
+/**
+ * Excalidraw 0.18.1's own defaults: the canvas "Reset the canvas" leaves
+ * behind, and the stroke and fill a scene load fills in, since
+ * `currentItemStrokeColor` is never stored in a file. Seeing one means nobody
+ * chose it. One copy, where the gate can see it (review 2026-11-04, ST-7).
+ */
+export const FACTORY = { canvas: "#ffffff", stroke: "#1e1e1e", fill: "transparent" } as const;
+
+/**
+ * Whether a default colour is free for a theme to replace, because nobody
+ * picked it: it is still Excalidraw's factory value, or still `outgoing`, the
+ * theme being replaced's own. A colour the user chose survives.
+ */
+export function isUnclaimed(colour: string, factory: string, outgoing?: string | null): boolean {
+  return colour === outgoing || colour.toLowerCase() === factory;
+}
 
 /**
  * Whether the canvas has dropped back to Excalidraw's own defaults under a
@@ -112,7 +126,7 @@ const FACTORY_CANVAS = "#ffffff";
  * until something re-applies the theme.
  */
 export function canvasWasReset(shown: string, themed: string): boolean {
-  return shown.toLowerCase() === FACTORY_CANVAS && themed.toLowerCase() !== FACTORY_CANVAS;
+  return shown.toLowerCase() === FACTORY.canvas && themed.toLowerCase() !== FACTORY.canvas;
 }
 
 // ------------------------------------------------------------------ capture
