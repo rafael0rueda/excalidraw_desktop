@@ -379,8 +379,11 @@ is optional (zero-or-one, zero-or-many), since Excalidraw has no arrowhead
 for "zero". They are drawn for a canvas in the
 same palette. Wave and Lotus match the **Kanagawa Wave** and **Kanagawa
 Lotus** themes. Dragon expects a `#181616` canvas, which no built-in theme
-has yet. `scripts/kanagawa-erd-library.js` is the design's source, unchanged,
-and `scripts/build-kanagawa-erd-library.mjs` writes the three files from it.
+has yet. `scripts/kanagawa-erd-library.js` is the design's source with one
+deliberate change: the crow's-foot connectors are plain arrows with bound
+labels rather than groups, and optional ends are dashed. `npm run check` fails
+if a revised design drops that change.
+`scripts/build-kanagawa-erd-library.mjs` writes the three files from it.
 
 ## Autosave and recovery
 
@@ -420,6 +423,7 @@ file** — saving stays something you ask for.
 ```
 src/                    Renderer — React 19 + Excalidraw. No filesystem access.
   bootstrap.ts          Points Excalidraw at the bundled fonts before it loads
+  App.tsx               The window: Excalidraw, the tab bar, menu handlers, key listener
   lib/api.ts            Typed wrappers over the Rust command layer
   lib/document.ts       Tabs, open/save, dirty tracking, autosave (useDocument hook)
   lib/documentState.ts  The decisions behind document.ts, as pure functions the gate tests
@@ -432,6 +436,7 @@ src/                    Renderer — React 19 + Excalidraw. No filesystem access
   lib/shortcuts.ts      Which key a Ctrl shortcut means, across keyboard layouts
   lib/menu.ts           Native menu construction
   lib/scene.ts          Excalidraw (de)serialisation helpers
+  lib/selection.ts      Which elements a selection export takes along (bound text, frames)
   lib/tabs.ts           The tab model and its pure helpers
   theme/types.ts        Theme schema and validation
   theme/color.ts        Hex-colour helpers: mixing, hover shades

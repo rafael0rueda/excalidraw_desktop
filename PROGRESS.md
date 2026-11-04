@@ -323,12 +323,14 @@ What a human has actually seen, and on which version:
 | The Kanagawa ERD shapes insert and their connectors behave as arrows | 0.5.2 |
 | The by-hand lists of review 2026-10-07, phases 0 to 5 (one "Ok" per phase) | 0.5.4 |
 
-Open, and not ours to fix: `npm audit --omit=dev` reports high advisories in
-two of Excalidraw 0.18.1's own dependencies — `katex` 0.16 (through the
-Mermaid dialog) and `braces` (through `sass`'s file watcher, which the app
-never runs; no fixed version exists). Clearing `katex` means overriding it
-past what `mermaid` asks for, which needs the Mermaid dialog tried by hand.
-`.github/workflows/audit.yml` runs the audit weekly.
+Open, and not ours to fix: as of 2026-11-04, `npm audit --omit=dev` reports
+four *low* advisories, all one chain: `katex` 0.16 (GHSA-238p-pmpm-9mq7,
+prototype pollution bypassing trust restrictions) through `mermaid` and the
+Mermaid dialog. It matters only if prototype pollution already exists.
+Clearing it means overriding `katex` past what `mermaid` asks for, which needs
+the Mermaid dialog tried by hand. The earlier high advisories (`katex`, and
+`braces` through `sass`) no longer appear. `.github/workflows/audit.yml` runs
+the audit weekly.
 
 Never checked by hand:
 - Double-clicking a `.excalidraw` file in Files, the app's icon on such files,
@@ -515,7 +517,8 @@ what state the project is in.
 | `2026-09-14.md` | Data loss, file access and autosave races; shipped as 0.5.0 |
 | `2026-09-22.md` | C1, B1–B4, H1–H4, T1, I1–I2; shipped as 0.5.1 |
 | `2026-09-29-security.md` | S1–S3: clipboard decoding, capabilities, embeds; shipped as 0.5.2 |
-| `2026-10-07.md` | D, F, V, K, R and T findings in seven phases; on `main`, not yet released |
+| `2026-10-07.md` | D, F, V, K, R and T findings in seven phases; shipped as 0.5.4 |
+| `2026-11-04.md` | 31 scored findings from four reviewers (security, frontend, backend, style); phases 1–7 as PRs |
 
 ## Kanagawa ERD library (2026-09-29)
 
