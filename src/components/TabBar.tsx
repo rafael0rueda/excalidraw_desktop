@@ -1,3 +1,4 @@
+import { menuShortcutLabel } from "../lib/shortcuts";
 import { tabTitle, type TabMeta } from "../lib/tabs";
 import { panelVariables } from "../theme/panel";
 import type { Theme } from "../theme/types";
@@ -47,7 +48,7 @@ export default function TabBar({ tabs, activeId, theme, onSelect, onClose, onNew
             <button
               className="close"
               aria-label={`Close ${tabTitle(tab)}`}
-              title="Close tab (Ctrl+W)"
+              title={`Close tab (${menuShortcutLabel("closeTab")})`}
               onClick={(event) => {
                 // The tab underneath would otherwise select what we just closed.
                 event.stopPropagation();
@@ -59,7 +60,7 @@ export default function TabBar({ tabs, activeId, theme, onSelect, onClose, onNew
           </div>
         ))}
       </div>
-      <button className="new" onClick={onNew} title="New tab (Ctrl+T)" aria-label="New tab">
+      <button className="new" onClick={onNew} title={`New tab (${menuShortcutLabel("newTab")})`} aria-label="New tab">
         +
       </button>
     </div>

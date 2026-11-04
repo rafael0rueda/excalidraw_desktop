@@ -19,7 +19,7 @@ import type { ExportOptions } from "./lib/exports";
 import { useExportPreferences } from "./lib/exportPreferences";
 import { addErShapes, addKanagawaErdShapes, usePersistentLibrary } from "./lib/library";
 import { openLink } from "./lib/links";
-import { shortcutKey } from "./lib/shortcuts";
+import { shortcutAction, shortcutKey, type ShortcutAction } from "./lib/shortcuts";
 
 export default function App() {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
@@ -204,21 +204,22 @@ export default function App() {
         e.stopPropagation();
         fn();
       };
-      // Ctrl+N opens a tab as well as Ctrl+T: with tabs there is nothing else
-      // "new" could reasonably mean, and the habit is worth honouring.
-      if ((key === "t" || key === "n") && !shift) fire(handlers.newTab);
-      else if (key === "w" && !shift) fire(handlers.closeTab);
-      else if (key === "o" && !shift) fire(handlers.open);
-      else if (key === "s" && !shift) fire(handlers.save);
-      else if (key === "s" && shift) fire(handlers.saveAs);
-      // Ctrl+Shift+P and Ctrl+Shift+G stay Excalidraw's: command palette, ungroup.
-      else if (key === "e" && shift) fire(handlers.exportPng);
-      else if (key === "c" && shift) fire(handlers.copyImage);
-      else if (key === "," && !shift) fire(() => setEditingTheme(true));
-      else if (e.key === "Tab" || e.key === "PageDown" || e.key === "PageUp") {
-        const back = e.key === "PageUp" || (e.key === "Tab" && shift);
-        fire(() => void actions.selectRelative(back ? -1 : 1));
-      } else if (/^[1-9]$/.test(key) && !shift) {
+      const run: Record<ShortcutAction, () => void> = {
+        newTab: handlers.newTab,
+        closeTab: handlers.closeTab,
+        nextTab: () => void actions.selectRelative(1),
+        previousTab: () => void actions.selectRelative(-1),
+        open: handlers.open,
+        save: handlers.save,
+        saveAs: handlers.saveAs,
+        exportPng: handlers.exportPng,
+        copyImage: handlers.copyImage,
+        editTheme: () => setEditingTheme(true),
+        quit: handlers.quit,
+      };
+      const action = shortcutAction(key, shift);
+      if (action) fire(run[action]);
+      else if (/^[1-9]$/.test(key) && !shift) {
         const tab = tabs[Number(key) - 1];
         if (tab) fire(() => void actions.selectTab(tab.id));
       }
