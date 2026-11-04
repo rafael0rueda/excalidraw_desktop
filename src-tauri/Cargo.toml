@@ -30,6 +30,9 @@ tauri-plugin-opener = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+# `flock` for the instance lock in store.rs. Already in the tree through
+# Tauri; `File::lock` would need Rust 1.89, above `rust-version`.
+libc = "0.2"
 gdk-pixbuf = "0.18"
 
 [profile.release]
