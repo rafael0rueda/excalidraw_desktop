@@ -176,6 +176,15 @@ check("closing a tab hands over to the one that takes its place", () => {
   assert.equal(t.successorId([tabs[0]], "a"), null, "the last tab leaves nothing");
 });
 
+check("closing a tab brought up to be asked about goes back to where the user was", () => {
+  const tabs = ["a", "b", "c"].map((id) => ({ id, path: null, dirty: false }));
+  assert.equal(t.afterCloseId(tabs, "c", "a"), "a", "not to c's neighbour b");
+  assert.equal(t.afterCloseId(tabs, "a", "c"), "c");
+  assert.equal(t.afterCloseId(tabs, "b", "b"), "c", "closing the tab on screen: its successor");
+  assert.equal(t.afterCloseId(tabs, "b", "gone"), "c", "a tab closed meanwhile is not returned to");
+  assert.equal(t.afterCloseId([tabs[0]], "a", "a"), null);
+});
+
 check("stepping through tabs wraps at both ends", () => {
   const tabs = ["a", "b", "c"].map((id) => ({ id, path: null, dirty: false }));
   assert.equal(t.relativeId(tabs, "a", 1), "b");

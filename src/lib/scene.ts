@@ -1,15 +1,24 @@
-import { getSceneVersion, serializeAsJSON, loadFromBlob } from "@excalidraw/excalidraw";
+import { hashElementsVersion, serializeAsJSON, loadFromBlob } from "@excalidraw/excalidraw";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import { embeddedFiles } from "./documentState";
 import type { TabView } from "./tabs";
 
 /**
- * Excalidraw's scene version is a cheap running hash of element versions, which
- * is exactly what we need to know whether the document is dirty.
+ * A mark that moves whenever any element changes, which is what the unsaved
+ * dot compares against the mark taken at save time.
+ *
+ * Not `getSceneVersion`: that is a plain *sum* of element versions, and edits
+ * can cancel out in a sum. Delete an element at version 2, then change two
+ * others once each, and the sum is back where it was at save time. The tab
+ * would then show as saved and be closed without a prompt (review 2026-11-04,
+ * FE-1). `hashElementsVersion` hashes `versionNonce`, which Excalidraw
+ * re-randomises on every bump and `restoreElement` keeps through a load. Its
+ * result is never negative, so the `NEVER_SAVED`/`UNPARSED` sentinels still
+ * match nothing.
  */
 export function sceneVersion(elements: readonly ExcalidrawElement[]): number {
-  return getSceneVersion(elements);
+  return hashElementsVersion(elements);
 }
 
 export function serializeScene(api: ExcalidrawImperativeAPI): string {

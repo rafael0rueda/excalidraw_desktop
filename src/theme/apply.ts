@@ -1,3 +1,4 @@
+import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { setMenuColors, setPreferDarkTheme } from "../lib/api";
 import type { Theme } from "./types";
@@ -123,11 +124,16 @@ export function applyTheme(
   const fillIsFree =
     previous === null || fill === previous.colors.fill || fill.toLowerCase() === FACTORY_FILL;
 
+  // NEVER moves Excalidraw's undo baseline along with the change. Left at the
+  // default, the baseline keeps the outgoing canvas colour, so the user's next
+  // edit records the theme switch as part of itself, and Ctrl+Z on a stroke
+  // repaints the old theme's canvas (review 2026-11-04, FE-3).
   api.updateScene({
     appState: {
       viewBackgroundColor: theme.colors.canvas,
       currentItemStrokeColor: strokeIsFree ? theme.colors.stroke : stroke,
       currentItemBackgroundColor: fillIsFree ? theme.colors.fill : fill,
     },
+    captureUpdate: CaptureUpdateAction.NEVER,
   });
 }
