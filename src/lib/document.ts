@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAutosave } from "./autosave";
 import { message } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
@@ -6,12 +7,10 @@ import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/t
 import {
   keepUnreadableSnapshot,
   loadSession,
-  markCleanExit,
   pickOpenPath,
   pickSavePath,
   pushRecent,
   readTextFile,
-  saveSession,
   setWindowTitle,
   startupFiles,
   OPEN_FILES_EVENT,
@@ -27,12 +26,9 @@ import {
   canvasWasReset,
   captureMark,
   nextRev,
-  nextWritten,
   recoveredSession,
   recoverySubject,
   reopenedContent,
-  snapshotPlan,
-  worthWriting,
   type Canvas,
 } from "./documentState";
 import {
@@ -56,17 +52,6 @@ import {
   type TabMeta,
   type TabView,
 } from "./tabs";
-
-/** Quiet period after the last edit before a snapshot is written. */
-const AUTOSAVE_DELAY_MS = 1500;
-/** Longest a snapshot may lag behind while the user keeps drawing. */
-const AUTOSAVE_MAX_MS = 10_000;
-/**
- * Consecutive failed snapshots before the user is told. A single failure is
- * not worth a dialog — the next one a second later usually works — but a
- * standing one means crash recovery is dead, and nothing else would say so.
- */
-const AUTOSAVE_FAILURES_BEFORE_WARNING = 3;
 
 type ParsedScene = Awaited<ReturnType<typeof parseScene>>;
 
@@ -315,16 +300,40 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     [api],
   );
 
-  /** Replaces the whole tab set, dropping the content of tabs that have gone. */
-  const replaceTabs = useCallback((next: TabMeta[], active: string) => {
-    for (const id of [...store.current.keys()]) {
-      if (!next.some((tab) => tab.id === id)) store.current.delete(id);
+  /**
+   * Makes `next` the tab set and `active` the active tab: the refs first, then
+   * React state. The order is what matters. A quit can call `endSession`
+   * right after a save resolves, and work resumed after an await files its
+   * results under `activeRef`. Both read the refs, not the next render, so a
+   * site that set only the state brought back the "scene filed under the
+   * wrong tab" bug. Five sites used to spell this out by hand (review
+   * 2026-11-04, ST-3).
+   *
+   * The list is set only when it is a new one. `onSceneChange` marks a tab
+   * dirty with a functional `setTabs` that `tabsRef` sees only after the next
+   * render. Setting the list it holds back again would queue behind that
+   * update and undo it. So a caller changing only the active tab passes
+   * `tabsRef.current`, and the list is left alone.
+   */
+  const commitTabs = useCallback((next: TabMeta[], active: string = activeRef.current) => {
+    if (next !== tabsRef.current) {
+      tabsRef.current = next;
+      setTabs(next);
     }
-    tabsRef.current = next;
     activeRef.current = active;
-    setTabs(next);
     setActiveId(active);
   }, []);
+
+  /** Replaces the whole tab set, dropping the content of tabs that have gone. */
+  const replaceTabs = useCallback(
+    (next: TabMeta[], active: string) => {
+      for (const id of [...store.current.keys()]) {
+        if (!next.some((tab) => tab.id === id)) store.current.delete(id);
+      }
+      commitTabs(next, active);
+    },
+    [commitTabs],
+  );
 
   /** A new untitled tab with its empty content in place; not yet in the tab set. */
   const blankTab = useCallback((): TabMeta => {
@@ -408,11 +417,10 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     async (id: string) => {
       if (id === activeRef.current || !tabsRef.current.some((tab) => tab.id === id)) return;
       capture();
-      activeRef.current = id;
-      setActiveId(id);
+      commitTabs(tabsRef.current, id);
       await show(id);
     },
-    [capture, show],
+    [capture, commitTabs, show],
   );
 
   const selectRelative = useCallback(
@@ -426,13 +434,9 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
   const newTab = useCallback(async () => {
     capture();
     const tab = blankTab();
-    const next = [...tabsRef.current, tab];
-    tabsRef.current = next;
-    activeRef.current = tab.id;
-    setTabs(next);
-    setActiveId(tab.id);
+    commitTabs([...tabsRef.current, tab], tab.id);
     await show(tab.id);
-  }, [blankTab, capture, show]);
+  }, [blankTab, capture, commitTabs, show]);
 
   // ------------------------------------------------------------------ saving
 
@@ -503,11 +507,9 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         const next = tabsRef.current.map((tab) =>
           tab.id === id ? { ...tab, path: target, dirty } : tab,
         );
-        // Written through the ref immediately, not left to the next render: a
-        // quit can call `endSession` right after this resolves, and that reads
-        // `tabsRef.current` directly rather than waiting for React to catch up.
-        tabsRef.current = next;
-        setTabs(next);
+        // Through the ref immediately, not left to the next render: a quit can
+        // call `endSession` right after this resolves.
+        commitTabs(next);
         return true;
       };
       const previous = writes.current.get(target) ?? Promise.resolve(true);
@@ -519,7 +521,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         if (writes.current.get(target) === mine) writes.current.delete(target);
       }
     },
-    [api, capture, onCanvas],
+    [api, capture, commitTabs, onCanvas],
   );
 
   const saveTabAs = useCallback(
@@ -665,93 +667,15 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
 
   // ---------------------------------------------------------------- autosave
 
-  // Snapshots are suppressed until startup has decided what to restore —
-  // otherwise the empty initial canvas would overwrite the very snapshots we
-  // are about to read back.
-  const restored = useRef(false);
-  const timer = useRef<number | null>(null);
-  const pendingSince = useRef(0);
-  /** Revision of each tab as the session file last saw it. */
-  const written = useRef(new Map<string, number>());
-
-  /** The snapshot being written; the next one queues behind it rather than racing it to disk. */
-  const inFlight = useRef<Promise<void>>(Promise.resolve());
-  /**
-   * Set once `endSession` starts. A snapshot reaching disk after
-   * `mark_clean_exit` would mark the exit unclean again, so from then on only
-   * the final one is let through.
-   */
-  const ending = useRef(false);
-  /** The tab list and active tab as the session file last saw them. */
-  const writtenMeta = useRef("");
-  /** Snapshots that have failed in a row, and whether that has been reported. */
-  const failures = useRef(0);
-  const warned = useRef(false);
-
-  const snapshot = useCallback(
-    (final = false): Promise<void> => {
-      // Queued: two snapshots in flight could reach disk in either order, and
-      // an older tab list landing last would prune the snapshot of a tab opened
-      // in between — one that `written` already records as sent.
-      const run = inFlight.current.then(async () => {
-        if (!api || !restored.current || (ending.current && !final)) return;
-        try {
-          capture({ onlyIfChanged: !final });
-          // Planned before the write, so the revisions recorded afterwards are
-          // the ones that actually went out: the tab may well be captured again
-          // while the write is in flight.
-          const tabs = tabsRef.current;
-          const active = activeRef.current;
-          const plan = snapshotPlan(tabs, active, (id) => store.current.get(id), written.current);
-          if (!worthWriting(plan, writtenMeta.current)) return;
-          await saveSession(plan.payload, active);
-          failures.current = 0;
-          writtenMeta.current = plan.meta;
-          // Against the tabs as they stand *now*, not the list that was sent:
-          // one closed while the write was in flight has had its snapshot
-          // pruned already, so its revision must not linger here.
-          written.current = nextWritten(written.current, plan, tabsRef.current);
-        } catch (err) {
-          // Autosave is best effort; a failure here must never interrupt
-          // drawing. But staying silent for the whole session left the app
-          // showing unsaved marks and a tab bar that imply a snapshot exists
-          // when the config directory is read-only or full, and nothing else
-          // would ever mention it. Said once, and never while quitting, where
-          // a dialog would only stand between the user and the exit.
-          failures.current += 1;
-          if (failures.current >= AUTOSAVE_FAILURES_BEFORE_WARNING && !warned.current && !ending.current) {
-            warned.current = true;
-            // Not awaited: the snapshot queue must not wait on a dialog.
-            void message(
-              "Autosave has failed several times, so this app cannot keep crash-recovery " +
-                "snapshots of the drawings you have open.\n\nSaving a drawing to its own " +
-                `file still works — use File → Save. Reported once per run.\n\n${String(err)}`,
-              { title: "Autosave is not working", kind: "warning" },
-            ).catch(() => {});
-          }
-        }
-      });
-      inFlight.current = run;
-      return run;
-    },
-    [api, capture],
-  );
-
-  const scheduleSnapshot = useCallback(() => {
-    if (timer.current !== null) window.clearTimeout(timer.current);
-    const now = Date.now();
-    if (pendingSince.current === 0) pendingSince.current = now;
-    // Coalesce bursts of edits, but never let the deadline slide indefinitely.
-    const wait = Math.max(
-      0,
-      Math.min(AUTOSAVE_DELAY_MS, pendingSince.current + AUTOSAVE_MAX_MS - now),
-    );
-    timer.current = window.setTimeout(() => {
-      timer.current = null;
-      pendingSince.current = 0;
-      void snapshot();
-    }, wait);
-  }, [snapshot]);
+  const { scheduleSnapshot, endSession, resumeSession, adoptWritten, enable } = useAutosave({
+    api,
+    capture,
+    tabsRef,
+    activeRef,
+    store,
+    tabs,
+    activeId,
+  });
 
   const onSceneChange = useCallback(() => {
     if (!api) return;
@@ -775,40 +699,6 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     );
     scheduleSnapshot();
   }, [api, onCanvas, scheduleSnapshot]);
-
-  // Opening, saving, switching and closing are discrete events rather than
-  // bursts, so record them straight away.
-  useEffect(() => {
-    void snapshot();
-  }, [tabs, activeId, snapshot]);
-
-  useEffect(
-    () => () => {
-      if (timer.current !== null) window.clearTimeout(timer.current);
-    },
-    [],
-  );
-
-  const endSession = useCallback(async () => {
-    if (timer.current !== null) window.clearTimeout(timer.current);
-    // Startup hasn't decided what to restore yet, so there is nothing on
-    // screen worth persisting — leave the previous run's snapshot and
-    // `clean_exit` flag untouched rather than overwriting real crash evidence
-    // with the placeholder initial tab.
-    if (!restored.current) return;
-    ending.current = true;
-    await snapshot(true);
-    await markCleanExit().catch(() => {});
-  }, [snapshot]);
-
-  const resumeSession = useCallback(() => {
-    if (!ending.current) return;
-    ending.current = false;
-    // Forgotten, so the next snapshot is written whether or not anything has
-    // moved: it is what takes the clean-exit mark back off the session file.
-    writtenMeta.current = "";
-    void snapshot();
-  }, [snapshot]);
 
   // ------------------------------------------------------------ open / start
 
@@ -874,14 +764,11 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       const next = reuse
         ? tabsRef.current.map((tab) => (tab.id === id ? opened : tab))
         : [...tabsRef.current, opened];
-      tabsRef.current = next;
-      activeRef.current = id;
-      setTabs(next);
-      setActiveId(id);
+      commitTabs(next, id);
       applyScene(id, text, scene, { fit: true });
       await pushRecent(file).catch(() => {});
     },
-    [api, applyScene, capture, pristineActive, selectTab],
+    [api, applyScene, capture, commitTabs, pristineActive, selectTab],
   );
 
   const restoreSession = useCallback(async () => {
@@ -924,7 +811,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
         for (const [id, content] of restored.contents) store.current.set(id, content);
         // The session file already holds exactly these scenes, so the first
         // snapshot after this has nothing to send.
-        written.current = restored.written;
+        adoptWritten(restored.written);
         const active = restored.active ?? restored.tabs[0].id;
         replaceTabs(restored.tabs, active);
         await show(active);
@@ -957,7 +844,7 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
     }
     replaceTabs(opened, active);
     await show(active);
-  }, [api, replaceTabs, show]);
+  }, [adoptWritten, api, replaceTabs, show]);
 
   // Guarded rather than cancelled on cleanup: StrictMode runs effects twice in
   // development, and startup must not ask the user to recover twice.
@@ -1001,11 +888,11 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
           for (const file of files) await openDrawing(file);
         }
       } finally {
-        restored.current = decided;
+        enable(decided);
         starting.current = false;
       }
     })();
-  }, [api, openDrawing, restoreSession]);
+  }, [api, enable, openDrawing, restoreSession]);
 
   // A second launch does not become a second app; its drawings arrive here
   // instead, as tabs on the window already open.
