@@ -78,6 +78,8 @@ check("a theme colour is #rgb or #rrggbb, and transparent only as the fill", () 
   const theme = JSON.parse(JSON.stringify(t.PRESET_THEMES[0]));
   const withColor = (key, value) => t.parseTheme({ ...theme, colors: { ...theme.colors, [key]: value } });
   assert.match(withColor("surface", "2A2A37").error, /"colors\.surface" is not a colour/);
+  // `css_color` in chrome.rs does not trim, so neither may this side.
+  assert.match(withColor("surface", " #2A2A37").error, /"colors\.surface" is not a colour/);
   assert.match(withColor("accent", "transparent").error, /"colors\.accent" is not a colour/);
   assert.match(withColor("fill", "red").error, /or "transparent"/);
 
@@ -85,6 +87,13 @@ check("a theme colour is #rgb or #rrggbb, and transparent only as the fill", () 
   assert.match(t.parseTheme({ ...theme, id: "My Theme" }).error, /"id" may only use/);
   assert.match(t.parseTheme({ ...theme, id: "../escape" }).error, /"id" may only use/);
   assert.match(t.parseTheme({ ...theme, name: "   " }).error, /missing "name"/);
+});
+
+check("a colour swatch is given the six-digit spelling it can show", () => {
+  assert.equal(t.sixDigitHex("#abc"), "#aabbcc", "a colour input shows #abc as black");
+  assert.equal(t.sixDigitHex("#2A2A37"), "#2a2a37");
+  assert.equal(t.sixDigitHex("transparent"), null);
+  assert.equal(t.sixDigitHex(" #abc"), null);
 });
 
 check("cssVariables emits well-formed declarations for every preset", () => {

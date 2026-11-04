@@ -13,7 +13,15 @@ export function sceneVersion(elements: readonly ExcalidrawElement[]): number {
 }
 
 export function serializeScene(api: ExcalidrawImperativeAPI): string {
-  return serializeAsJSON(api.getSceneElements(), api.getAppState(), api.getFiles(), "local");
+  // The same filter `parseScene` applies on the way in. Pasting is a way in
+  // that bypasses it (review 2026-11-04, SEC-1), so it is applied on every
+  // way out too: Save, Save As and the session snapshot all come through here.
+  return serializeAsJSON(
+    api.getSceneElements(),
+    api.getAppState(),
+    embeddedFiles(api.getFiles()),
+    "local",
+  );
 }
 
 /**

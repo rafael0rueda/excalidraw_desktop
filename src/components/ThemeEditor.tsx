@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
-import { isHex } from "../theme/color";
+import { sixDigitHex } from "../theme/color";
 import { panelVariables } from "../theme/panel";
 import { TRANSPARENT, invalidKeys, isColorValue, paintable, slugify, uniqueId } from "../theme/draft";
 import { SYSTEM_THEME, type Theme, type ThemeColors } from "../theme/types";
@@ -304,7 +304,7 @@ export default function ThemeEditor({ theme, onClose }: ThemeEditorProps) {
                   <span className="swatch">
                     <input
                       type="color"
-                      value={isHex(value) ? value : "#ffffff"}
+                      value={sixDigitHex(value) ?? "#ffffff"}
                       // A transparent fill has no colour to show; the checker
                       // board behind it is the honest answer.
                       style={{ opacity: transparent ? 0 : 1 }}
