@@ -300,7 +300,11 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       // drawing, so without this Ctrl+Z would undo an edit made in another tab.
       api.history.clear();
 
-      savedVersion.current = opts.savedVersion ?? sceneVersion(scene.elements);
+      // Measured on the live scene, the same set `onSceneChange` compares
+      // against: `updateScene` has replaced the elements synchronously, and
+      // `getSceneElements` leaves out any `isDeleted` ones a foreign file
+      // carried, which `scene.elements` would still count.
+      savedVersion.current = opts.savedVersion ?? sceneVersion(api.getSceneElements());
       store.current.set(id, {
         scene: text,
         view: opts.view ?? null,
