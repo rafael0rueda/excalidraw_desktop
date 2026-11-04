@@ -304,7 +304,12 @@ review 2026-10-07 — seven phases, `docs/reviews/2026-10-07.md`. Rafa checked
 phases 0 to 5 by hand on the installed RPM the same day and reported each one
 "Ok".
 
-Nothing is queued. A release from here is `npm run bump -- <version>`,
+**Queued: review 2026-11-04** (`docs/reviews/2026-11-04.md`). It has 31
+scored findings and no exploitable hole. The top item is FE-1: the dirty flag
+can report an edited drawing as saved. The plan is eight phases, one PR each,
+and that file's plan table tracks which PRs are open or merged.
+
+A release from here is `npm run bump -- <version>`,
 `npm run bundle`, install the RPM, commit, and tag.
 
 What a human has actually seen, and on which version:
