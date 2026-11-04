@@ -81,7 +81,7 @@ pub async fn pick_open_path(
     let path = allowed
         .allow(&picked)
         .ok_or_else(|| format!("{}: cannot be opened", picked.display()))?;
-    Ok(Some(path.to_string_lossy().into_owned()))
+    utf8_path(path).map(Some)
 }
 
 /// Asks where to save, and returns a path that already carries the extension.
@@ -150,8 +150,24 @@ pub async fn pick_save_path(
         let path = allowed
             .allow(&path)
             .ok_or_else(|| format!("{}: cannot be saved to", path.display()))?;
-        return Ok(Some(path.to_string_lossy().into_owned()));
+        return utf8_path(path).map(Some);
     }
+}
+
+/// A picked path as the renderer will hold it.
+///
+/// Paths cross into the renderer as strings, so a name that is not valid
+/// UTF-8 cannot make the round trip. Lossily converted, it came back with
+/// U+FFFD in it, and the next command refused it as "not a file this app was
+/// asked to open or save", which says nothing about the real problem
+/// (review 2026-11-04, BE-2).
+fn utf8_path(path: PathBuf) -> Result<String, String> {
+    path.into_os_string().into_string().map_err(|raw| {
+        format!(
+            "{}: names that are not valid UTF-8 are not supported",
+            Path::new(&raw).display()
+        )
+    })
 }
 
 #[cfg(test)]
