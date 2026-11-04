@@ -421,8 +421,9 @@ file** — saving stays something you ask for.
 src/                    Renderer — React 19 + Excalidraw. No filesystem access.
   bootstrap.ts          Points Excalidraw at the bundled fonts before it loads
   lib/api.ts            Typed wrappers over the Rust command layer
-  lib/document.ts       Tabs, open/save, dirty tracking, autosave (useDocument hook)
+  lib/document.ts       Tabs, open/save, dirty tracking (useDocument hook)
   lib/documentState.ts  The decisions behind document.ts, as pure functions the gate tests
+  lib/autosave.ts       Crash-recovery snapshots and the clean-exit mark (useAutosave hook)
   lib/exports.ts        PNG/SVG/clipboard rendering
   lib/exportActions.ts  Dialog-driven export flows
   lib/links.ts          Follows element links: scroll within the drawing, or the system browser
