@@ -2,7 +2,7 @@ import { isHex } from "./color";
 
 /**
  * A theme is deliberately small and hand-authorable: ten colours the user can
- * reason about, expanded into Excalidraw's ~30 CSS custom properties by
+ * reason about, expanded into 64 of Excalidraw's CSS custom properties by
  * `variables.ts`. Anything the user would have to look up in Excalidraw's
  * stylesheet does not belong here.
  */
