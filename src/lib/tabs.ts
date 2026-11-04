@@ -87,6 +87,21 @@ export function successorId(tabs: readonly TabMeta[], id: string): string | null
   return remaining[Math.min(index, remaining.length - 1)].id;
 }
 
+/**
+ * The tab to show once `closing` is gone, when it was on the canvas. `was` is
+ * the tab the user was on before the close began. A dirty tab is brought up
+ * to be asked about, and closing it returns to `was` rather than wandering to
+ * the closed tab's neighbour (review 2026-11-04, FE-2).
+ */
+export function afterCloseId(
+  tabs: readonly TabMeta[],
+  closing: string,
+  was: string,
+): string | null {
+  if (was !== closing && tabs.some((tab) => tab.id === was)) return was;
+  return successorId(tabs, closing);
+}
+
 /** Steps `delta` tabs from `id`, wrapping at both ends. */
 export function relativeId(tabs: readonly TabMeta[], id: string, delta: number): string | null {
   if (!tabs.length) return null;

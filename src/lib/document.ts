@@ -49,6 +49,7 @@ import {
   newTabId,
   relativeId,
   savesInPlace,
+  afterCloseId,
   successorId,
   tabTitle,
   type TabContent,
@@ -431,66 +432,88 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
 
   // ------------------------------------------------------------------ saving
 
+  /**
+   * The write to each path still in flight, so a second one waits for the
+   * first. `once` in `App.tsx` stops a repeated Ctrl+S, but the save a close or
+   * quit prompt runs bypasses it on purpose. So: Ctrl+S on a large drawing,
+   * draw, then Ctrl+W → Save while the first write is still going. Two
+   * `write_text_file` calls then run concurrently on Tauri's thread pool, and
+   * the older one can rename last, leaving the earlier drawing on disk (review
+   * 2026-11-04, BE-3). Waiting also means the second save captures the scene
+   * after the first has settled.
+   */
+  const writes = useRef(new Map<string, Promise<boolean>>());
+
   const writeTo = useCallback(
     async (id: string, target: string) => {
-      capture();
-      const content = store.current.get(id);
-      if (!content) return false;
-      // The version `content.scene` actually holds, taken now — in the same
-      // tick as `capture()` above, before the write below awaits. Recomputing
-      // this from the live scene *after* the await would let a stroke drawn
-      // while the write is in flight pass as having reached disk, when only
-      // the version captured here actually did.
-      const activeAndCommitted = id === activeRef.current && onCanvas() && !!api;
-      const writtenVersion = activeAndCommitted ? sceneVersion(api!.getSceneElements()) : null;
-      try {
-        await writeTextFile(target, content.scene);
-      } catch (err) {
-        await message(String(err), { title: "Could not save", kind: "error" });
-        return false;
-      }
-      // Best effort, and deliberately after the write has been declared a
-      // success: sharing the `try` above meant a failure here reported "Could
-      // not save" over a drawing that had already reached disk, and left the
-      // tab dirty under its old path. `openDrawing` treats it the same way.
-      await pushRecent(target).catch(() => {});
-      // The tab was closed while the write was in flight.
-      if (!store.current.has(id)) return true;
-      // Everything from here reads the store as it stands *now*. `content` is
-      // the copy that went out, and the tab may have been drawn in, captured
-      // and even left since: writing `content` back threw that work away.
-      const shown = id === activeRef.current && onCanvas() && !!api;
-      let dirty: boolean;
-      if (shown && writtenVersion !== null) {
-        savedVersion.current = writtenVersion;
-        store.current.set(id, { ...store.current.get(id)!, savedVersion: writtenVersion });
-        // Recomputed against the scene as it stands, not assumed clean: an
-        // edit that landed during the write above must still show dirty,
-        // since disk only ever received `writtenVersion`.
-        dirty = sceneVersion(api!.getSceneElements()) !== writtenVersion;
-      } else {
-        // Not on the canvas when the write started, or not on it now. If it
-        // has come on screen in between, the store is brought up to date first.
-        if (shown) capture();
-        const after = afterWrite(store.current.get(id)!, content.scene, writtenVersion);
-        dirty = after.dirty;
-        if (shown) {
-          // `UNPARSED` is for a tab still to be shown; this one is on screen,
-          // holding exactly what was written.
-          savedVersion.current = dirty ? NEVER_SAVED : sceneVersion(api!.getSceneElements());
-          after.content.savedVersion = savedVersion.current;
+      const writeNow = async (): Promise<boolean> => {
+        capture();
+        const content = store.current.get(id);
+        if (!content) return false;
+        // The version `content.scene` actually holds, taken now — in the same
+        // tick as `capture()` above, before the write below awaits. Recomputing
+        // this from the live scene *after* the await would let a stroke drawn
+        // while the write is in flight pass as having reached disk, when only
+        // the version captured here actually did.
+        const activeAndCommitted = id === activeRef.current && onCanvas() && !!api;
+        const writtenVersion = activeAndCommitted ? sceneVersion(api!.getSceneElements()) : null;
+        try {
+          await writeTextFile(target, content.scene);
+        } catch (err) {
+          await message(String(err), { title: "Could not save", kind: "error" });
+          return false;
         }
-        store.current.set(id, after.content);
+        // Best effort, and deliberately after the write has been declared a
+        // success: sharing the `try` above meant a failure here reported "Could
+        // not save" over a drawing that had already reached disk, and left the
+        // tab dirty under its old path. `openDrawing` treats it the same way.
+        await pushRecent(target).catch(() => {});
+        // The tab was closed while the write was in flight.
+        if (!store.current.has(id)) return true;
+        // Everything from here reads the store as it stands *now*. `content` is
+        // the copy that went out, and the tab may have been drawn in, captured
+        // and even left since: writing `content` back threw that work away.
+        const shown = id === activeRef.current && onCanvas() && !!api;
+        let dirty: boolean;
+        if (shown && writtenVersion !== null) {
+          savedVersion.current = writtenVersion;
+          store.current.set(id, { ...store.current.get(id)!, savedVersion: writtenVersion });
+          // Recomputed against the scene as it stands, not assumed clean: an
+          // edit that landed during the write above must still show dirty,
+          // since disk only ever received `writtenVersion`.
+          dirty = sceneVersion(api!.getSceneElements()) !== writtenVersion;
+        } else {
+          // Not on the canvas when the write started, or not on it now. If it
+          // has come on screen in between, the store is brought up to date first.
+          if (shown) capture();
+          const after = afterWrite(store.current.get(id)!, content.scene, writtenVersion);
+          dirty = after.dirty;
+          if (shown) {
+            // `UNPARSED` is for a tab still to be shown; this one is on screen,
+            // holding exactly what was written.
+            savedVersion.current = dirty ? NEVER_SAVED : sceneVersion(api!.getSceneElements());
+            after.content.savedVersion = savedVersion.current;
+          }
+          store.current.set(id, after.content);
+        }
+        const next = tabsRef.current.map((tab) =>
+          tab.id === id ? { ...tab, path: target, dirty } : tab,
+        );
+        // Written through the ref immediately, not left to the next render: a
+        // quit can call `endSession` right after this resolves, and that reads
+        // `tabsRef.current` directly rather than waiting for React to catch up.
+        tabsRef.current = next;
+        setTabs(next);
+        return true;
+      };
+      const previous = writes.current.get(target) ?? Promise.resolve(true);
+      const mine = previous.catch(() => false).then(writeNow);
+      writes.current.set(target, mine);
+      try {
+        return await mine;
+      } finally {
+        if (writes.current.get(target) === mine) writes.current.delete(target);
       }
-      const next = tabsRef.current.map((tab) =>
-        tab.id === id ? { ...tab, path: target, dirty } : tab,
-      );
-      // Written through the ref immediately, not left to the next render: a
-      // quit can call `endSession` right after this resolves, and that reads
-      // `tabsRef.current` directly rather than waiting for React to catch up.
-      tabsRef.current = next;
-      setTabs(next);
-      return true;
     },
     [api, capture, onCanvas],
   );
@@ -545,16 +568,24 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       // "cancel" at the toolkit level — which was Discard, so dismissing the
       // dialog silently threw the tab away. Naming Cancel explicitly gives it
       // that response instead, distinguishable from actually clicking Discard.
+      //
+      // The plugin answers with the clicked button's *label*, so the labels
+      // are named once and Discard is the only answer that throws work away.
+      // Anything unrecognised keeps the tab: a renamed label must not quietly
+      // turn Escape into Discard again (review 2026-11-04, ST-1).
+      const SAVE = "Save";
+      const DISCARD = "Discard";
       const outcome = await message(
         `${tabTitle(tab)} has unsaved changes. Save before continuing?`,
         {
           title: "Unsaved changes",
           kind: "warning",
-          buttons: { yes: "Save", no: "Discard", cancel: "Cancel" },
+          buttons: { yes: SAVE, no: DISCARD, cancel: "Cancel" },
         },
       );
-      if (outcome === "Cancel") return false;
-      return outcome === "Save" ? await saveTab(id) : true;
+      if (outcome === DISCARD) return true;
+      if (outcome === SAVE) return await saveTab(id);
+      return false;
     },
     [saveTab],
   );
@@ -571,18 +602,22 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
       if (prompting.current) return;
       prompting.current = true;
       try {
-        const target = id ?? activeRef.current;
-        if (!tabsRef.current.some((tab) => tab.id === target)) return;
+        const was = activeRef.current;
+        const target = id ?? was;
+        const tab = tabsRef.current.find((t) => t.id === target);
+        if (!tab) return;
         // Show a drawing before asking about it: a prompt naming a tab the user
-        // cannot see is a prompt they cannot answer.
-        if (target !== activeRef.current) await selectTab(target);
+        // cannot see is a prompt they cannot answer. A clean tab is never
+        // asked about, so it is closed where it stands. Showing it would load
+        // its scene only to leave it again, and clear the undo history of the
+        // tab the user was on (review 2026-11-04, FE-2).
+        if (tab.dirty && target !== was) await selectTab(target);
         // Showing it may have closed it already, if it could not be read.
-        if (!tabsRef.current.some((tab) => tab.id === target)) return;
+        if (!tabsRef.current.some((t) => t.id === target)) return;
         if (!(await confirmTab(target))) return;
 
-        const next = successorId(tabsRef.current, target);
-        const remaining = tabsRef.current.filter((tab) => tab.id !== target);
-        if (!remaining.length || !next) {
+        const remaining = tabsRef.current.filter((t) => t.id !== target);
+        if (!remaining.length) {
           // Closing the last tab empties the canvas rather than quitting: closing
           // a drawing and closing the app are different requests.
           const fresh = blankTab();
@@ -590,6 +625,16 @@ export function useDocument(api: ExcalidrawImperativeAPI | null, themed: ThemedD
           await show(fresh.id);
           return;
         }
+        // Closed from the background: the canvas still holds the active tab,
+        // so there is nothing to load.
+        if (target !== activeRef.current) {
+          replaceTabs(remaining, activeRef.current);
+          return;
+        }
+        // Back to where the user was if this tab was only brought up to be
+        // asked about. Otherwise, to its neighbour.
+        const next = afterCloseId(tabsRef.current, target, was);
+        if (!next) return;
         replaceTabs(remaining, next);
         await show(next);
       } finally {
