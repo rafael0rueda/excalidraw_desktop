@@ -20,11 +20,15 @@ permissions:
 jobs:
   frontend:
     runs-on: ubuntu-latest
+    # The floor `engines` promises, and the version releases are built with.
+    strategy:
+      matrix:
+        node: ["20.19", "22"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       # The theme engine, the tab model and the CSP guard. No DOM, no
@@ -43,7 +47,7 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # webkit2gtk for Tauri itself; gtk and rsvg because this app talks to
       # GTK directly (the menu bar stylesheet, the clipboard, the portal).
       - name: Install the system libraries Tauri builds against
@@ -57,25 +61,49 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             patchelf
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-16
         with:
+          toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
       # `tauri build` needs dist/ to exist; the tests do not, and this job
       # deliberately stays independent of the frontend one.
       - run: cargo test --manifest-path src-tauri/Cargo.toml
-      # Never run before this workflow existed — the toolchain on the machine
-      # this was developed on is Fedora's, which ships no clippy.
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+  # The `rust-version` Cargo.toml promises (README: "Rust 1.88 or newer").
+  # Nothing else builds with it: the jobs above take the latest stable.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install the system libraries Tauri builds against
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-16
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+          key: msrv
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --locked
 
   # The packages themselves. Nothing above builds them, so a broken desktop
   # template, file map or icon path used to be found only by hand, at release.
   package:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install the system libraries Tauri builds against, and the tools that read a package
         run: |
           sudo apt-get update
@@ -89,12 +117,14 @@ jobs:
             patchelf \
             rpm \
             desktop-file-utils
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
           # A release build with LTO; nothing in common with the test job's.
