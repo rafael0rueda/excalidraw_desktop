@@ -1,6 +1,7 @@
 import { exportToBlob, exportToSvg } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { copyImageToClipboard, writeBinaryFile, writeTextFile } from "./api";
+import { embeddedFiles } from "./documentState";
 import { expandSelection } from "./selection";
 
 export interface ExportOptions {
@@ -19,7 +20,10 @@ function sceneFor(api: ExcalidrawImperativeAPI, opts: ExportOptions) {
   // export quadratic in the size of the drawing.
   const included = opts.selectionOnly ? expandSelection(all, appState.selectedElementIds) : null;
   const elements = included ? all.filter((el) => included.has(el.id)) : all;
-  return { elements, appState, files: api.getFiles() };
+  // Filtered here as well as on load: a pasted `excalidraw/clipboard`
+  // payload brings its file entries with it, past the filter in `parseScene`
+  // (review 2026-11-04, SEC-1).
+  return { elements, appState, files: embeddedFiles(api.getFiles()) };
 }
 
 export async function toPngBlob(api: ExcalidrawImperativeAPI, opts: ExportOptions = {}) {

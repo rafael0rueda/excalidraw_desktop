@@ -51,7 +51,9 @@ export interface Session {
  * there instead. The page's own policy refuses to fetch it, but an SVG export
  * writes it out as `<image href>`, and whoever opens that SVG fetches it — a
  * beacon inside a file that looks self-contained. Such entries are dropped on
- * the way in, and their elements show as missing images.
+ * the way in (`parseScene`) and again on the way out (`serializeScene`,
+ * `exports.ts`), since a paste brings files in without passing through a
+ * load. Their elements show as missing images.
  */
 export function embeddedFiles<T extends { dataURL?: unknown }>(
   files: Record<string, T> | null | undefined,

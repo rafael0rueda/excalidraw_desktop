@@ -5,7 +5,10 @@ type RGB = [number, number, number];
 function parse(hex: string): RGB | null {
   // The `#` is required. Without one the value is not CSS, and it used to be
   // accepted here and then written into a custom property as it stood.
-  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  // Not trimmed either: `css_color` in chrome.rs takes the value as it
+  // stands, so `" #2A2A37"` painted the page and then silently failed to
+  // paint the menu bar. One grammar on both sides (review 2026-11-04, FE-4).
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex);
   if (!m) return null;
   let body = m[1];
   if (body.length === 3) body = body.split("").map((c) => c + c).join("");
@@ -18,6 +21,15 @@ function parse(hex: string): RGB | null {
 
 function format([r, g, b]: RGB): string {
   return "#" + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The six-digit spelling of a hex colour, or null if `value` is not one.
+ * `<input type="color">` accepts nothing else, and shows black for `#abc`.
+ */
+export function sixDigitHex(value: string): string | null {
+  const rgb = parse(value);
+  return rgb && format(rgb);
 }
 
 /** True if the helpers here can work with this value. */
