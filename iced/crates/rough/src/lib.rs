@@ -138,7 +138,7 @@ impl Default for Options {
 
 impl Options {
     /// JS truthiness of `o.fill`.
-    pub(crate) fn has_fill(&self) -> bool {
+    pub fn has_fill(&self) -> bool {
         self.fill.as_deref().is_some_and(|f| !f.is_empty())
     }
 
