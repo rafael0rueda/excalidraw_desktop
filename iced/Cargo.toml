@@ -3,4 +3,4 @@
 # same files in ~/.config/excalidraw-desktop the same way.
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/rough"]
+members = ["crates/core", "crates/rough", "crates/scene"]

@@ -1,0 +1,18 @@
+[package]
+name = "scene"
+version = "0.0.0"
+description = "The Excalidraw file format: lossless load and save, and the typed view the renderer reads"
+authors = ["rafa"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+# `preserve_order`: a drawing saved back keeps its keys where they were.
+# `float_roundtrip`: and its numbers to the last bit.
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+serde = "1"
+# ECMAScript `Number.prototype.toString`, so numbers are spelled as
+# `JSON.stringify` spells them (`1e+21`, not `1e21`).
+ryu-js = "1"
