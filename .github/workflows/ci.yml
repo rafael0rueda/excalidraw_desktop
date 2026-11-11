@@ -67,11 +67,17 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: src-tauri
+          workspaces: |
+            src-tauri
+            iced
       # `tauri build` needs dist/ to exist; the tests do not, and this job
       # deliberately stays independent of the frontend one.
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      # The shared `core` crate (config, session, atomic writes). Its tests run
+      # here, not in src-tauri's, which only builds it as a dependency.
+      - run: cargo test --manifest-path iced/Cargo.toml
+      - run: cargo clippy --manifest-path iced/Cargo.toml --all-targets -- -D warnings
 
   # The `rust-version` Cargo.toml promises (README: "Rust 1.88 or newer").
   # Nothing else builds with it: the jobs above take the latest stable.
@@ -97,6 +103,7 @@ jobs:
           workspaces: src-tauri
           key: msrv
       - run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - run: cargo check --manifest-path iced/Cargo.toml --locked
 
   # The packages themselves. Nothing above builds them, so a broken desktop
   # template, file map or icon path used to be found only by hand, at release.

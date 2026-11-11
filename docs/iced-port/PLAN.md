@@ -93,7 +93,7 @@ clear win. Record numbers in this file either way.
 | In v1 | Later | Out |
 |---|---|---|
 | Rectangle, ellipse, diamond, line, arrow, freedraw, text, image | Elbow arrows, frames | Live collaboration, share links |
-| Stroke/fill styles, roughness, opacity, fonts | Eraser, laser pointer | Mermaid → Excalidraw (JS library) |
+| Stroke/fill styles, roughness, opacity, fonts | Eraser, laser pointer | Mermaid → Excalidraw (dropped, decision 1) |
 | Bound text, bound arrows | Lasso selection | Embedded web pages (already blocked today) |
 | Everything in the README "What this adds" list | Search in canvas | |
 
@@ -186,19 +186,29 @@ Kept or added:
   `settings.rs` for follow-system dark mode. File dialogs use the XDG portal
   through `rfd`, so GTK can be dropped completely.
 
-## Open questions (to settle before or during phase 1)
+## Decisions (2026-11-11, from Rafa)
 
-1. Does roughr match rough.js for the same seed? (affects visual fidelity)
-2. Is losing Mermaid import acceptable for v1?
-3. Single instance without GTK: D-Bus (`zbus`) activation, or a Unix
+1. **Mermaid import is dropped.** Not in v1, not planned later.
+2. **The Iced build does not ship until all feature work is done** (phase 8).
+   Until then it is not packaged for users, and `main` keeps releasing the
+   Tauri app.
+3. **Drawings: identical wobble preferred; compatible required.** Matching
+   rough.js shape-for-shape (same seed → same strokes) is the goal. The floor
+   is that every drawing made by Excalidraw or the Tauri build opens and
+   round-trips without loss, even if strokes wobble differently.
+
+## Open questions
+
+1. Does roughr match rough.js for the same seed? Phase 1 measures it. If
+   not, decide whether to patch roughr (or vendor a fixed copy) so the RNG
+   and the order it is drawn from match rough.js exactly.
+2. Single instance without GTK: D-Bus (`zbus`) activation, or a Unix
    socket next to the existing lock file in `store.rs`?
-4. Keep both builds shipping in parallel for a while, or replace outright
-   after phase 8?
 
 ## Status
 
 | # | Phase | Status |
 |---|---|---|
-| 0 | Workspace + extract core | Not started |
+| 0 | Workspace + extract core | **Done** 2026-11-11: `iced/crates/core` (20 tests), src-tauri wrappers (6 tests), clippy clean, `npm run check` 41/41, CI runs both |
 | 1 | Spike + gate | Not started |
 | 2–8 | | Not started |

@@ -52,11 +52,11 @@ check("every preset is a valid theme", () => {
 });
 
 check("preset ids are ids the backend will accept", () => {
-  // Mirrors `theme_file` in src-tauri/src/settings.rs, which is what a user
+  // Mirrors `theme_file` in iced/crates/core/src/settings.rs, which is what a user
   // theme overriding a preset has to satisfy.
   for (const { id } of t.PRESET_THEMES) assert.match(id, t.ID_PATTERN);
   // The Rust side's copy of the rule, which the renderer's must not outgrow.
-  const store = readFileSync("src-tauri/src/store.rs", "utf8");
+  const store = readFileSync("iced/crates/core/src/store.rs", "utf8");
   assert.ok(store.includes(`id.len() <= ${t.MAX_ID_LENGTH}`), "safe_id's length limit");
   assert.ok(store.includes("c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'"), "safe_id's characters");
 });
@@ -175,7 +175,7 @@ check("Save writes in place only to a name the backend will write", () => {
 });
 
 check("tab ids are ids the backend will accept as file names", () => {
-  // Mirrors `safe_id` in src-tauri/src/store.rs, which is what a tab id has to
+  // Mirrors `safe_id` in iced/crates/core/src/store.rs, which is what a tab id has to
   // satisfy before it names a snapshot.
   for (let i = 0; i < 5; i++) assert.match(t.newTabId(), t.ID_PATTERN);
   assert.equal(new Set([t.newTabId(), t.newTabId(), t.newTabId()]).size, 3);

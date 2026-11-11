@@ -7,9 +7,19 @@ use std::path::{Path, PathBuf};
 /// user's desktop configuration rather than in an app-private blob.
 pub fn config_dir() -> PathBuf {
     config_base(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
-        // HOME unset or relative as well: glib asks the password database.
-        .unwrap_or_else(|| gtk::glib::home_dir().join(".config"))
+        // HOME unset or relative as well: ask the password database, as
+        // glib's `home_dir` did before this moved out of the Tauri crate.
+        .unwrap_or_else(|| home_dir().join(".config"))
         .join("excalidraw-desktop")
+}
+
+/// The user's home: `HOME` if set, else the password database entry, which
+/// is what `std` falls back to. `/` if neither answers, rather than a panic.
+// Deprecated for years over its Windows behaviour, which does not apply
+// here; allowed so the build stays quiet on toolchains that still say so.
+#[allow(deprecated)]
+fn home_dir() -> PathBuf {
+    std::env::home_dir().unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// The XDG base directory for config, as the spec defines it.

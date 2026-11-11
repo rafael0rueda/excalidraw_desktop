@@ -2,6 +2,14 @@
 
 Last updated: 2026-10-07
 
+## Branch `iced-port` (started 2026-11-11)
+
+A native Iced rewrite, planned and tracked in `docs/iced-port/PLAN.md`. Not
+shipped until all its feature work is done; `main` keeps releasing Tauri.
+Phase 0 moved the disk logic (`store`, `scope`, `files`, `recent`, `session`,
+`settings`, `library`) into `iced/crates/core`, which `src-tauri` now depends
+on; `src-tauri/src` keeps only thin `#[tauri::command]` wrappers.
+
 ## Decisions already made (do not re-litigate)
 
 - **Tauri v2, not Electron.** Chosen after empirically testing Excalidraw 0.18.1
@@ -637,6 +645,7 @@ npm run check                  # the gate: pure modules, versions, bundled libra
 npm run lint                   # the React hooks rules, nothing else
 npm run bump -- 0.5.4          # every place the version is written, at once
 cargo test --lib --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path iced/Cargo.toml   # the shared core crate: config, session, atomic writes
 cargo build --manifest-path src-tauri/Cargo.toml
 npm run bundle                 # RPM and deb
 

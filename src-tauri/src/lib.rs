@@ -4,10 +4,11 @@ mod dialogs;
 mod files;
 mod library;
 mod recent;
-mod scope;
 mod session;
 mod settings;
-mod store;
+
+// Shared with the Iced port; see iced/crates/core.
+use excalidraw_desktop_core::{scope, store};
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -322,7 +323,7 @@ pub fn run() {
             // Whatever a run that died mid-write left behind. This is the
             // only instance and nothing is writing yet.
             for dir in ["", "session", "themes"] {
-                files::sweep_temp_files(&store::config_dir().join(dir));
+                excalidraw_desktop_core::files::sweep_temp_files(&store::config_dir().join(dir));
             }
             // Named on the command line by the user, so the renderer may read them.
             let files = startup_drawings();

@@ -964,9 +964,9 @@ name = "excalidraw-desktop"
 version = "0.5.4"
 dependencies = [
  "base64 0.22.1",
+ "excalidraw-desktop-core",
  "gdk-pixbuf",
  "gtk",
- "libc",
  "serde",
  "serde_json",
  "tauri",
@@ -975,6 +975,15 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
+]
+
+[[package]]
+name = "excalidraw-desktop-core"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

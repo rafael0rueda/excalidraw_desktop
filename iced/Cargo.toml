@@ -1,0 +1,6 @@
+# The Iced port (docs/iced-port/PLAN.md). Phase 0 holds only `core`, which the
+# Tauri app in ../src-tauri also builds against, so both read and write the
+# same files in ~/.config/excalidraw-desktop the same way.
+[workspace]
+resolver = "2"
+members = ["crates/core"]
