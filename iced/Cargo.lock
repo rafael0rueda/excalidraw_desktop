@@ -988,6 +988,7 @@ name = "excalidraw-iced"
 version = "0.0.0"
 dependencies = [
  "base64",
+ "editor",
  "excalidraw-desktop-core",
  "iced",
  "image",

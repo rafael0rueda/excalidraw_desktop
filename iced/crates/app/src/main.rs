@@ -1,29 +1,46 @@
-//! Excalidraw Desktop on Iced — phase 1, a read-only viewer.
+//! Excalidraw Desktop on Iced — phase 2: editing.
 //!
 //!   excalidraw-iced drawing.excalidraw
 //!   excalidraw-iced --bench 10 drawing.excalidraw
+//!
+//! Draw with the toolbar or Excalidraw's keys (V R D O A L P, H to pan, Q to
+//! keep the tool); select, move, resize, rotate; Ctrl+Z/Y, Ctrl+C/X/V/D,
+//! Ctrl+G, Ctrl+[ ], Delete; Ctrl+S saves to the file it was opened from.
+//! Pan with the wheel, a middle drag or Space+drag; Ctrl+wheel zooms,
+//! Shift+1 fits the drawing.
 //!
 //! `--bench SECONDS` pans, then zooms, for that long and prints frame timings,
 //! memory and start-up time, for the go/no-go gate in docs/iced-port/PLAN.md.
 //! `--screenshot out.png [--zoom F]` saves the window once drawn, and exits:
 //! the drawing fitted to the window, then zoomed F times about its centre.
+//! `--script FILE` replays editor actions first (see script.rs).
 //! `NO_MSAA=1` turns antialiasing off, to separate what MSAA does to thin
 //! lines (it thickens them; see PLAN.md) from what the geometry is.
 
+mod bench;
 mod images;
+mod layers;
 mod paint;
+mod script;
+mod toolbar;
 mod view;
 
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 
-use iced::widget::canvas::Cache;
-use iced::widget::{container, text};
-use iced::{window, Element, Length, Point, Size, Subscription, Task, Vector};
+use editor::{Editor, Tool};
+use iced::keyboard::{self, key::Named, Key};
+use iced::widget::{column, container, stack, text};
+use iced::{clipboard, window, Color, Element, Length, Point, Size, Subscription, Task, Vector};
+use layers::Layers;
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use view::{Loaded, SceneView, Timings, View};
+use view::{Input, SceneView, Timings, View};
 
 const WINDOW: Size = Size::new(1280.0, 800.0);
+
+/// A new drawing, as Excalidraw writes an empty one.
+const EMPTY: &str = r##"{"type":"excalidraw","version":2,"source":"excalidraw-desktop","elements":[],"appState":{"viewBackgroundColor":"#ffffff"},"files":{}}"##;
 
 #[derive(Clone, Debug)]
 struct Args {
@@ -31,6 +48,7 @@ struct Args {
     bench: Option<f32>,
     screenshot: Option<String>,
     zoom: f32,
+    script: Option<String>,
 }
 
 fn args() -> Args {
@@ -39,204 +57,296 @@ fn args() -> Args {
         bench: None,
         screenshot: None,
         zoom: 1.0,
+        script: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
-        if a == "--bench" {
-            args.bench = it.next().and_then(|s| s.parse().ok());
-        } else if a == "--screenshot" {
-            args.screenshot = it.next();
-        } else if a == "--zoom" {
-            args.zoom = it.next().and_then(|s| s.parse().ok()).unwrap_or(1.0);
-        } else {
-            args.path = Some(a);
+        match a.as_str() {
+            "--bench" => args.bench = it.next().and_then(|s| s.parse().ok()),
+            "--screenshot" => args.screenshot = it.next(),
+            "--zoom" => args.zoom = it.next().and_then(|s| s.parse().ok()).unwrap_or(1.0),
+            "--script" => args.script = it.next(),
+            _ => args.path = Some(a),
         }
     }
     args
 }
 
 #[derive(Debug, Clone)]
-enum Message {
-    View(View),
+pub enum Message {
+    Input(Input),
+    Tool(Tool),
+    ToggleLock,
+    Undo,
+    Redo,
+    Key(keyboard::Event),
+    Paste(Option<String>),
     Resized(Size),
     Tick(Instant),
     Shot(window::Screenshot),
 }
 
-struct Bench {
-    seconds: f32,
-    /// This process's CPU time when the animation started.
-    cpu_at_start: f64,
-    started: Option<Instant>,
-    base: View,
-    last: Option<Instant>,
-    /// Intervals between presented frames: (seconds into the run, interval).
-    intervals: Vec<(f32, Duration)>,
+struct Document {
+    editor: Editor,
+    layers: Layers,
+    background: Color,
 }
 
-struct App {
-    title: String,
-    loaded: Result<Loaded, String>,
+pub struct App {
+    path: Option<PathBuf>,
+    doc: Result<Document, String>,
     view: View,
     size: Size,
-    cache: Cache,
     built_at: RefCell<Option<f32>>,
     timings: RefCell<Timings>,
-    bench: Option<Bench>,
+    bench: Option<bench::Bench>,
     launched: Instant,
     load_time: Duration,
     screenshot: Option<String>,
     zoom: f32,
     ticks: u32,
+    /// Space held: dragging pans.
+    space: bool,
+    modifiers: keyboard::Modifiers,
+    /// The last pointer position, in the scene: where pastes land.
+    pointer: [f64; 2],
+    status: Option<String>,
 }
 
-fn load(path: &str) -> Result<Loaded, String> {
+fn load(path: &str) -> Result<Document, String> {
     let path = std::path::Path::new(path);
     excalidraw_desktop_core::files::readable(path, excalidraw_desktop_core::files::MAX_TEXT_BYTES)?;
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let scene = scene::Scene::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    // This app's theme owns the canvas colour (PROGRESS.md); the viewer uses
-    // the drawing's own until themes arrive in phase 5.
-    let background_css = scene
+    Ok(document(scene))
+}
+
+fn document(scene: scene::Scene) -> Document {
+    // This app's theme owns the canvas colour (PROGRESS.md); until themes
+    // arrive in phase 5 the drawing's own is used.
+    let css = scene
         .view_background_color()
         .unwrap_or("#ffffff")
         .to_owned();
-    let mut elements = Vec::new();
-    let mut images = paint::Images::new();
-    let mut bounds = [
-        f64::INFINITY,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::NEG_INFINITY,
-    ];
-    for e in scene.visible() {
-        let prepared = render::prepare(e, &scene, &background_css);
-        if prepared.items.is_empty() {
-            continue;
-        }
-        let b = prepared.bounds;
-        bounds = [
-            bounds[0].min(b[0]),
-            bounds[1].min(b[1]),
-            bounds[2].max(b[2]),
-            bounds[3].max(b[3]),
-        ];
-        if let Some(handle) = images::decode(&scene, e) {
-            images.insert(e.id.clone(), handle);
-        }
-        elements.push((e.id.clone(), prepared));
+    let layers = Layers::new(&scene, &css);
+    let bg = render::color::parse(&css);
+    Document {
+        editor: Editor::new(scene),
+        layers,
+        background: Color::from_rgba(bg.r, bg.g, bg.b, bg.a),
     }
-    if elements.is_empty() {
-        bounds = [0.0, 0.0, 1.0, 1.0];
-    }
-    let bg = render::color::parse(&background_css);
-    Ok(Loaded {
-        elements,
-        images,
-        background: iced::Color::from_rgba(bg.r, bg.g, bg.b, bg.a),
-        bounds,
-    })
 }
 
 /// The view that shows the whole drawing, with a margin.
-fn fit(bounds: [f64; 4], size: Size) -> View {
-    let (w, h) = (
-        (bounds[2] - bounds[0]) as f32,
-        (bounds[3] - bounds[1]) as f32,
-    );
+fn fit(bounds: Option<[f64; 4]>, size: Size) -> View {
+    let Some(b) = bounds else {
+        return View {
+            pan: Vector::new(size.width / 2.0, size.height / 2.0),
+            zoom: 1.0,
+        };
+    };
+    let (w, h) = ((b[2] - b[0]) as f32, (b[3] - b[1]) as f32);
     let zoom = ((size.width - 80.0) / w.max(1.0))
         .min((size.height - 80.0) / h.max(1.0))
         .clamp(View::MIN_ZOOM, 1.0);
     let pan = Vector::new(
-        (size.width - w * zoom) / 2.0 - bounds[0] as f32 * zoom,
-        (size.height - h * zoom) / 2.0 - bounds[1] as f32 * zoom,
+        (size.width - w * zoom) / 2.0 - b[0] as f32 * zoom,
+        (size.height - h * zoom) / 2.0 - b[1] as f32 * zoom,
     );
     View { pan, zoom }
+}
+
+/// The editor's own key, for a key press, if it has one.
+fn editor_key(key: &Key) -> Option<editor::Key> {
+    Some(match key.as_ref() {
+        Key::Named(Named::Delete) => editor::Key::Delete,
+        Key::Named(Named::Backspace) => editor::Key::Backspace,
+        Key::Named(Named::Escape) => editor::Key::Escape,
+        Key::Named(Named::ArrowLeft) => editor::Key::Left,
+        Key::Named(Named::ArrowRight) => editor::Key::Right,
+        Key::Named(Named::ArrowUp) => editor::Key::Up,
+        Key::Named(Named::ArrowDown) => editor::Key::Down,
+        Key::Character(c) => editor::Key::Char(c.chars().next()?.to_ascii_lowercase()),
+        _ => return None,
+    })
 }
 
 impl App {
     fn boot(args: Args) -> (Self, Task<Message>) {
         let launched = Instant::now();
-        let loaded = match &args.path {
-            Some(path) => load(path),
-            None => Err("Usage: excalidraw-iced <drawing.excalidraw>".into()),
+        let doc = match &args.path {
+            Some(path) if std::path::Path::new(path).exists() => load(path),
+            // A new drawing, saved to that name with Ctrl+S.
+            _ => Ok(document(
+                scene::Scene::parse(EMPTY).expect("an empty drawing parses"),
+            )),
         };
+        let mut doc = doc;
+        if let (Some(file), Ok(d)) = (&args.script, &mut doc) {
+            match std::fs::read_to_string(file)
+                .map_err(|e| e.to_string())
+                .and_then(|t| script::run(&mut d.editor, &t))
+            {
+                Ok(()) => {
+                    let changes = d.editor.take_changes();
+                    d.layers.apply(&d.editor.scene, changes);
+                }
+                Err(e) => eprintln!("--script {file}: {e}"),
+            }
+        }
         let load_time = launched.elapsed();
         let centre = Point::new(WINDOW.width / 2.0, WINDOW.height / 2.0);
-        let view = loaded.as_ref().map_or(
+        let view = doc.as_ref().map_or(
             View {
                 pan: Vector::ZERO,
                 zoom: 1.0,
             },
-            |l| fit(l.bounds, WINDOW).zoomed(args.zoom, centre),
+            |d| fit(d.layers.bounds(), WINDOW).zoomed(args.zoom, centre),
         );
-        let title = args.path.as_deref().map_or("Excalidraw".into(), |p| {
-            let name = std::path::Path::new(p)
-                .file_name()
-                .map_or(p.into(), |n| n.to_string_lossy().into_owned());
-            format!("{name} — Excalidraw (Iced)")
-        });
-        if let Ok(l) = &loaded {
+        if let Ok(d) = &doc {
             eprintln!(
                 "loaded {} elements in {:.1} ms",
-                l.elements.len(),
+                d.layers.prepared.len(),
                 load_time.as_secs_f64() * 1e3
             );
-            let b = l.bounds;
-            // For iced/bench/webkit.py, which shows Excalidraw at the same view.
-            eprintln!("bounds {} {} {} {}", b[0], b[1], b[2], b[3]);
+            if let Some(b) = d.layers.bounds() {
+                // For iced/bench/webkit.py, which shows Excalidraw at the same view.
+                eprintln!("bounds {} {} {} {}", b[0], b[1], b[2], b[3]);
+            }
         }
-        let bench = args.bench.map(|seconds| Bench {
-            seconds,
-            cpu_at_start: 0.0,
-            started: None,
-            base: view,
-            last: None,
-            intervals: Vec::new(),
-        });
         let app = Self {
-            title,
-            loaded,
+            path: args.path.map(PathBuf::from),
+            doc,
             view,
             size: WINDOW,
-            cache: Cache::new(),
             built_at: RefCell::new(None),
             timings: RefCell::new(Timings::default()),
-            bench,
+            bench: args.bench.map(|s| bench::Bench::new(s, view)),
             launched,
             load_time,
             screenshot: args.screenshot,
             zoom: args.zoom,
             ticks: 0,
+            space: false,
+            modifiers: keyboard::Modifiers::default(),
+            pointer: [0.0, 0.0],
+            status: None,
         };
         (app, Task::none())
     }
 
+    /// Brings the caches up to date after the editor changed something.
+    fn sync(&mut self) {
+        if let Ok(d) = &mut self.doc {
+            let changes = d.editor.take_changes();
+            d.layers.apply(&d.editor.scene, changes);
+            d.editor.zoom = f64::from(self.view.zoom);
+        }
+    }
+
+    fn set_view(&mut self, view: View) {
+        self.view = view;
+        if let Ok(d) = &mut self.doc {
+            d.editor.zoom = f64::from(view.zoom);
+        }
+    }
+
+    fn save(&mut self) {
+        let (Some(path), Ok(d)) = (&self.path, &mut self.doc) else {
+            return;
+        };
+        let json = d.editor.scene.to_file_json();
+        self.status = Some(
+            match excalidraw_desktop_core::files::write_atomic(path, json.as_bytes()) {
+                Ok(()) => {
+                    d.editor.mark_saved();
+                    format!("Saved {}", path.display())
+                }
+                Err(e) => format!("Could not save: {e}"),
+            },
+        );
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle(message);
+        self.sync();
+        task
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::View(view) => self.view = view,
+            Message::Input(Input::View(view)) => self.set_view(view),
+            Message::Input(input) => {
+                let Ok(d) = &mut self.doc else {
+                    return Task::none();
+                };
+                match input {
+                    Input::Down(p, m) => d.editor.pointer_down(p, m),
+                    Input::Move(p, m) => {
+                        self.pointer = p;
+                        d.editor.pointer_move(p, m);
+                    }
+                    Input::Up(p, m) => d.editor.pointer_up(p, m),
+                    Input::View(_) => {}
+                }
+            }
+            Message::Tool(tool) => {
+                if let Ok(d) = &mut self.doc {
+                    d.editor.tool = tool;
+                    if tool != Tool::Selection {
+                        d.editor.selection.clear();
+                    }
+                }
+            }
+            Message::ToggleLock => {
+                if let Ok(d) = &mut self.doc {
+                    d.editor.tool_locked = !d.editor.tool_locked;
+                }
+            }
+            Message::Undo => {
+                if let Ok(d) = &mut self.doc {
+                    d.editor.undo();
+                }
+            }
+            Message::Redo => {
+                if let Ok(d) = &mut self.doc {
+                    d.editor.redo();
+                }
+            }
+            Message::Key(event) => return self.key(event),
+            Message::Paste(text) => {
+                if let (Some(text), Ok(d)) = (text, &mut self.doc) {
+                    if !d.editor.paste(&text, self.pointer) {
+                        self.status = Some(
+                            "Only Excalidraw shapes can be pasted yet; text comes in phase 3"
+                                .into(),
+                        );
+                    }
+                }
+            }
             Message::Resized(size) => {
                 let first = self.size == WINDOW;
                 self.size = size;
                 if first {
-                    if let Ok(l) = &self.loaded {
-                        self.view = fit(l.bounds, size)
+                    if let Ok(d) = &self.doc {
+                        let view = fit(d.layers.bounds(), size)
                             .zoomed(self.zoom, Point::new(size.width / 2.0, size.height / 2.0));
+                        self.set_view(view);
                         if let Some(b) = &mut self.bench {
-                            b.base = self.view;
+                            b.base = view;
                         }
                     }
                 }
             }
             Message::Shot(shot) => {
                 if let Some(path) = &self.screenshot {
-                    let saved = image::RgbaImage::from_raw(
+                    match image::RgbaImage::from_raw(
                         shot.size.width,
                         shot.size.height,
                         shot.rgba.to_vec(),
                     )
-                    .map(|img| img.save(path));
-                    match saved {
+                    .map(|img| img.save(path))
+                    {
                         Some(Ok(())) => eprintln!("saved {path}"),
                         _ => eprintln!("could not save {path}"),
                     }
@@ -254,138 +364,104 @@ impl App {
                     }
                     return Task::none();
                 }
-                let Some(bench) = &mut self.bench else {
+                let Some(b) = &mut self.bench else {
                     return Task::none();
                 };
-                if bench.started.is_none() {
-                    bench.cpu_at_start = cpu_seconds();
-                }
-                let started = *bench.started.get_or_insert_with(|| {
-                    eprintln!(
-                        "first frame {:.0} ms after launch",
-                        self.launched.elapsed().as_secs_f64() * 1e3
-                    );
-                    now
-                });
-                let t = (now - started).as_secs_f32();
-                if let Some(last) = bench.last {
-                    bench.intervals.push((t, now - last));
-                }
-                bench.last = Some(now);
-                let half = bench.seconds / 2.0;
-                let base = bench.base;
-                self.view = if t < half {
-                    // Pan: a circle 300 px across, once a second, at the fitted zoom.
-                    let a = t * std::f32::consts::TAU;
-                    View {
-                        pan: base.pan + Vector::new(a.cos() * 150.0, a.sin() * 150.0),
-                        zoom: base.zoom,
+                let launched = self.launched;
+                match b.tick(now, launched, self.size) {
+                    Some(view) => self.set_view(view),
+                    None => {
+                        let elements = self.doc.as_ref().map_or(0, |d| d.layers.prepared.len());
+                        b.report(&self.timings.borrow(), elements, self.load_time);
+                        return iced::exit();
                     }
-                } else {
-                    // Zoom: from the fit to 4× and back, every two seconds, about the centre.
-                    let s = (1.0 - ((t - half) * std::f32::consts::PI).cos()) / 2.0;
-                    base.zoomed(
-                        4f32.powf(s),
-                        Point::new(self.size.width / 2.0, self.size.height / 2.0),
-                    )
-                };
-                if t >= bench.seconds {
-                    self.report();
-                    return iced::exit();
                 }
             }
         }
         Task::none()
     }
 
-    fn report(&self) {
-        let Some(bench) = &self.bench else { return };
-        let half = bench.seconds / 2.0;
-        let stats = |name: &str, xs: Vec<Duration>| {
-            if xs.is_empty() {
-                return;
+    fn key(&mut self, event: keyboard::Event) -> Task<Message> {
+        match event {
+            keyboard::Event::ModifiersChanged(m) => self.modifiers = m,
+            keyboard::Event::KeyReleased {
+                key: Key::Named(Named::Space),
+                ..
+            } => self.space = false,
+            keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                let ctrl = modifiers.command();
+                match key.as_ref() {
+                    Key::Named(Named::Space) => self.space = true,
+                    Key::Character("s") if ctrl => self.save(),
+                    Key::Character("c") if ctrl => {
+                        if let Some(text) = self.doc.as_ref().ok().and_then(|d| d.editor.copy()) {
+                            return clipboard::write(text);
+                        }
+                    }
+                    Key::Character("x") if ctrl => {
+                        if let Some(text) = self.doc.as_mut().ok().and_then(|d| d.editor.cut()) {
+                            return clipboard::write(text);
+                        }
+                    }
+                    Key::Character("v") if ctrl => return clipboard::read().map(Message::Paste),
+                    // Shift+1: the whole drawing in view, as in Excalidraw.
+                    Key::Character("!" | "1") if modifiers.shift() => {
+                        if let Ok(d) = &self.doc {
+                            let view = fit(d.layers.bounds(), self.size);
+                            self.set_view(view);
+                        }
+                    }
+                    Key::Character("=" | "+") if ctrl => self.set_view(self.view.zoomed(
+                        1.25,
+                        Point::new(self.size.width / 2.0, self.size.height / 2.0),
+                    )),
+                    Key::Character("-") if ctrl => self.set_view(self.view.zoomed(
+                        0.8,
+                        Point::new(self.size.width / 2.0, self.size.height / 2.0),
+                    )),
+                    _ => {
+                        if let (Some(k), Ok(d)) = (editor_key(&key), &mut self.doc) {
+                            let m = editor::Modifiers {
+                                shift: modifiers.shift(),
+                                alt: modifiers.alt(),
+                                ctrl,
+                            };
+                            d.editor.key(k, m);
+                        }
+                    }
+                }
             }
-            let mut ms: Vec<f64> = xs.iter().map(|d| d.as_secs_f64() * 1e3).collect();
-            ms.sort_by(f64::total_cmp);
-            let mean = ms.iter().sum::<f64>() / ms.len() as f64;
-            let p = |q: f64| ms[((ms.len() - 1) as f64 * q) as usize];
-            println!(
-                "{name:<28} n={:<5} mean {mean:6.2} ms  p50 {:6.2}  p95 {:6.2}  max {:6.2}  ({:.0} fps)",
-                ms.len(),
-                p(0.5),
-                p(0.95),
-                ms[ms.len() - 1],
-                1e3 / mean
-            );
-        };
-        stats(
-            "pan: frame interval",
-            bench
-                .intervals
-                .iter()
-                .filter(|(t, _)| *t < half)
-                .map(|(_, d)| *d)
-                .collect(),
-        );
-        stats(
-            "zoom: frame interval",
-            bench
-                .intervals
-                .iter()
-                .filter(|(t, _)| *t >= half)
-                .map(|(_, d)| *d)
-                .collect(),
-        );
-        let timings = self.timings.borrow();
-        stats(
-            "draw call (CPU)",
-            timings.frames.iter().map(|(_, total)| *total).collect(),
-        );
-        stats(
-            "tessellation rebuilds",
-            timings
-                .frames
-                .iter()
-                .map(|(r, _)| *r)
-                .filter(|r| !r.is_zero())
-                .collect(),
-        );
-        let cpu = cpu_seconds() - bench.cpu_at_start;
-        let frames = bench.intervals.len();
-        println!(
-            "CPU, all processes          {cpu:.2} s over {frames} frames = {:.2} ms/frame",
-            cpu * 1e3 / frames.max(1) as f64
-        );
-        if let Ok(l) = &self.loaded {
-            println!(
-                "elements {}  load+prepare {:.1} ms",
-                l.elements.len(),
-                self.load_time.as_secs_f64() * 1e3
-            );
+            _ => {}
         }
-        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-            for line in status
-                .lines()
-                .filter(|l| l.starts_with("VmRSS") || l.starts_with("VmHWM"))
-            {
-                println!("{line}");
-            }
-        }
+        Task::none()
     }
 
     fn view(&self) -> Element<'_, Message> {
-        match &self.loaded {
-            Ok(loaded) => SceneView::new(
-                loaded,
-                &self.cache,
-                &self.built_at,
-                self.view,
-                self.bench.as_ref().map(|_| &self.timings),
-                Message::View,
-            )
-            .into(),
-            Err(e) => container(text(e.clone())).center(Length::Fill).into(),
+        let d = match &self.doc {
+            Ok(d) => d,
+            Err(e) => return container(text(e.clone())).center(Length::Fill).into(),
+        };
+        let scene = SceneView {
+            layers: &d.layers,
+            editor: &d.editor,
+            built_at: &self.built_at,
+            view: self.view,
+            background: d.background,
+            panning: self.space || d.editor.tool == Tool::Hand,
+            timings: self.bench.as_ref().map(|_| &self.timings),
+            on_input: Box::new(Message::Input),
+        };
+        if self.bench.is_some() || self.screenshot.is_some() {
+            return scene.into();
         }
+        let status = text(self.status.clone().unwrap_or_default())
+            .size(12)
+            .color(Color::from_rgb(0.4, 0.4, 0.4));
+        stack![
+            Element::from(scene),
+            column![toolbar::toolbar(&d.editor), container(status).padding(8)].width(Length::Fill)
+        ]
+        .into()
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -393,28 +469,22 @@ impl App {
         if self.bench.is_some() || self.screenshot.is_some() {
             Subscription::batch([resize, window::frames().map(Message::Tick)])
         } else {
-            resize
+            Subscription::batch([resize, keyboard::listen().map(Message::Key)])
         }
     }
 
     fn title(&self) -> String {
-        self.title.clone()
+        let name = self
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map_or("Untitled".into(), |n| n.to_string_lossy().into_owned());
+        let dirty = self.doc.as_ref().is_ok_and(|d| d.editor.is_dirty());
+        format!(
+            "{}{name} — Excalidraw (Iced)",
+            if dirty { "• " } else { "" }
+        )
     }
-}
-
-/// User + system CPU time of this process, from /proc (Linux).
-fn cpu_seconds() -> f64 {
-    let Ok(stat) = std::fs::read_to_string("/proc/self/stat") else {
-        return 0.0;
-    };
-    let Some(rest) = stat.rfind(')').map(|i| &stat[i + 2..]) else {
-        return 0.0;
-    };
-    let fields: Vec<&str> = rest.split_whitespace().collect();
-    let ticks: f64 = fields.get(11).and_then(|v| v.parse().ok()).unwrap_or(0.0)
-        + fields.get(12).and_then(|v| v.parse().ok()).unwrap_or(0.0);
-    // CLK_TCK is 100 on every Linux this targets.
-    ticks / 100.0
 }
 
 fn main() -> iced::Result {

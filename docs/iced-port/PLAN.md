@@ -281,4 +281,35 @@ Kept or added:
 |---|---|---|
 | 0 | Workspace + extract core | **Done** 2026-11-11: `iced/crates/core` (20 tests), src-tauri wrappers (6 tests), clippy clean, `npm run check` 41/41, CI runs both |
 | 1 | Spike + gate | **Done** 2026-11-11, gate **GO** (results above). Crates `rough`, `scene`, `render`, `app` (viewer: `excalidraw-iced FILE`, drag or wheel to pan, Ctrl+wheel to zoom) |
-| 2–8 | | Not started |
+| 2 | Editing core | **Done** 2026-11-11 (results below) |
+| 3–8 | | Not started |
+
+### Phase 2 result, 2026-11-11
+
+`iced/crates/editor` (no UI, 17 tests that drive it as a user would) and
+the app around it: draw rectangles, diamonds, ellipses, lines, arrows and
+freehand (Excalidraw's keys V R D O A L P, H to pan, Q to keep the tool);
+select by click, Shift-click or rubber band, groups selected whole; move,
+resize from eight handles (rotated boxes keep their fixed corner, Shift
+keeps the ratio, Alt from the centre), rotate (Shift: 15°); delete, nudge,
+group/ungroup, z-order, duplicate; undo/redo; copy/cut/paste through the
+system clipboard in Excalidraw's own format; Ctrl+S saves.
+
+Compatibility, checked: a drawing edited and saved here opens in Excalidraw
+0.18.1 (`webkit.py shot`) with every element and stroke as drawn. Edits
+follow `mutateElement` (version, versionNonce, updated), new elements carry
+`_newElementBase`'s fields in order, z-order uses a port of
+fractional-indexing 3.2.0, saving drops deleted elements as Excalidraw's
+export does. Undo bumps versions, as Excalidraw's history does.
+
+The scene is now tessellated in chunks of 256 elements, so an edit
+re-tessellates one chunk (about 2 ms) instead of the whole drawing (72 ms at
+10k), and chunks off screen are skipped: 10k pan 132 fps (was 123). The
+render is pixel-identical to phase 1. `--script FILE` replays edits before
+`--screenshot`, for checking the app as a whole.
+
+Left for later phases, as planned: text and arrow labels, binding arrows to
+shapes, editing a line's points (2-point lines get no box handles until
+then), eraser, frames' screen-sized chrome; re-tessellating off the UI thread
+(a zoom-bucket change at 10k still costs up to 41 ms).
+

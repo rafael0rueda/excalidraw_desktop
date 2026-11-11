@@ -1,24 +1,25 @@
-//! The scene widget: the drawing tessellated once, then panned and zoomed
-//! by transforming the cached meshes rather than rebuilding them.
+//! The scene widget: the drawing's chunks, tessellated once and drawn under
+//! the view transform, with the editor's overlay on top.
 //!
-//! iced's own `Canvas` cannot do that: its cached geometry is drawn where it
+//! iced's own `Canvas` cannot do this: its cached geometry is drawn where it
 //! was built, so every pan would re-tessellate every element. This widget
-//! draws the cache under `renderer.with_transformation`, and rebuilds it
-//! only when the zoom leaves the power-of-two bucket it was built at, so
-//! curves stay smooth when zoomed in (plan, W1).
+//! draws the caches under `renderer.with_transformation`, and they are only
+//! rebuilt when the zoom leaves the power-of-two bucket they were built at
+//! (so curves stay smooth) or when an edit touches them (plan, W1).
 
-use crate::paint::{self, Images, Renderer};
+use crate::layers::Layers;
+use crate::paint::Renderer;
+use editor::{Cursor, Editor, Handle};
 use iced::advanced::graphics::geometry::Renderer as _;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Renderer as _};
 use iced::advanced::widget::{tree, Tree, Widget};
 use iced::advanced::{Clipboard, Shell};
 use iced::mouse::{self, ScrollDelta};
-use iced::widget::canvas::Cache;
+use iced::widget::canvas::{Frame, Path, Stroke};
 use iced::{
     keyboard, Color, Element, Event, Length, Point, Rectangle, Size, Transformation, Vector,
 };
-use render::Prepared;
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
@@ -33,7 +34,7 @@ impl View {
     pub const MIN_ZOOM: f32 = 0.1;
     pub const MAX_ZOOM: f32 = 30.0;
 
-    /// Zooms by `factor`, keeping the scene point under `anchor` still.
+    /// Zooms by `factor`, keeping the screen point `anchor` still.
     pub fn zoomed(self, factor: f32, anchor: Point) -> Self {
         let zoom = (self.zoom * factor).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
         let f = zoom / self.zoom;
@@ -48,56 +49,130 @@ impl View {
     pub fn build_zoom(self) -> f32 {
         2f32.powi(self.zoom.log2().round() as i32)
     }
+
+    pub fn to_scene(self, p: Point) -> [f64; 2] {
+        [
+            f64::from((p.x - self.pan.x) / self.zoom),
+            f64::from((p.y - self.pan.y) / self.zoom),
+        ]
+    }
+
+    pub fn to_screen(self, p: [f64; 2]) -> Point {
+        Point::new(
+            p[0] as f32 * self.zoom + self.pan.x,
+            p[1] as f32 * self.zoom + self.pan.y,
+        )
+    }
 }
 
-pub struct Loaded {
-    pub elements: Vec<(String, Prepared)>,
-    pub images: Images,
-    pub background: Color,
-    /// The union of every element's bounds.
-    pub bounds: [f64; 4],
+/// What the widget reports: pointer events in scene coordinates, or a new view.
+#[derive(Debug, Clone)]
+pub enum Input {
+    Down([f64; 2], editor::Modifiers),
+    Move([f64; 2], editor::Modifiers),
+    Up([f64; 2], editor::Modifiers),
+    View(View),
 }
 
-/// Time spent drawing, for the benchmark: (rebuilding the cache, total).
+/// Time spent drawing, for the benchmark: (rebuilding caches, total).
 #[derive(Default)]
 pub struct Timings {
     pub frames: Vec<(Duration, Duration)>,
 }
 
 pub struct SceneView<'a, Message> {
-    loaded: &'a Loaded,
-    cache: &'a Cache,
-    built_at: &'a RefCell<Option<f32>>,
-    view: View,
-    timings: Option<&'a RefCell<Timings>>,
-    on_view: Box<dyn Fn(View) -> Message + 'a>,
-}
-
-impl<'a, Message> SceneView<'a, Message> {
-    pub fn new(
-        loaded: &'a Loaded,
-        cache: &'a Cache,
-        built_at: &'a RefCell<Option<f32>>,
-        view: View,
-        timings: Option<&'a RefCell<Timings>>,
-        on_view: impl Fn(View) -> Message + 'a,
-    ) -> Self {
-        Self {
-            loaded,
-            cache,
-            built_at,
-            view,
-            timings,
-            on_view: Box::new(on_view),
-        }
-    }
+    pub layers: &'a Layers,
+    pub editor: &'a Editor,
+    pub built_at: &'a RefCell<Option<f32>>,
+    pub view: View,
+    pub background: Color,
+    /// Dragging pans instead of editing: the Hand tool, or Space held.
+    pub panning: bool,
+    pub timings: Option<&'a RefCell<Timings>>,
+    pub on_input: Box<dyn Fn(Input) -> Message + 'a>,
 }
 
 #[derive(Default)]
 struct State {
-    /// Where a drag started, and the pan at that moment.
-    drag: Option<(Point, Vector)>,
+    /// A pan in progress: where it started, and the pan then.
+    pan: Option<(Point, Vector)>,
+    /// The left button went down on the drawing, for the editor.
+    editing: bool,
     modifiers: keyboard::Modifiers,
+}
+
+fn modifiers(m: keyboard::Modifiers) -> editor::Modifiers {
+    editor::Modifiers {
+        shift: m.shift(),
+        alt: m.alt(),
+        ctrl: m.command(),
+    }
+}
+
+/// Excalidraw's selection colour.
+const SELECTION: Color = Color::from_rgb(
+    0x69 as f32 / 255.0,
+    0x65 as f32 / 255.0,
+    0xdb as f32 / 255.0,
+);
+
+fn outline(points: &[Point]) -> Path {
+    Path::new(|b| {
+        b.move_to(points[0]);
+        for p in &points[1..] {
+            b.line_to(*p);
+        }
+        b.close();
+    })
+}
+
+impl<Message> SceneView<'_, Message> {
+    /// Selection outlines, handles and the rubber band, in screen pixels.
+    fn overlay(&self, frame: &mut Frame<Renderer>) {
+        let to = |p: [f64; 2]| self.view.to_screen(p);
+        let line = Stroke::default().with_width(1.0).with_color(SELECTION);
+        let ed = self.editor;
+        let selected: Vec<_> = ed
+            .selection
+            .iter()
+            .filter_map(|id| ed.scene.by_id(id))
+            .filter(|e| !e.is_deleted)
+            .collect();
+        if selected.len() > 1 {
+            for e in &selected {
+                frame.stroke(&outline(&editor::geometry::corners(e).map(to)), line);
+            }
+        }
+        if let Some(h) = ed.handles() {
+            frame.stroke(&outline(&h.corners.map(to)), line);
+            let size = 8.0;
+            for (handle, at) in &h.handles {
+                let p = to(*at);
+                let shape = if *handle == Handle::Rotation {
+                    Path::circle(p, size / 2.0)
+                } else {
+                    Path::rectangle(
+                        Point::new(p.x - size / 2.0, p.y - size / 2.0),
+                        Size::new(size, size),
+                    )
+                };
+                frame.fill(&shape, Color::WHITE);
+                frame.stroke(&shape, line);
+            }
+        }
+        if let Some(m) = ed.marquee {
+            let (a, b) = (to([m[0], m[1]]), to([m[2], m[3]]));
+            let rect = Path::rectangle(a, Size::new(b.x - a.x, b.y - a.y));
+            frame.fill(
+                &rect,
+                Color {
+                    a: 0.08,
+                    ..SELECTION
+                },
+            );
+            frame.stroke(&rect, line);
+        }
+    }
 }
 
 impl<Message, Theme> Widget<Message, Theme, Renderer> for SceneView<'_, Message> {
@@ -139,37 +214,48 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for SceneView<'_, Message>
                 bounds,
                 ..renderer::Quad::default()
             },
-            self.loaded.background,
+            self.background,
         );
 
         let build_zoom = self.view.build_zoom();
         if *self.built_at.borrow() != Some(build_zoom) {
-            self.cache.clear();
+            self.layers.clear_caches();
             *self.built_at.borrow_mut() = Some(build_zoom);
         }
-        let [x0, y0, x1, y1] = self.loaded.bounds;
-        let scene_rect = Rectangle::new(
-            Point::new(x0 as f32 * build_zoom, y0 as f32 * build_zoom),
-            Size::new(
-                ((x1 - x0) as f32 * build_zoom).max(1.0),
-                ((y1 - y0) as f32 * build_zoom).max(1.0),
-            ),
-        );
+        // What part of the scene is on screen: chunks off it are skipped.
+        let tl = self.view.to_scene(Point::ORIGIN);
+        let br = self.view.to_scene(Point::new(bounds.width, bounds.height));
         let mut rebuilt = Duration::ZERO;
-        let geometry = self.cache.draw_with_bounds(renderer, scene_rect, |frame| {
-            let t = Instant::now();
-            for (id, prepared) in &self.loaded.elements {
-                paint::element(frame, id, prepared, &self.loaded.images, build_zoom);
-            }
-            rebuilt = t.elapsed();
-        });
-
         let scale = self.view.zoom / build_zoom;
         let transform =
             Transformation::translate(bounds.x + self.view.pan.x, bounds.y + self.view.pan.y)
                 * Transformation::scale(scale);
         renderer.with_layer(bounds, |renderer| {
-            renderer.with_transformation(transform, |renderer| renderer.draw_geometry(geometry));
+            for chunk in &self.layers.chunks {
+                let Some(b) = chunk.bounds else { continue };
+                if b[2] < tl[0] || b[0] > br[0] || b[3] < tl[1] || b[1] > br[1] {
+                    continue;
+                }
+                let rect = Rectangle::new(
+                    Point::new(b[0] as f32 * build_zoom, b[1] as f32 * build_zoom),
+                    Size::new(
+                        ((b[2] - b[0]) as f32 * build_zoom).max(1.0),
+                        ((b[3] - b[1]) as f32 * build_zoom).max(1.0),
+                    ),
+                );
+                let geometry = chunk.cache.draw_with_bounds(renderer, rect, |frame| {
+                    let t = Instant::now();
+                    self.layers.draw_chunk(frame, chunk, build_zoom);
+                    rebuilt += t.elapsed();
+                });
+                renderer
+                    .with_transformation(transform, |renderer| renderer.draw_geometry(geometry));
+            }
+            let mut frame = Frame::new(renderer, bounds.size());
+            self.overlay(&mut frame);
+            renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
+                renderer.draw_geometry(frame.into_geometry())
+            });
         });
         if let Some(timings) = self.timings {
             timings
@@ -192,29 +278,48 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for SceneView<'_, Message>
     ) {
         let state = tree.state.downcast_mut::<State>();
         let bounds = layout.bounds();
+        let m = modifiers(state.modifiers);
+        let local = |p: Point| p - Vector::new(bounds.x, bounds.y);
         match event {
-            Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => state.modifiers = *m,
-            Event::Mouse(mouse::Event::ButtonPressed(
-                mouse::Button::Left | mouse::Button::Middle,
-            )) => {
-                if let Some(p) = cursor.position_in(bounds) {
-                    state.drag = Some((p, self.view.pan));
+            Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) => state.modifiers = *mods,
+            Event::Mouse(mouse::Event::ButtonPressed(button)) => {
+                let Some(p) = cursor.position_in(bounds) else {
+                    return;
+                };
+                if *button == mouse::Button::Middle
+                    || (*button == mouse::Button::Left && self.panning)
+                {
+                    state.pan = Some((p, self.view.pan));
+                } else if *button == mouse::Button::Left {
+                    state.editing = true;
+                    shell.publish((self.on_input)(Input::Down(self.view.to_scene(p), m)));
+                } else {
+                    return;
+                }
+                shell.capture_event();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(_)) => {
+                if state.pan.take().is_some() {
+                    shell.capture_event();
+                }
+                if state.editing {
+                    state.editing = false;
+                    if let Some(p) = cursor.position() {
+                        shell.publish((self.on_input)(Input::Up(self.view.to_scene(local(p)), m)));
+                    }
                     shell.capture_event();
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(
-                mouse::Button::Left | mouse::Button::Middle,
-            )) => {
-                state.drag = None;
-            }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if let (Some((start, pan)), Some(p)) = (state.drag, cursor.position_in(bounds)) {
-                    let view = View {
+            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                let p = local(*position);
+                if let Some((start, pan)) = state.pan {
+                    shell.publish((self.on_input)(Input::View(View {
                         pan: pan + (p - start),
                         ..self.view
-                    };
-                    shell.publish((self.on_view)(view));
+                    })));
                     shell.capture_event();
+                } else if state.editing || bounds.contains(*position) {
+                    shell.publish((self.on_input)(Input::Move(self.view.to_scene(p), m)));
                 }
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
@@ -226,7 +331,7 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for SceneView<'_, Message>
                     ScrollDelta::Pixels { x, y } => (x, y),
                 };
                 // As in Excalidraw: the wheel pans, with Ctrl it zooms.
-                let view = if state.modifiers.control() {
+                let view = if state.modifiers.command() {
                     self.view.zoomed((dy / 300.0).exp(), p)
                 } else if state.modifiers.shift() {
                     View {
@@ -239,7 +344,7 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for SceneView<'_, Message>
                         ..self.view
                     }
                 };
-                shell.publish((self.on_view)(view));
+                shell.publish((self.on_input)(Input::View(view)));
                 shell.capture_event();
             }
             _ => {}
@@ -249,15 +354,30 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for SceneView<'_, Message>
     fn mouse_interaction(
         &self,
         tree: &Tree,
-        _layout: Layout<'_>,
-        _cursor: mouse::Cursor,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
         _viewport: &Rectangle,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
-        if tree.state.downcast_ref::<State>().drag.is_some() {
-            mouse::Interaction::Grabbing
-        } else {
-            mouse::Interaction::Grab
+        let state = tree.state.downcast_ref::<State>();
+        if state.pan.is_some() {
+            return mouse::Interaction::Grabbing;
+        }
+        if self.panning {
+            return mouse::Interaction::Grab;
+        }
+        let Some(p) = cursor.position_in(layout.bounds()) else {
+            return mouse::Interaction::None;
+        };
+        match self.editor.cursor_at(self.view.to_scene(p)) {
+            Cursor::Default => mouse::Interaction::None,
+            Cursor::Move => mouse::Interaction::Move,
+            Cursor::Crosshair => mouse::Interaction::Crosshair,
+            Cursor::Grab | Cursor::Resize(Handle::Rotation) => mouse::Interaction::Grab,
+            Cursor::Resize(Handle::N | Handle::S) => mouse::Interaction::ResizingVertically,
+            Cursor::Resize(Handle::E | Handle::W) => mouse::Interaction::ResizingHorizontally,
+            Cursor::Resize(Handle::NE | Handle::SW) => mouse::Interaction::ResizingDiagonallyUp,
+            Cursor::Resize(_) => mouse::Interaction::ResizingDiagonallyDown,
         }
     }
 }
