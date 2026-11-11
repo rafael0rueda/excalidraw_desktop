@@ -1,0 +1,204 @@
+# Iced port — plan
+
+Branch: `iced-port` (from `main` at 75225c2). Written 2026-11-11.
+Status: **plan only, nothing built yet.**
+
+## Goal
+
+Rebuild Excalidraw Desktop as a native Rust app on **Iced 0.14**, with no web
+engine, and keep files fully compatible with Excalidraw (excalidraw.com and the
+current Tauri build must open what the Iced build saves, and the reverse).
+
+The Tauri app stays on `main` and keeps shipping. The Iced app replaces it only
+if it passes the go/no-go gate (phase 1) and then reaches parity (phase 8).
+
+## Why this is a rewrite, not a swap
+
+The current editor is `@excalidraw/excalidraw` 0.18.1, a React library. Iced
+cannot run JavaScript, so everything Excalidraw does must be rebuilt in Rust:
+the scene model, hand-drawn rendering, tools, selection, text, arrows, undo,
+export. What carries over is the ~2.7k lines of Rust in `src-tauri/src` that
+are already almost free of Tauri (`store.rs`, `scope.rs` have no Tauri
+references at all; `session.rs`, `settings.rs`, `recent.rs`, `files.rs` only use
+it at the command boundary), plus `packaging/` and the theme JSON format.
+
+## Verified versions (crates.io, 2026-11-11)
+
+| Crate | Version | Use |
+|---|---|---|
+| `iced` | 0.14.0 | UI. Default features include `wgpu` **and** `tiny-skia` (software fallback) and `linux-theme-detection` |
+| `roughr` | 0.14.0 | Port of rough.js — hand-drawn strokes and hachure fills |
+| `kurbo` | 0.13.1 | Bézier geometry, hit-testing, bounding boxes |
+| `tiny-skia` | 0.12.0 | Offscreen PNG export |
+| `usvg` / `resvg` | 0.49.0 | Render embedded SVG images; check exported SVG |
+| `cosmic-text` | 0.19.0 | Text shaping and layout (iced already uses it) |
+| `rfd` | 0.18.0 | File dialogs through the XDG desktop portal |
+| `arboard` | 3.7.0 | Clipboard (text + images) |
+| `vello` | 0.11.0 | Only if the canvas needs a faster renderer (see W1) |
+
+Toolchain here: rustc 1.99.1.
+
+## Workspace layout
+
+```
+iced/                      Cargo workspace (new)
+  crates/core/             config dir, atomic writes, session, settings,
+                           recent, themes — moved out of src-tauri, no UI deps
+  crates/scene/            Excalidraw data model, serde, geometry, hit-testing,
+                           undo/redo — no UI deps, #![forbid(unsafe_code)]
+  crates/render/           scene → drawing commands (roughr), shared by the
+                           iced canvas, the SVG exporter and the PNG exporter
+  crates/app/              the Iced application
+src-tauri/                 unchanged except it depends on crates/core
+```
+
+The Tauri app also uses `crates/core`, so both builds read the same session,
+settings and themes on disk and can be compared on the same data. The
+`core` extraction is useful even if the port is abandoned and could go to
+`main` on its own.
+
+## Phases
+
+Each phase ends with a commit and an update to this file's status table.
+
+| # | Phase | Size | Exit criteria |
+|---|---|---|---|
+| 0 | Workspace + extract `core` | S | Tauri app builds and passes `scripts/check.mjs` using `crates/core`; `cargo test` green |
+| 1 | **Spike: read-only viewer** | M | Opens real `.excalidraw` files; draws rectangle, ellipse, diamond, line, arrow, freedraw, text, image; pan + zoom. **Go/no-go gate below** |
+| 2 | Editing core | L | Create/select/move/resize/rotate/delete, multi-select, group, z-order, undo/redo, copy/paste in Excalidraw's clipboard JSON |
+| 3 | Text and arrows | L | On-canvas text editing with IME, text bound in containers, arrows bound to shapes, arrowheads, labels |
+| 4 | Files, tabs, session | M | Open/save/save-as, atomic writes, recent, dirty guard, tabs, autosave + crash recovery, CLI args, single instance |
+| 5 | Themes | M | Ten presets, theme editor, user themes JSON, follow-system light/dark |
+| 6 | Export + library | M | PNG, SVG, copy-as-PNG; library panel with the ER and Kanagawa ERD sets; `.excalidrawlib` import |
+| 7 | Packaging | S | `.rpm` + `.deb`, `.desktop`, MIME association, reusing `packaging/` |
+| 8 | Parity review | S | Feature checklist vs README, benchmark table, decision: replace, keep both, or stop |
+
+### Phase 1 go/no-go gate
+
+Measure the Iced viewer against the Tauri build on the same machine and the
+same files: a small drawing, a 2k-element and a 10k-element scene.
+
+| Metric | Continue if Iced is… |
+|---|---|
+| Pan/zoom frame time (10k scene) | at least 2× better |
+| Resident memory after load | at most half |
+| Cold start to first frame | faster |
+| Visual fidelity | side-by-side screenshots look like the same drawing |
+
+If the gate fails, stop here; the cost of phases 2–8 is only worth it for a
+clear win. Record numbers in this file either way.
+
+### v1 scope
+
+| In v1 | Later | Out |
+|---|---|---|
+| Rectangle, ellipse, diamond, line, arrow, freedraw, text, image | Elbow arrows, frames | Live collaboration, share links |
+| Stroke/fill styles, roughness, opacity, fonts | Eraser, laser pointer | Mermaid → Excalidraw (JS library) |
+| Bound text, bound arrows | Lasso selection | Embedded web pages (already blocked today) |
+| Everything in the README "What this adds" list | Search in canvas | |
+
+## Iced's weak points and how this plan addresses them
+
+**W1. Raw rendering is below GPUI.**
+- Three canvas `Cache` layers: the static scene (redrawn only when
+  elements change), the selection overlay, and the stroke being drawn.
+  Panning and zooming change a transform and do not re-tessellate.
+- Pre-compute each element's roughr output once per change, keyed by
+  `(id, version)`. Excalidraw files already carry `version` per element.
+- Spatial index (R-tree) for hit-testing and for drawing only what is
+  visible.
+- Escape route: if profiling in phase 1 shows the canvas tessellator is the
+  bottleneck, render the scene through a custom `shader` widget with
+  `vello`. Its `wgpu` version must match iced's; check before adopting.
+
+**W2. Text editing is less mature than a browser's.**
+- Edit on-canvas text with an iced `text_editor` placed over the element,
+  the same trick Excalidraw uses with a `<textarea>`.
+- Test IME (fcitx5/ibus with Japanese and Chinese input), dead keys and
+  AZERTY in phase 3. Treat a failure as a blocker, not polish.
+- Bundle Excalidraw's fonts (Excalifont, Nunito, Lilita One, Comic Shanns,
+  Liberation Sans for Helvetica, Cascadia/Source Code) and fall back to
+  system fonts for CJK through `cosmic-text`/fontdb.
+
+**W3. Pre-1.0 API churn.**
+- Pin `iced = "=0.14.0"`.
+- Keep all logic in `core`, `scene` and `render`, which do not depend on
+  iced. An upgrade then only touches `crates/app`.
+
+**W4. No native menu bar.**
+- Draw the menu bar in-app with Iced widgets. It follows the theme with no
+  extra work, which removes the GTK recolouring code in `chrome.rs`.
+- Keyboard shortcuts move into one table shared by the menus and the key
+  handler. Keep the layout-independent fallback described in the README.
+
+**W5. Fewer ready-made widgets** (tabs, colour picker, menus).
+- Write the few needed (tab bar, colour picker, dropdown menu) in
+  `crates/app/widgets`, or use `iced_aw` if it has a 0.14-compatible
+  release at the time.
+
+**W6. Accessibility is limited in Iced.**
+- The canvas is not accessible in the web build either, so the loss is the
+  panels and dialogs.
+- Make every action reachable by keyboard and check focus order in each
+  phase. Follow Iced's accessibility work and adopt it when it ships.
+
+**W7. Excalidraw compatibility and upstream drift.** This is the biggest risk.
+- Every element struct carries
+  `#[serde(flatten)] extra: serde_json::Map<String, Value>`, so unknown or
+  newer fields survive a load/save round-trip untouched.
+- Golden tests: load and re-save a fixture corpus (files made by
+  excalidraw.com 0.18 and by the current Tauri build). The JSON must compare
+  equal, apart from fields we deliberately change.
+- Use each element's `seed` with roughr. Check in phase 1 whether
+  roughr reproduces rough.js's shapes for the same seed. If not, drawings
+  still open correctly but the wobble differs; decide if that is acceptable.
+
+## Security: what improves and what stays
+
+Removed attack surface:
+- No JavaScript engine, no HTML/CSS parser, no webview IPC bridge. The 26
+  Tauri commands and the capability file go away.
+- File paths come straight from the native dialog or the command line into
+  Rust, with no untrusted renderer in between. `scope.rs` becomes
+  unnecessary in the Iced build.
+- No WebKitGTK dependency, so its security updates no longer matter.
+
+Kept or added:
+- **Untrusted input is the drawing file.** Limit file size before parsing,
+  element count, point count per freedraw, and image size.
+- Decode images with explicit size limits (the `image` crate's `Limits`) and
+  render embedded SVG with `usvg`, which does not fetch external resources.
+- Keep atomic writes and the private config dir from `store.rs` as they are.
+- Links open in the system browser only for `http`, `https` and `mailto`.
+- `#![forbid(unsafe_code)]` in `core`, `scene` and `render`.
+- `cargo-deny` and `cargo-audit` in CI.
+- Fuzz the scene parser with `cargo-fuzz`, seeded from the golden corpus.
+
+## Side benefits for packaging
+
+- Runtime dependencies shrink to glibc, libxkbcommon, Wayland/X11 libs and
+  Vulkan or GL, which is optional because of the tiny-skia fallback. WebKitGTK
+  4.1 and GTK 3 are no longer needed.
+- Without the WebKitGTK version constraint, the app can be built in an older
+  container (glibc 2.31–2.35) and run on Debian 12 and Ubuntu 22.04. Today only
+  Fedora 44 is supported.
+- `linux-theme-detection` (iced default) replaces the GTK/portal code in
+  `settings.rs` for follow-system dark mode. File dialogs use the XDG portal
+  through `rfd`, so GTK can be dropped completely.
+
+## Open questions (to settle before or during phase 1)
+
+1. Does roughr match rough.js for the same seed? (affects visual fidelity)
+2. Is losing Mermaid import acceptable for v1?
+3. Single instance without GTK: D-Bus (`zbus`) activation, or a Unix
+   socket next to the existing lock file in `store.rs`?
+4. Keep both builds shipping in parallel for a while, or replace outright
+   after phase 8?
+
+## Status
+
+| # | Phase | Status |
+|---|---|---|
+| 0 | Workspace + extract core | Not started |
+| 1 | Spike + gate | Not started |
+| 2–8 | | Not started |
