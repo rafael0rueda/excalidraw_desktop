@@ -1,0 +1,15 @@
+[package]
+name = "editor"
+version = "0.0.0"
+description = "Editing an Excalidraw drawing: tools, selection, transforms, history, clipboard. No UI."
+authors = ["rafa"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+scene = { path = "../scene" }
+rough = { path = "../rough" }
+render = { path = "../render" }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }

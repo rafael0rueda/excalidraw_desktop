@@ -125,6 +125,49 @@ impl Scene {
         ))
     }
 
+    /// An embedded file's whole entry (`mimeType`, `dataURL`, …), for copying.
+    pub fn file_value(&self, id: &str) -> Option<&Value> {
+        self.raw.get("files")?.get(id)
+    }
+
+    /// Adds an embedded file, as pasting an image with its file does. An id
+    /// already there is kept: file ids are content hashes in Excalidraw.
+    pub fn add_file(&mut self, id: &str, value: Value) {
+        let files = self
+            .raw
+            .entry("files")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Value::Object(files) = files {
+            files.entry(id).or_insert(value);
+        }
+    }
+
+    /// The drawing as Excalidraw saves it to a file (`serializeAsJSON` with
+    /// `clearElementsForExport`): deleted elements left out, and lines'
+    /// `lastCommittedPoint` cleared. `to_json` writes everything, unchanged.
+    pub fn to_file_json(&self) -> String {
+        let mut raw = self.raw.clone();
+        let elements = self
+            .elements
+            .iter()
+            .filter(|e| !e.is_deleted)
+            .map(|e| {
+                let mut r = e.raw().clone();
+                if e.kind.is_linear() && r.contains_key("lastCommittedPoint") {
+                    r.insert("lastCommittedPoint".into(), Value::Null);
+                }
+                Value::Object(r)
+            })
+            .collect();
+        match raw.get_mut("elements") {
+            Some(slot) => *slot = Value::Array(elements),
+            None => {
+                raw.insert("elements".into(), Value::Array(elements));
+            }
+        }
+        to_js_json(&Value::Object(raw))
+    }
+
     /// Elements that are drawn: not deleted, in the order they are stacked.
     pub fn visible(&self) -> impl Iterator<Item = &Element> {
         self.elements.iter().filter(|e| !e.is_deleted)

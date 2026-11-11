@@ -254,11 +254,10 @@ impl Scene {
 
     /// Puts `raw` in place of element `i`, rebuilding its view.
     fn replace(&mut self, i: usize, raw: Map<String, Value>) {
-        match Element::restore(raw) {
-            Ok(e) => self.elements[i] = e,
-            // Only a points array over the limit fails, and an edit that
-            // makes one is refused by leaving the element as it was.
-            Err(Error::TooLarge(_)) | Err(_) => {}
+        // Only a points array over the limit fails, and an edit that makes
+        // one is refused by leaving the element as it was.
+        if let Ok(e) = Element::restore(raw) {
+            self.elements[i] = e;
         }
     }
 
@@ -269,7 +268,7 @@ impl Scene {
         let id = element.id.clone();
         let at = at.min(self.elements.len());
         self.elements.insert(at, element);
-        self.sync_moved(&[id.clone()]);
+        self.sync_moved(std::slice::from_ref(&id));
         Ok(id)
     }
 
