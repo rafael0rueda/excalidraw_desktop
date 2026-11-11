@@ -9,7 +9,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod edit;
 mod element;
+pub mod fractional;
 
 pub use element::{
     default_line_height, lines, Arrowhead, Element, FreeDraw, Image, Kind, Linear, Roundness, Text,
