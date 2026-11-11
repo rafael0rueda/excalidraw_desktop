@@ -1,0 +1,22 @@
+[package]
+name = "excalidraw-iced"
+version = "0.0.0"
+description = "Excalidraw Desktop on Iced (docs/iced-port/PLAN.md). Phase 1: a read-only viewer."
+authors = ["rafa"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+# Pinned exactly (plan W3): an upgrade is a deliberate change to this crate only.
+iced = { version = "=0.14.0", features = ["canvas", "image", "advanced"] }
+scene = { path = "../scene" }
+render = { path = "../render" }
+excalidraw-desktop-core = { path = "../core" }
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+
+[build-dependencies]
+wuff = "0.2"
+ttf-parser = "0.25"

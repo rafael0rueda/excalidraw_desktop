@@ -88,6 +88,65 @@ same files: a small drawing, a 2k-element and a 10k-element scene.
 If the gate fails, stop here; the cost of phases 2–8 is only worth it for a
 clear win. Record numbers in this file either way.
 
+### Gate result, 2026-11-11: **GO**
+
+Measured on this machine (Fedora, Wayland, 180 Hz display, radv Vulkan),
+release builds. Reference: Excalidraw 0.18.1 itself, in WebKitGTK 2.54.2
+(the engine the Tauri app embeds), driven by `iced/bench/webkit.py` through
+the same animation: 5 s panning a 300 px circle, 5 s zooming 1×→4×→1×.
+Reproduce: `iced/bench/run.sh` and `iced/bench/memory.sh` (header comments
+say how to build their inputs).
+
+| Scene | Metric | iced | Excalidraw (WebKitGTK) | |
+|---|---|---|---|---|
+| 10k | pan, mean frame / p95 | 8.1 / 9.6 ms (123 fps) | 35.5 / 41 ms (28 fps) | **4.4×** |
+| 10k | zoom, mean frame / p95 | 11.9 / 13.5 ms (84 fps) | 26.4 / 82 ms (38 fps) | **2.2×** |
+| 10k | CPU per frame, all processes | 5.6 ms | 34.7 ms | 6× |
+| 2k | pan / zoom | 179 / 173 fps (vsync) | 59 / 43 fps | |
+| 2k | CPU per frame | 1.3 ms | 19.9 ms | 15× |
+| small | CPU per frame | 0.4 ms | 3.2 ms | 8× |
+| 10k | memory, PSS of all processes | 170 MB | 778 MB (Tauri app) | **22%** |
+| 2k | memory | 63 MB | 484 MB (Tauri app) | 13% |
+| small | memory | 45 MB | 273 MB (Tauri app) | 16% |
+| 10k / 2k / small | start to drawing | 235 / 90 / 59 ms | 507 / 420 / 376 ms¹ | **2–6×** |
+
+¹ WebView creation to "scene loaded", before its first paint and without
+the Tauri shell around it, so the real gap is larger.
+
+WebKitGTK caps `requestAnimationFrame` at 60 fps whatever the display, so
+for the smaller scenes CPU per frame is the comparison that means anything.
+
+**Fidelity.** Side by side at the same view (`--screenshot` and
+`webkit.py shot`), every stroke is the same stroke: rough.js and
+perfect-freehand are ported bit for bit, and Excalidraw's shape code is
+checked against Excalidraw itself (`render/tests/excalidraw_shapes.rs`, 153
+elements). Differences found, none of them about shape:
+
+- **Thin lines are heavier.** iced_wgpu's 4× MSAA gives sub-pixel strokes
+  about 45% more ink (hachure coverage 18.6% vs 12.7% in Excalidraw;
+  iced's own tiny-skia renderer gives 13.6%, aliased wgpu 12.4%, so the
+  geometry is right). Hachure fills look denser. → W1: analytic AA, by
+  rendering the scene with vello in a `shader` widget, or by fixing MSAA.
+- **Frame outline and name** are drawn into the cached geometry, so they
+  scale between zoom buckets where Excalidraw keeps them a fixed screen
+  size. → draw frame chrome in an uncached layer (phase 2).
+- **Fonts split by Unicode range** (Excalifont, Nunito, Lilita One, Comic
+  Shanns) only have their Basic Latin file bundled: cosmic-text does not
+  fall back across files of one family. Other scripts use system fonts.
+  CJK (Xiaolai, 12 MB) is not bundled. → merge the files at build time
+  (phase 3).
+
+**Found on the way, and settled:**
+
+- iced's canvas cache cannot be re-transformed, so a pan through `Canvas`
+  re-tessellates everything. The viewer is a small custom widget that draws
+  the cached meshes under `renderer.with_transformation`, rebuilding only
+  when the zoom leaves its power-of-two bucket (W1).
+- iced's tessellator moves path points by the frame transform but not
+  stroke widths or dash lengths. Strokes are mapped to cache space by hand.
+- Re-tessellating the 10k scene takes 72 ms, the zoom benchmark's worst
+  frames (125 ms). → tessellate per element, off the UI thread (phase 2).
+
 ### v1 scope
 
 | In v1 | Later | Out |
@@ -221,5 +280,5 @@ Kept or added:
 | # | Phase | Status |
 |---|---|---|
 | 0 | Workspace + extract core | **Done** 2026-11-11: `iced/crates/core` (20 tests), src-tauri wrappers (6 tests), clippy clean, `npm run check` 41/41, CI runs both |
-| 1 | Spike + gate | Not started |
+| 1 | Spike + gate | **Done** 2026-11-11, gate **GO** (results above). Crates `rough`, `scene`, `render`, `app` (viewer: `excalidraw-iced FILE`, drag or wheel to pan, Ctrl+wheel to zoom) |
 | 2–8 | | Not started |
