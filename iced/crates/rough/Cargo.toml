@@ -1,0 +1,18 @@
+[package]
+name = "rough"
+version = "0.0.0"
+description = "A faithful f64 port of rough.js 4.6.4, the hand-drawn renderer behind Excalidraw"
+authors = ["rafa"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+# fdlibm-derived, like V8's Math.sin/cos/atan: same algorithm, same bits.
+libm = "0.2"
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+# Without `float_roundtrip`, parsing can land one bit off the number written.
+serde_json = { version = "1", features = ["float_roundtrip"] }

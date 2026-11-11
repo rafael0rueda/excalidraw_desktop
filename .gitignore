@@ -6,3 +6,5 @@ public/*.woff2
 test/
 *.log
 iced/target/
+# Written by iced/crates/rough/tests/gen-rough-js.mjs for readable test failures; the digest beside it is committed.
+iced/crates/rough/tests/rough-js.json

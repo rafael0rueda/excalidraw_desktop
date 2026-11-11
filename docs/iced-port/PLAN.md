@@ -199,9 +199,20 @@ Kept or added:
 
 ## Open questions
 
-1. Does roughr match rough.js for the same seed? Phase 1 measures it. If
-   not, decide whether to patch roughr (or vendor a fixed copy) so the RNG
-   and the order it is drawn from match rough.js exactly.
+1. ~~Does roughr match rough.js for the same seed?~~ **Answered 2026-11-11:
+   no, and it cannot**: roughr draws from `StdRng` (ChaCha), rough.js from a
+   Park–Miller generator. Replaced by `iced/crates/rough`, a port of rough.js
+   4.6.4 that matches it **bit for bit** on 343 Excalidraw-shaped cases
+   (`tests/rough_js.rs`). What that took:
+   - The same RNG, shared between option copies the way `o.randomizer` is.
+   - Every expression in the same order, so rounding is the same.
+   - `Math.round` (halves go up), and hachure's in-place rotate-and-back,
+     whose drift a cross-hatch's second pass sees.
+   - V8's own `sin`/`cos`: the original fdlibm kernels. Measured over 100k
+     inputs, glibc 2.44 differed on 2.7%, the `libm` crate on 0.7%, fdlibm on
+     none. `libm`'s `tan`/`atan`/`atan2`/`asin` matched on all.
+   - `serde_json`'s `float_roundtrip`: without it, parsing lands one bit off.
+     The scene loader needs it too.
 2. Single instance without GTK: D-Bus (`zbus`) activation, or a Unix
    socket next to the existing lock file in `store.rs`?
 
