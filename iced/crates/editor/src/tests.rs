@@ -512,3 +512,100 @@ fn arrow_labels_sit_on_the_middle_and_follow() {
     let l = ed.selection[0].clone();
     assert!(!ed.edit_at_element(&l));
 }
+
+// --- arrows bound to shapes
+
+fn binding(ed: &Editor, arrow: &str, key: &str) -> Option<String> {
+    get(ed, arrow)
+        .raw()
+        .get(key)?
+        .get("elementId")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn end_of(ed: &Editor, arrow: &str) -> Point {
+    let a = get(ed, arrow);
+    let pts = &a.linear.as_ref().unwrap().points;
+    geometry::to_scene(a, pts[pts.len() - 1])
+}
+
+#[test]
+fn an_arrow_drawn_onto_a_shape_binds_and_follows_it() {
+    let mut ed = empty();
+    let r = rect(&mut ed, 200.0, 0.0, 100.0, 100.0);
+    ed.tool = Tool::Arrow;
+    drag(&mut ed, [0.0, 50.0], [195.0, 50.0], NONE);
+    let a = ed.selection[0].clone();
+    assert_eq!(binding(&ed, &a, "endBinding").as_deref(), Some(r.as_str()));
+    assert_eq!(
+        binding(&ed, &a, "startBinding"),
+        None,
+        "the start is on nothing"
+    );
+    let bound = get(&ed, &r).raw()["boundElements"].clone();
+    assert_eq!(bound, json!([{ "id": a, "type": "arrow" }]));
+    let gap = get(&ed, &a).raw()["endBinding"]["gap"].as_f64().unwrap();
+    assert!((gap - 5.0).abs() < 1e-9, "{gap}");
+
+    // The shape moves down: the end follows, onto its outline plus the gap.
+    ed.selection = vec![r.clone()];
+    // By the bottom edge, clear of the handles and of the arrow's end.
+    drag(&mut ed, [225.0, 100.0], [225.0, 200.0], NONE);
+    let end = end_of(&ed, &a);
+    assert!(
+        (end[0] - 195.0).abs() < 1e-6 && end[1] > 60.0 && end[1] < 200.0,
+        "{end:?}"
+    );
+    assert_eq!(
+        get(&ed, &a).linear.as_ref().unwrap().points[0],
+        [0.0, 0.0],
+        "the start stays put"
+    );
+
+    // One undo puts both back.
+    ed.undo();
+    assert!((end_of(&ed, &a)[1] - 50.0).abs() < 1e-6);
+
+    // The arrow dragged away on its own lets go.
+    ed.selection = vec![a.clone()];
+    drag(&mut ed, [100.0, 50.0], [100.0, 400.0], NONE);
+    assert_eq!(binding(&ed, &a, "endBinding"), None);
+    assert_eq!(get(&ed, &r).raw()["boundElements"], Value::Null);
+}
+
+#[test]
+fn deleting_either_end_of_a_binding_removes_it() {
+    let mut ed = empty();
+    let r = rect(&mut ed, 200.0, 0.0, 100.0, 100.0);
+    ed.tool = Tool::Arrow;
+    drag(&mut ed, [0.0, 50.0], [250.0, 50.0], NONE);
+    let a = ed.selection[0].clone();
+    assert_eq!(
+        binding(&ed, &a, "endBinding").as_deref(),
+        Some(r.as_str()),
+        "an end inside binds too"
+    );
+    ed.selection = vec![r.clone()];
+    ed.key(Key::Delete, NONE);
+    assert_eq!(binding(&ed, &a, "endBinding"), None);
+    ed.undo();
+    assert_eq!(binding(&ed, &a, "endBinding").as_deref(), Some(r.as_str()));
+    ed.selection = vec![a.clone()];
+    ed.key(Key::Delete, NONE);
+    assert_eq!(get(&ed, &r).raw()["boundElements"], Value::Null);
+}
+
+#[test]
+fn a_straight_arrow_does_not_bind_both_ends_to_one_shape() {
+    let mut ed = empty();
+    let r = rect(&mut ed, 0.0, 0.0, 200.0, 200.0);
+    ed.tool = Tool::Arrow;
+    drag(&mut ed, [50.0, 100.0], [150.0, 100.0], NONE);
+    let a = ed.selection[0].clone();
+    assert_eq!(
+        binding(&ed, &a, "startBinding").as_deref(),
+        Some(r.as_str())
+    );
+    assert_eq!(binding(&ed, &a, "endBinding"), None);
+}

@@ -355,3 +355,23 @@ will be saved. Input methods go through `text_editor` as before. To verify
 by hand: typing, IME (fcitx5/ibus), and caret placement on centred labels,
 which can sit off the text on lines shorter than the widest.
 
+### Phase 3, step 3: arrow labels and bindings (2026-11-12)
+
+- Arrow labels (double-click an arrow): on its middle as
+  `getBoundTextElementPosition` places them, upright, wrapped to the arrow
+  label width, the stroke cut away beneath with `BOUND_TEXT_PADDING`.
+- Bindings: an arrow end released inside or within `maxBindingGap` of a
+  bindable element binds to it (`{ elementId, focus, gap }`, and the arrow
+  in the element's `boundElements`); the shape it would bind to is
+  highlighted while drawing. Moving, resizing, rotating or nudging a shape
+  moves its arrows' ends (`updateBoundPoint`); an arrow moved alone re-binds
+  to what its ends are on; deleting either side removes the binding
+  (`fixBindingsAfterDeletion`). `determineFocusDistance`,
+  `determineFocusPoint` and `updateBoundPoint` are ported as written; the
+  outline intersection uses polygons (an ellipse as 64 points), within a
+  fraction of a pixel.
+- Checked: Excalidraw's own `restoreElements` keeps every binding of a file
+  saved here (both ends, both shapes' `boundElements`, the label).
+- Not yet: elbow arrows' fixed-point bindings, and dragging an arrow's end
+  onto a shape after it is drawn (comes with point editing, next).
+

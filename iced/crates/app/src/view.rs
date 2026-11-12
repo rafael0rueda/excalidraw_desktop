@@ -163,6 +163,15 @@ impl<Message> SceneView<'_, Message> {
                 frame.stroke(&shape, line);
             }
         }
+        // The shape an arrow being drawn would bind to, as Excalidraw
+        // highlights it.
+        if let Some(e) = ed.binding_hint.as_ref().and_then(|id| ed.scene.by_id(id)) {
+            let wide = Stroke::default().with_width(6.0).with_color(Color {
+                a: 0.35,
+                ..SELECTION
+            });
+            frame.stroke(&outline(&editor::geometry::corners(e).map(to)), wide);
+        }
         if let Some(m) = ed.marquee {
             let (a, b) = (to([m[0], m[1]]), to([m[2], m[3]]));
             let rect = Path::rectangle(a, Size::new(b.x - a.x, b.y - a.y));

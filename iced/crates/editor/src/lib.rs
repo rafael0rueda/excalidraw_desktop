@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+mod binding;
 pub mod geometry;
 mod history;
 pub mod text;
@@ -127,6 +128,8 @@ pub struct Editor {
     dirty: bool,
     /// The rubber band being dragged, for the overlay.
     pub marquee: Option<Bounds>,
+    /// The shape an arrow being drawn would bind to, for the overlay.
+    pub binding_hint: Option<String>,
     /// The text being typed, if any: the app shows its own text box over it.
     pub editing: Option<TextEdit>,
     /// `currentItemFontFamily`, `currentItemFontSize`, `currentItemTextAlign`.
@@ -178,6 +181,7 @@ impl Editor {
             changes: Changes::default(),
             dirty: false,
             marquee: None,
+            binding_hint: None,
             editing: None,
             font_family: 5.0,
             font_size: 20.0,
@@ -510,25 +514,47 @@ impl Editor {
                 for (id, x, y) in &origins {
                     self.change(id, vec![update_num("x", x + dx), update_num("y", y + dy)]);
                 }
+                let moving: HashSet<String> = origins.iter().map(|o| o.0.clone()).collect();
+                for id in &moving {
+                    self.update_bound_arrows(id, &moving);
+                }
                 self.gesture = Some(Gesture::Drag { start, origins });
             }
             Some(Gesture::Resize(r)) => {
-                for (id, updates) in r.updates(p, m) {
+                let updates = r.updates(p, m);
+                let moving: HashSet<String> = updates.iter().map(|u| u.0.clone()).collect();
+                for (id, updates) in updates {
                     self.change(&id, updates);
                     // `handleBindTextResize`: the label is wrapped again.
                     self.sync_label(&id, true);
+                    self.update_bound_arrows(&id, &moving);
                 }
                 self.gesture = Some(Gesture::Resize(r));
             }
             Some(Gesture::Rotate(r)) => {
-                for (id, updates) in r.updates(p, m) {
+                let updates = r.updates(p, m);
+                let moving: HashSet<String> = updates.iter().map(|u| u.0.clone()).collect();
+                for (id, updates) in updates {
                     self.change(&id, updates);
                     self.sync_label(&id, false);
+                    self.update_bound_arrows(&id, &moving);
                 }
                 self.gesture = Some(Gesture::Rotate(r));
             }
             Some(Gesture::Create { id, origin }) => {
                 self.create_to(&id, origin, p, m);
+                // What the arrow's end would bind to, shown while drawing.
+                self.binding_hint = self
+                    .scene
+                    .by_id(&id)
+                    .filter(|e| e.kind == Kind::Arrow)
+                    .and_then(|e| {
+                        e.linear
+                            .as_ref()
+                            .and_then(|l| l.points.last())
+                            .map(|q| geometry::to_scene(e, *q))
+                    })
+                    .and_then(|q| self.bindable_at(q, &id));
                 self.gesture = Some(Gesture::Create { id, origin });
             }
             None => {}
@@ -596,6 +622,7 @@ impl Editor {
     pub fn pointer_up(&mut self, p: Point, m: Modifiers) {
         self.pointer_move(p, m);
         self.marquee = None;
+        self.binding_hint = None;
         match self.gesture.take() {
             Some(Gesture::Create { id, .. }) => {
                 let e = self.scene.by_id(&id);
@@ -617,12 +644,38 @@ impl Editor {
                         self.change(&id, vec![update_points(&[[0.0, 0.0], [0.0001, 0.0001]])]);
                     }
                 }
+                // `bindOrUnbindLinearElement`: both ends, to what they are on.
+                if self.scene.by_id(&id).is_some_and(|e| e.kind == Kind::Arrow) {
+                    self.rebind(&id);
+                }
                 self.commit();
                 if !self.tool_locked && self.tool != Tool::FreeDraw {
                     self.tool = Tool::Selection;
                 }
             }
             Some(Gesture::Marquee { .. }) | None => {}
+            Some(Gesture::Drag { origins, .. }) => {
+                // An arrow moved without the shapes it is bound to binds to
+                // whatever its ends are on now, or to nothing.
+                let moving: HashSet<String> = origins.iter().map(|o| o.0.clone()).collect();
+                for id in &moving {
+                    let bound_elsewhere = self.scene.by_id(id).is_some_and(|e| {
+                        e.kind == Kind::Arrow
+                            && self
+                                .bindings_of(e)
+                                .iter()
+                                .any(|(_, target)| !moving.contains(target))
+                    });
+                    let unbound_arrow = self
+                        .scene
+                        .by_id(id)
+                        .is_some_and(|e| e.kind == Kind::Arrow && self.bindings_of(e).is_empty());
+                    if bound_elsewhere || unbound_arrow {
+                        self.rebind(id);
+                    }
+                }
+                self.commit();
+            }
             Some(_) => self.commit(),
         }
     }
@@ -757,8 +810,12 @@ impl Editor {
             return;
         }
         self.begin();
+        let moving: HashSet<String> = moves.iter().map(|m| m.0.clone()).collect();
         for (id, x, y) in moves {
             self.change(&id, vec![update_num("x", x + dx), update_num("y", y + dy)]);
+        }
+        for id in &moving {
+            self.update_bound_arrows(id, &moving);
         }
         self.commit();
     }
@@ -772,8 +829,212 @@ impl Editor {
         for id in &ids {
             self.change(id, vec![update("isDeleted", true)]);
         }
+        // `fixBindingsAfterDeletion`: arrows let go of deleted shapes, and
+        // shapes forget deleted arrows.
+        for id in &ids {
+            let Some(e) = self.scene.by_id(id).cloned() else {
+                continue;
+            };
+            if e.kind == Kind::Arrow {
+                for (_, target) in self.bindings_of(&e) {
+                    self.remove_bound(&target, id);
+                }
+            }
+            for arrow in self.bound_arrows_of(id) {
+                if ids.contains(&arrow) {
+                    continue;
+                }
+                if let Some(a) = self.scene.by_id(&arrow).cloned() {
+                    for (start, target) in self.bindings_of(&a) {
+                        if target == *id {
+                            let key = if start { "startBinding" } else { "endBinding" };
+                            self.change(&arrow, vec![update(key, Value::Null)]);
+                        }
+                    }
+                }
+            }
+        }
         self.commit();
         self.selection.clear();
+    }
+
+    // --- bindings
+
+    /// The topmost bindable element an arrow end at `p` would bind to.
+    fn bindable_at(&self, p: Point, exclude: &str) -> Option<String> {
+        self.scene
+            .visible()
+            .filter(|e| e.id != exclude && binding::catches(e, p, self.zoom))
+            .last()
+            .map(|e| e.id.clone())
+    }
+
+    /// An arrow's bindings: (is it the start, the element it is bound to).
+    fn bindings_of(&self, arrow: &Element) -> Vec<(bool, String)> {
+        [(true, "startBinding"), (false, "endBinding")]
+            .into_iter()
+            .filter_map(|(start, key)| {
+                Some((
+                    start,
+                    arrow.raw().get(key)?.get("elementId")?.as_str()?.to_owned(),
+                ))
+            })
+            .collect()
+    }
+
+    fn bound_arrows_of(&self, id: &str) -> Vec<String> {
+        let Some(Value::Array(bound)) = self
+            .scene
+            .by_id(id)
+            .and_then(|e| e.raw().get("boundElements"))
+        else {
+            return Vec::new();
+        };
+        bound
+            .iter()
+            .filter(|b| b.get("type").and_then(Value::as_str) == Some("arrow"))
+            .filter_map(|b| b.get("id").and_then(Value::as_str).map(str::to_owned))
+            .collect()
+    }
+
+    fn remove_bound(&mut self, target: &str, arrow: &str) {
+        let Some(Value::Array(bound)) = self
+            .scene
+            .by_id(target)
+            .and_then(|e| e.raw().get("boundElements"))
+            .cloned()
+        else {
+            return;
+        };
+        let kept: Vec<Value> = bound
+            .into_iter()
+            .filter(|b| b.get("id").and_then(Value::as_str) != Some(arrow))
+            .collect();
+        self.change(
+            target,
+            vec![update(
+                "boundElements",
+                if kept.is_empty() {
+                    Value::Null
+                } else {
+                    Value::Array(kept)
+                },
+            )],
+        );
+    }
+
+    /// `bindOrUnbindLinearElement`: binds each end of an arrow to the
+    /// element it is on, or unbinds it.
+    fn rebind(&mut self, id: &str) {
+        let Some(a) = self.scene.by_id(id).cloned() else {
+            return;
+        };
+        let Some(l) = a.linear.clone() else { return };
+        if a.kind != Kind::Arrow || l.elbowed || l.points.len() < 2 {
+            return;
+        }
+        let start_target = self.bindable_at(geometry::to_scene(&a, l.points[0]), id);
+        let mut end_target =
+            self.bindable_at(geometry::to_scene(&a, l.points[l.points.len() - 1]), id);
+        // `isLinearElementSimpleAndAlreadyBound`: a straight arrow does not
+        // bind both ends to the same element.
+        if l.points.len() == 2 && start_target.is_some() && start_target == end_target {
+            end_target = None;
+        }
+        let old = self.bindings_of(&a);
+        for (start, target) in [(true, start_target), (false, end_target)] {
+            let key = if start { "startBinding" } else { "endBinding" };
+            let previous = old
+                .iter()
+                .find(|(s, _)| *s == start)
+                .map(|(_, t)| t.clone());
+            if let Some(p) = &previous {
+                // Unless the other end stays bound to it.
+                let other_keeps = old.iter().any(|(s, t)| *s != start && t == p);
+                if previous != target && !other_keeps {
+                    self.remove_bound(p, id);
+                }
+            }
+            match target {
+                Some(t) => {
+                    let (Some(arrow), Some(el)) =
+                        (self.scene.by_id(id).cloned(), self.scene.by_id(&t).cloned())
+                    else {
+                        continue;
+                    };
+                    let Some((focus, gap)) = binding::focus_and_gap(&arrow, start, &el) else {
+                        continue;
+                    };
+                    self.change(id, vec![update(key, json!({ "elementId": t, "focus": scene::edit::num(focus), "gap": scene::edit::num(gap) }))]);
+                    if !self.bound_arrows_of(&t).contains(&id.to_owned()) {
+                        let mut bound = match el.raw().get("boundElements") {
+                            Some(Value::Array(b)) => b.clone(),
+                            _ => Vec::new(),
+                        };
+                        bound.push(json!({ "id": id, "type": "arrow" }));
+                        self.change(&t, vec![update("boundElements", Value::Array(bound))]);
+                    }
+                }
+                None => {
+                    self.change(id, vec![update(key, Value::Null)]);
+                }
+            }
+        }
+    }
+
+    /// `updateBoundElements`: the arrows bound to `id` follow it, except
+    /// those moving with it (`moving`).
+    fn update_bound_arrows(&mut self, id: &str, moving: &HashSet<String>) {
+        let Some(el) = self.scene.by_id(id).cloned() else {
+            return;
+        };
+        if !binding::is_bindable(&el) {
+            return;
+        }
+        for arrow_id in self.bound_arrows_of(id) {
+            if moving.contains(&arrow_id) {
+                continue;
+            }
+            let Some(a) = self
+                .scene
+                .by_id(&arrow_id)
+                .cloned()
+                .filter(|a| !a.is_deleted)
+            else {
+                continue;
+            };
+            let Some(mut points) = a.linear.as_ref().map(|l| l.points.clone()) else {
+                continue;
+            };
+            for key in ["startBinding", "endBinding"] {
+                let start = key == "startBinding";
+                let Some(b) = a
+                    .raw()
+                    .get(key)
+                    .filter(|b| b.get("elementId").and_then(Value::as_str) == Some(id))
+                else {
+                    continue;
+                };
+                let focus = b.get("focus").and_then(Value::as_f64).unwrap_or(0.0);
+                let gap = b.get("gap").and_then(Value::as_f64).unwrap_or(0.0);
+                if let Some(q) = binding::bound_point(&a, start, focus, gap, &el) {
+                    let i = if start { 0 } else { points.len() - 1 };
+                    points[i] = geometry::to_local(&a, q);
+                }
+            }
+            // The first point stays at the origin: the arrow moves instead.
+            let o = points[0];
+            let points: Vec<Point> = points.iter().map(|p| [p[0] - o[0], p[1] - o[1]]).collect();
+            self.change(
+                &arrow_id,
+                vec![
+                    update_points(&points),
+                    update_num("x", a.x + o[0]),
+                    update_num("y", a.y + o[1]),
+                ],
+            );
+            self.sync_label(&arrow_id, false);
+        }
     }
 
     /// Ctrl+G: one new group around the selection, outermost.
