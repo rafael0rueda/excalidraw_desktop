@@ -71,6 +71,7 @@ pub enum Input {
     Down([f64; 2], editor::Modifiers),
     Move([f64; 2], editor::Modifiers),
     Up([f64; 2], editor::Modifiers),
+    DoubleClick([f64; 2]),
     View(View),
 }
 
@@ -98,6 +99,8 @@ struct State {
     pan: Option<(Point, Vector)>,
     /// The left button went down on the drawing, for the editor.
     editing: bool,
+    /// The last click, to tell a double click.
+    last_click: Option<iced::advanced::mouse::Click>,
     modifiers: keyboard::Modifiers,
 }
 
@@ -291,6 +294,13 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for SceneView<'_, Message>
                 {
                     state.pan = Some((p, self.view.pan));
                 } else if *button == mouse::Button::Left {
+                    let click = iced::advanced::mouse::Click::new(p, *button, state.last_click);
+                    state.last_click = Some(click);
+                    if click.kind() == iced::advanced::mouse::click::Kind::Double {
+                        shell.publish((self.on_input)(Input::DoubleClick(self.view.to_scene(p))));
+                        shell.capture_event();
+                        return;
+                    }
                     state.editing = true;
                     shell.publish((self.on_input)(Input::Down(self.view.to_scene(p), m)));
                 } else {

@@ -331,3 +331,27 @@ Cyrillic, Vietnamese and CJK now render in Excalidraw's faces.
   survive, so accents built from a base and a combining mark in another file
   (Vietnamese ế in Excalifont) sit slightly off.
 
+### Phase 3, step 2: text (2026-11-11)
+
+Text tool (T), double-click to type anywhere or into a shape, Enter on a
+selected shape or text, Escape or Ctrl+Enter to finish. Excalidraw's text
+code is ported in `editor/src/text.rs`: `measureText`, `wrapText` with its
+line-break rules (whitespace, hyphens, CJK, opening and closing
+punctuation), `getBoundTextMaxWidth/Height`, `computeBoundTextPosition`,
+`computeContainerDimensionForBoundText`. Labels are wrapped inside their
+shape, grow it when they need to, move, turn and re-wrap with it, are picked
+through it, and are copied, duplicated and deleted with it. Text left empty
+leaves no element and no undo step.
+
+Widths come from shaping with the bundled fonts through iced's font system
+(`app/src/measure.rs`). Checked against Excalidraw: labels typed here wrap
+at the same words when the saved file is opened in Excalidraw 0.18.1.
+
+Finding: iced's `text_editor` draws no text in `window::screenshot`
+captures, with either renderer, in a stock iced app too, so what it shows
+could not be checked here. So the text box draws only the caret and
+selection; the element itself stays drawn underneath, laid out live as it
+will be saved. Input methods go through `text_editor` as before. To verify
+by hand: typing, IME (fcitx5/ibus), and caret placement on centred labels,
+which can sit off the text on lines shorter than the widest.
+

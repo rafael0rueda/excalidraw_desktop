@@ -180,6 +180,40 @@ pub fn new_element(kind: &str, x: f64, y: f64, style: &Style) -> Map<String, Val
     m
 }
 
+/// A new text element, as `newTextElement` makes one: the base fields, then
+/// the text's own, in its order. Its size is set once the text is measured.
+#[allow(clippy::too_many_arguments)] // newTextElement's own options, one by one
+pub fn new_text_element(
+    x: f64,
+    y: f64,
+    style: &Style,
+    font_family: f64,
+    font_size: f64,
+    text_align: &str,
+    vertical_align: &str,
+    container_id: Option<&str>,
+) -> Map<String, Value> {
+    let mut m = new_element("text", x, y, style);
+    // `getDefaultRoundnessTypeForElement` gives text none.
+    m.insert("roundness".into(), Value::Null);
+    m.insert("text".into(), json!(""));
+    m.insert("fontSize".into(), num(font_size));
+    m.insert("fontFamily".into(), num(font_family));
+    m.insert("textAlign".into(), json!(text_align));
+    m.insert("verticalAlign".into(), json!(vertical_align));
+    m.insert(
+        "containerId".into(),
+        container_id.map_or(Value::Null, |c| json!(c)),
+    );
+    m.insert("originalText".into(), json!(""));
+    m.insert("autoResize".into(), json!(true));
+    m.insert(
+        "lineHeight".into(),
+        num(crate::default_line_height(font_family)),
+    );
+    m
+}
+
 /// `getSizeFromPoints`, for a `points` update.
 fn size_of(points: &Value) -> Option<(f64, f64)> {
     let pts = points.as_array()?;

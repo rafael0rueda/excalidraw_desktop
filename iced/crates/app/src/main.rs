@@ -20,6 +20,7 @@
 mod bench;
 mod images;
 mod layers;
+mod measure;
 mod paint;
 mod script;
 mod toolbar;
@@ -29,7 +30,7 @@ include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 
 use editor::{Editor, Tool};
 use iced::keyboard::{self, key::Named, Key};
-use iced::widget::{column, container, stack, text};
+use iced::widget::{column, container, stack, text, text_editor};
 use iced::{clipboard, window, Color, Element, Length, Point, Size, Subscription, Task, Vector};
 use layers::Layers;
 use std::cell::RefCell;
@@ -84,6 +85,8 @@ pub enum Message {
     Resized(Size),
     Tick(Instant),
     Shot(window::Screenshot),
+    TextAction(text_editor::Action),
+    TextDone,
 }
 
 struct Document {
@@ -111,6 +114,8 @@ pub struct App {
     /// The last pointer position, in the scene: where pastes land.
     pointer: [f64; 2],
     status: Option<String>,
+    /// The text box over the text being typed: (element id, its contents).
+    text_box: Option<(String, text_editor::Content)>,
 }
 
 fn load(path: &str) -> Result<Document, String> {
@@ -121,6 +126,9 @@ fn load(path: &str) -> Result<Document, String> {
     Ok(document(scene))
 }
 
+/// The text box's widget id, to focus it when typing starts.
+const TEXT_BOX: &str = "text-box";
+
 fn document(scene: scene::Scene) -> Document {
     // This app's theme owns the canvas colour (PROGRESS.md); until themes
     // arrive in phase 5 the drawing's own is used.
@@ -129,9 +137,11 @@ fn document(scene: scene::Scene) -> Document {
         .unwrap_or("#ffffff")
         .to_owned();
     let layers = Layers::new(&scene, &css);
+    let mut editor = Editor::new(scene);
+    editor.set_measure(Box::new(measure::Shaped));
     let bg = render::color::parse(&css);
     Document {
-        editor: Editor::new(scene),
+        editor,
         layers,
         background: Color::from_rgba(bg.r, bg.g, bg.b, bg.a),
     }
@@ -166,6 +176,7 @@ fn editor_key(key: &Key) -> Option<editor::Key> {
         Key::Named(Named::ArrowRight) => editor::Key::Right,
         Key::Named(Named::ArrowUp) => editor::Key::Up,
         Key::Named(Named::ArrowDown) => editor::Key::Down,
+        Key::Named(Named::Enter) => editor::Key::Enter,
         Key::Character(c) => editor::Key::Char(c.chars().next()?.to_ascii_lowercase()),
         _ => return None,
     })
@@ -231,16 +242,43 @@ impl App {
             modifiers: keyboard::Modifiers::default(),
             pointer: [0.0, 0.0],
             status: None,
+            text_box: None,
         };
-        (app, Task::none())
+        let mut app = app;
+        let task = app.sync();
+        (app, task)
     }
 
     /// Brings the caches up to date after the editor changed something.
-    fn sync(&mut self) {
-        if let Ok(d) = &mut self.doc {
-            let changes = d.editor.take_changes();
-            d.layers.apply(&d.editor.scene, changes);
-            d.editor.zoom = f64::from(self.view.zoom);
+    /// Brings the caches and the text box up to date with the editor.
+    fn sync(&mut self) -> Task<Message> {
+        let Ok(d) = &mut self.doc else {
+            return Task::none();
+        };
+        let changes = d.editor.take_changes();
+        d.layers.apply(&d.editor.scene, changes);
+        d.editor.zoom = f64::from(self.view.zoom);
+        let editing = d
+            .editor
+            .editing_text()
+            .map(|(e, typed)| (e.id.clone(), typed));
+        match editing {
+            Some((id, typed))
+                if self
+                    .text_box
+                    .as_ref()
+                    .is_none_or(|(box_id, _)| *box_id != id) =>
+            {
+                let mut content = text_editor::Content::with_text(&typed);
+                content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                self.text_box = Some((id, content));
+                iced::widget::operation::focus(TEXT_BOX)
+            }
+            Some(_) => Task::none(),
+            None => {
+                self.text_box = None;
+                Task::none()
+            }
         }
     }
 
@@ -269,8 +307,7 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle(message);
-        self.sync();
-        task
+        Task::batch([task, self.sync()])
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
@@ -287,6 +324,7 @@ impl App {
                         d.editor.pointer_move(p, m);
                     }
                     Input::Up(p, m) => d.editor.pointer_up(p, m),
+                    Input::DoubleClick(p) => d.editor.double_click(p),
                     Input::View(_) => {}
                 }
             }
@@ -314,6 +352,20 @@ impl App {
                 }
             }
             Message::Key(event) => return self.key(event),
+            Message::TextAction(action) => {
+                if let (Some((_, content)), Ok(d)) = (&mut self.text_box, &mut self.doc) {
+                    let edit = action.is_edit();
+                    content.perform(action);
+                    if edit {
+                        d.editor.set_text(&content.text());
+                    }
+                }
+            }
+            Message::TextDone => {
+                if let Ok(d) = &mut self.doc {
+                    d.editor.finish_text();
+                }
+            }
             Message::Paste(text) => {
                 if let (Some(text), Ok(d)) = (text, &mut self.doc) {
                     if !d.editor.paste(&text, self.pointer) {
@@ -451,17 +503,101 @@ impl App {
             timings: self.bench.as_ref().map(|_| &self.timings),
             on_input: Box::new(Message::Input),
         };
-        if self.bench.is_some() || self.screenshot.is_some() {
+        if self.bench.is_some() {
             return scene.into();
+        }
+        if self.screenshot.is_some() {
+            // The drawing, and the text box if typing: no tool bar.
+            let mut layers = stack![Element::from(scene)];
+            if let Some(text_box) = self.text_box(d) {
+                layers = layers.push(text_box);
+            }
+            return layers.into();
         }
         let status = text(self.status.clone().unwrap_or_default())
             .size(12)
             .color(Color::from_rgb(0.4, 0.4, 0.4));
-        stack![
-            Element::from(scene),
-            column![toolbar::toolbar(&d.editor), container(status).padding(8)].width(Length::Fill)
-        ]
-        .into()
+        let mut layers = stack![Element::from(scene)];
+        if let Some(text_box) = self.text_box(d) {
+            layers = layers.push(text_box);
+        }
+        layers
+            .push(
+                column![toolbar::toolbar(&d.editor), container(status).padding(8)]
+                    .width(Length::Fill),
+            )
+            .into()
+    }
+
+    /// The text box over the text being typed. It takes the typing (input
+    /// methods included) and draws the caret and selection; its own text is
+    /// transparent, because the element itself stays drawn underneath, laid
+    /// out live as it will be (wrapped, centred in its shape).
+    ///
+    /// Not a box that draws its own text over a hidden element, as
+    /// Excalidraw's textarea is: iced's `text_editor` text did not appear in
+    /// `window::screenshot` captures (with either renderer, also in a stock
+    /// iced app), so it could not be checked, and a left-aligned box over a
+    /// centred label would not show what the label becomes anyway.
+    fn text_box<'a>(&'a self, d: &'a Document) -> Option<Element<'a, Message>> {
+        let (id, content) = self.text_box.as_ref()?;
+        let e = d.editor.scene.by_id(id)?;
+        let t = e.text.as_ref()?;
+        let zoom = self.view.zoom;
+        let at = self.view.to_screen([e.x, e.y]);
+        let color = render::color::parse(&e.stroke_color);
+        let color = Color::from_rgba(color.r, color.g, color.b, color.a);
+        let size = t.font_size as f32 * zoom;
+        // A label's box is exactly its width, so the caret wraps where it
+        // does; free text gets room to grow.
+        let width = if t.container_id.is_some() {
+            (e.width as f32 * zoom).max(size)
+        } else {
+            ((e.width as f32 * zoom).max(size) + size).max(40.0)
+        };
+        let editor = text_editor(content)
+            .id(TEXT_BOX)
+            .on_action(Message::TextAction)
+            .font(paint::font(t.font_family))
+            .size(size)
+            .line_height(text::LineHeight::Absolute(iced::Pixels(
+                (t.font_size * t.line_height) as f32 * zoom,
+            )))
+            .padding(0)
+            .width(width)
+            // A label wraps inside its shape; free text only where typed.
+            .wrapping(if t.container_id.is_some() {
+                text::Wrapping::Word
+            } else {
+                text::Wrapping::None
+            })
+            .key_binding(|press| {
+                let done = matches!(press.key.as_ref(), Key::Named(Named::Escape))
+                    || (matches!(press.key.as_ref(), Key::Named(Named::Enter))
+                        && press.modifiers.command());
+                if done {
+                    Some(text_editor::Binding::Custom(Message::TextDone))
+                } else {
+                    text_editor::Binding::from_key_press(press)
+                }
+            })
+            .style(move |theme, status| text_editor::Style {
+                background: Color::TRANSPARENT.into(),
+                border: iced::Border::default(),
+                value: Color::TRANSPARENT,
+                selection: Color { a: 0.25, ..color },
+                ..text_editor::default(theme, status)
+            });
+        Some(
+            container(editor)
+                .padding(iced::Padding {
+                    top: at.y,
+                    left: at.x,
+                    right: 0.0,
+                    bottom: 0.0,
+                })
+                .into(),
+        )
     }
 
     fn subscription(&self) -> Subscription<Message> {

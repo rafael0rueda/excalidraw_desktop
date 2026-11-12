@@ -330,3 +330,153 @@ fn edits_survive_a_save_and_reload_as_excalidraw_would_read_them() {
     assert_eq!(back.elements[0].id, a);
     assert_eq!(back.elements[0].raw()["index"], "a0");
 }
+
+// --- text (the default measure: every character half the font size wide)
+
+fn label_of(ed: &Editor, container: &str) -> Element {
+    get(ed, &ed.bound_text_of(container).expect("a label")).clone()
+}
+
+#[test]
+fn typing_new_text_and_an_empty_one_leaves_nothing() {
+    let mut ed = empty();
+    ed.key(Key::Char('t'), NONE);
+    ed.pointer_down([10.0, 20.0], NONE);
+    let id = ed.editing.clone().unwrap().id;
+    ed.set_text("Hello\nworld!");
+    let e = get(&ed, &id).clone();
+    let t = e.text.clone().unwrap();
+    assert_eq!(t.text, "Hello\nworld!");
+    assert_eq!(e.raw()["originalText"], "Hello\nworld!");
+    // 6 characters × 10 wide; two lines of 20 × 1.25.
+    assert_eq!((e.x, e.y, e.width, e.height), (10.0, 20.0, 60.0, 50.0));
+    assert_eq!(t.font_family, 5.0, "Excalifont by default");
+    ed.key(Key::Escape, NONE);
+    assert!(ed.editing.is_none());
+    assert_eq!(ed.selection, vec![id.clone()]);
+    ed.undo();
+    assert!(
+        ed.scene.by_id(&id).is_none(),
+        "one undo takes the whole text away"
+    );
+
+    // Started and left empty: no element, nothing to undo.
+    let mut ed = empty();
+    ed.double_click([5.0, 5.0]);
+    assert!(ed.editing.is_some());
+    ed.key(Key::Escape, NONE);
+    assert!(ed.scene.elements.is_empty());
+    assert!(!ed.can_undo());
+}
+
+#[test]
+fn a_label_wraps_inside_its_shape_and_grows_it() {
+    let mut ed = empty();
+    let r = rect(&mut ed, 0.0, 0.0, 120.0, 60.0);
+    ed.selection.clear();
+    ed.double_click([0.0, 30.0]);
+    let edit = ed.editing.clone().unwrap();
+    assert_eq!(edit.container.as_deref(), Some(r.as_str()));
+    ed.set_text("one two three four");
+    let label = label_of(&ed, &r);
+    let t = label.text.clone().unwrap();
+    // 110 wide inside the padding: 11 characters a line.
+    assert_eq!(t.text, "one two\nthree four");
+    assert_eq!(label.raw()["originalText"], "one two three four");
+    assert_eq!(label.raw()["containerId"], json!(r.clone()));
+    assert_eq!(
+        (t.text_align.as_str(), t.vertical_align.as_str()),
+        ("center", "middle")
+    );
+    // Two lines need 50 + 10 of padding: the box was 60, so it fits.
+    assert_eq!(get(&ed, &r).height, 60.0);
+    // Centred in the box.
+    assert_eq!(
+        (label.x, label.y),
+        (5.0 + (110.0 - 100.0) / 2.0, 5.0 + (50.0 / 2.0 - 25.0))
+    );
+    ed.set_text("one two three four five six");
+    assert!(get(&ed, &r).height > 60.0, "a third line grows the box");
+    ed.key(Key::Enter, CTRL);
+    assert_eq!(ed.selection, vec![r.clone()], "the shape is selected after");
+
+    // The label goes where the shape goes, and is picked through it.
+    let before = label_of(&ed, &r);
+    drag(&mut ed, [0.0, 10.0], [100.0, 110.0], NONE);
+    let after = label_of(&ed, &r);
+    assert_eq!((after.x - before.x, after.y - before.y), (100.0, 100.0));
+    let inside = [after.x + 5.0, after.y + 5.0];
+    assert_eq!(ed.element_at(inside).map(|e| e.id.clone()), Some(r.clone()));
+
+    // Narrowing the shape wraps the label again.
+    let e = ed
+        .handles()
+        .unwrap()
+        .handles
+        .iter()
+        .find(|(h, _)| *h == Handle::E)
+        .unwrap()
+        .1;
+    drag(&mut ed, e, [e[0] - 40.0, e[1]], NONE);
+    assert!(label_of(&ed, &r).text.unwrap().text.lines().count() > 3);
+
+    // Duplicating copies the label, bound to the copy.
+    ed.selection = vec![r.clone()];
+    ed.key(Key::Char('d'), CTRL);
+    let copy = ed.selection[0].clone();
+    let copied_label = label_of(&ed, &copy);
+    assert_eq!(copied_label.raw()["containerId"], json!(copy.clone()));
+    assert_ne!(copied_label.id, label_of(&ed, &r).id);
+
+    // Deleting the shape deletes its label.
+    ed.selection = vec![r.clone()];
+    ed.key(Key::Delete, NONE);
+    let label_id = ed.bound_text_of(&r);
+    assert!(label_id.is_none() || get(&ed, &label_id.unwrap()).is_deleted);
+}
+
+#[test]
+fn emptying_an_existing_label_removes_it_from_its_shape() {
+    let mut ed = empty();
+    let r = rect(&mut ed, 0.0, 0.0, 120.0, 60.0);
+    ed.double_click([0.0, 30.0]);
+    ed.set_text("hi");
+    ed.finish_text();
+    ed.selection = vec![r.clone()];
+    ed.key(Key::Enter, NONE);
+    ed.set_text("   ");
+    ed.finish_text();
+    assert!(ed.bound_text_of(&r).is_none());
+    assert_eq!(get(&ed, &r).raw()["boundElements"], Value::Null);
+}
+
+#[test]
+fn excalidraw_files_with_labels_round_trip_through_the_editor() {
+    let mut ed = empty();
+    let r = rect(&mut ed, 0.0, 0.0, 120.0, 60.0);
+    ed.double_click([0.0, 30.0]);
+    ed.set_text("label");
+    ed.finish_text();
+    let back = Scene::parse(&ed.scene.to_file_json()).unwrap();
+    let label = back.elements.iter().find(|e| e.text.is_some()).unwrap();
+    assert_eq!(
+        label.text.as_ref().unwrap().container_id.as_deref(),
+        Some(r.as_str())
+    );
+    let keys: Vec<&str> = label.raw().keys().map(String::as_str).collect();
+    let tail = &keys[keys.len() - 9..];
+    assert_eq!(
+        tail,
+        [
+            "text",
+            "fontSize",
+            "fontFamily",
+            "textAlign",
+            "verticalAlign",
+            "containerId",
+            "originalText",
+            "autoResize",
+            "lineHeight"
+        ]
+    );
+}

@@ -7,7 +7,7 @@ use editor::{Editor, Tool};
 use iced::widget::{button, container, row, text, Space};
 use iced::{Alignment, Element, Length};
 
-const TOOLS: [(Tool, &str, &str); 8] = [
+const TOOLS: [(Tool, &str, &str); 9] = [
     (Tool::Hand, "Hand", "H"),
     (Tool::Selection, "Select", "V"),
     (Tool::Rectangle, "Rectangle", "R"),
@@ -16,6 +16,7 @@ const TOOLS: [(Tool, &str, &str); 8] = [
     (Tool::Arrow, "Arrow", "A"),
     (Tool::Line, "Line", "L"),
     (Tool::FreeDraw, "Draw", "P"),
+    (Tool::Text, "Text", "T"),
 ];
 
 pub fn toolbar(editor: &Editor) -> Element<'_, Message> {

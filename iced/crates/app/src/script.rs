@@ -8,6 +8,9 @@
 //!   key K [ctrl] [shift]       K: a letter, delete, escape, left, right, up, down
 //!   copy-paste X Y             copy the selection, paste it centred on X Y
 //!   save PATH                  write the drawing as Ctrl+S does
+//!   text X Y WORDS…            type new text at X Y (`\n` for a new line)
+//!   dbl X Y WORDS…             double-click there, type, finish
+//!   type X Y WORDS…            double-click there and type, still typing
 //!
 //! Lines starting with `#` are comments.
 
@@ -76,6 +79,21 @@ pub fn run(editor: &mut Editor, text: &str) -> Result<(), String> {
                     .copy()
                     .ok_or_else(|| format!("line {n}: nothing selected to copy"))?;
                 editor.paste(&text, [num(1)?, num(2)?]);
+            }
+            "type" => {
+                editor.double_click([num(1)?, num(2)?]);
+                editor.set_text(&words[3..].join(" ").replace("\\n", "\n"));
+            }
+            "text" | "dbl" => {
+                let p = [num(1)?, num(2)?];
+                let typed = words[3..].join(" ").replace("\\n", "\n");
+                if words[0] == "text" {
+                    editor.start_text(p);
+                } else {
+                    editor.double_click(p);
+                }
+                editor.set_text(&typed);
+                editor.finish_text();
             }
             "save" => {
                 let path = words

@@ -10,15 +10,19 @@
 
 pub mod geometry;
 mod history;
+pub mod text;
 mod transform;
 
 use geometry::{bounds_of, contains, Bounds};
 use history::History;
 use rough::Point;
-use scene::edit::{new_element, random_id, update, update_num, update_points, Style, Updates};
+use scene::edit::{
+    new_element, new_text_element, random_id, update, update_num, update_points, Style, Updates,
+};
 use scene::{Element, Kind, Scene};
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
+pub use text::Measure;
 pub use transform::Handle;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -32,6 +36,7 @@ pub enum Tool {
     Arrow,
     Line,
     FreeDraw,
+    Text,
 }
 
 impl Tool {
@@ -66,6 +71,7 @@ pub enum Key {
     Right,
     Up,
     Down,
+    Enter,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,6 +127,32 @@ pub struct Editor {
     dirty: bool,
     /// The rubber band being dragged, for the overlay.
     pub marquee: Option<Bounds>,
+    /// The text being typed, if any: the app shows its own text box over it.
+    pub editing: Option<TextEdit>,
+    /// `currentItemFontFamily`, `currentItemFontSize`, `currentItemTextAlign`.
+    pub font_family: f64,
+    pub font_size: f64,
+    pub text_align: String,
+    measure: Box<dyn Measure>,
+}
+
+/// A text element being typed into.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextEdit {
+    pub id: String,
+    /// The shape it is the label of.
+    pub container: Option<String>,
+    /// Made for this edit: if it ends empty, it was never there.
+    pub is_new: bool,
+}
+
+/// A stand-in for real text measurement: every character half as wide as
+/// the font is tall. The app replaces it with shaping (`set_measure`).
+struct Approx;
+impl Measure for Approx {
+    fn line_width(&self, line: &str, _family: f64, size: f64) -> f64 {
+        line.chars().count() as f64 * size * 0.5
+    }
 }
 
 /// Excalidraw's hit tolerance: 10 screen pixels.
@@ -146,7 +178,17 @@ impl Editor {
             changes: Changes::default(),
             dirty: false,
             marquee: None,
+            editing: None,
+            font_family: 5.0,
+            font_size: 20.0,
+            text_align: "left".into(),
+            measure: Box::new(Approx),
         }
+    }
+
+    /// How text is measured: the app shapes it with the real fonts.
+    pub fn set_measure(&mut self, measure: Box<dyn Measure>) {
+        self.measure = measure;
     }
 
     pub fn take_changes(&mut self) -> Changes {
@@ -273,12 +315,45 @@ impl Editor {
     }
 
     /// The topmost element under `p`.
+    /// A label picks the shape it belongs to, as in Excalidraw.
     pub fn element_at(&self, p: Point) -> Option<&Element> {
         let threshold = HIT_PX / self.zoom;
-        self.scene
+        let hit = self
+            .scene
             .visible()
             .filter(|e| geometry::hit(e, p, threshold))
-            .last()
+            .last()?;
+        match hit.text.as_ref().and_then(|t| t.container_id.as_deref()) {
+            Some(container) => self.visible(container).or(Some(hit)),
+            None => Some(hit),
+        }
+    }
+
+    /// The label inside `container`, if it has a live one.
+    pub fn bound_text_of(&self, container: &str) -> Option<String> {
+        let c = self.scene.by_id(container)?;
+        let Some(Value::Array(bound)) = c.raw().get("boundElements") else {
+            return None;
+        };
+        bound
+            .iter()
+            .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|b| b.get("id").and_then(Value::as_str))
+            .find(|id| self.scene.by_id(id).is_some_and(|t| t.text.is_some()))
+            .map(str::to_owned)
+    }
+
+    /// `ids` and the labels of any of them that have one.
+    fn with_labels(&self, ids: Vec<String>) -> Vec<String> {
+        let mut out = ids.clone();
+        for id in &ids {
+            if let Some(t) = self.bound_text_of(id) {
+                if !out.contains(&t) {
+                    out.push(t);
+                }
+            }
+        }
+        out
     }
 
     // --- pointer
@@ -315,6 +390,18 @@ impl Editor {
 
     pub fn pointer_down(&mut self, p: Point, m: Modifiers) {
         if self.gesture.is_some() {
+            return;
+        }
+        if self.editing.is_some() {
+            // A click elsewhere ends the typing; it does nothing else.
+            self.finish_text();
+            return;
+        }
+        if self.tool == Tool::Text {
+            self.start_text(p);
+            if !self.tool_locked {
+                self.tool = Tool::Selection;
+            }
             return;
         }
         if let Some(kind) = self.tool.element_type() {
@@ -374,9 +461,10 @@ impl Editor {
                 return;
             }
         }
-        let origins = self
-            .selected()
+        let ids = self.with_labels(self.selected_in_order());
+        let origins = ids
             .iter()
+            .filter_map(|id| self.scene.by_id(id))
             .map(|e| (e.id.clone(), e.x, e.y))
             .collect();
         self.begin();
@@ -427,12 +515,15 @@ impl Editor {
             Some(Gesture::Resize(r)) => {
                 for (id, updates) in r.updates(p, m) {
                     self.change(&id, updates);
+                    // `handleBindTextResize`: the label is wrapped again.
+                    self.sync_label(&id, true);
                 }
                 self.gesture = Some(Gesture::Resize(r));
             }
             Some(Gesture::Rotate(r)) => {
                 for (id, updates) in r.updates(p, m) {
                     self.change(&id, updates);
+                    self.sync_label(&id, false);
                 }
                 self.gesture = Some(Gesture::Rotate(r));
             }
@@ -563,7 +654,23 @@ impl Editor {
             }
             return false;
         }
+        if self.editing.is_some() {
+            // Typing goes to the app's text box; only these reach here.
+            if key == Key::Escape || (key == Key::Enter && m.ctrl) {
+                self.finish_text();
+                return true;
+            }
+            return false;
+        }
         match (key, m.ctrl, m.shift) {
+            (Key::Enter, false, _) => {
+                // Enter on one selected text or shape: type into it.
+                let [id] = self.selection.as_slice() else {
+                    return false;
+                };
+                let id = id.clone();
+                return self.edit_at_element(&id);
+            }
             (Key::Char('z'), true, false) => self.undo(),
             (Key::Char('z'), true, true) | (Key::Char('y'), true, _) => self.redo(),
             (Key::Char('a'), true, _) => self.select_all(),
@@ -599,6 +706,7 @@ impl Editor {
                     'a' | '5' => Tool::Arrow,
                     'l' | '6' => Tool::Line,
                     'p' | '7' => Tool::FreeDraw,
+                    't' | '8' => Tool::Text,
                     'h' => Tool::Hand,
                     'q' => {
                         self.tool_locked = !self.tool_locked;
@@ -639,9 +747,10 @@ impl Editor {
     }
 
     pub fn translate_selected(&mut self, dx: f64, dy: f64) {
-        let moves: Vec<(String, f64, f64)> = self
-            .selected()
+        let ids = self.with_labels(self.selected_in_order());
+        let moves: Vec<(String, f64, f64)> = ids
             .iter()
+            .filter_map(|id| self.scene.by_id(id))
             .map(|e| (e.id.clone(), e.x, e.y))
             .collect();
         if moves.is_empty() {
@@ -655,7 +764,7 @@ impl Editor {
     }
 
     pub fn delete_selected(&mut self) {
-        let ids = self.selected_in_order();
+        let ids = self.with_labels(self.selected_in_order());
         if ids.is_empty() {
             return;
         }
@@ -774,6 +883,289 @@ impl Editor {
         }
     }
 
+    /// `ids` in stacking order.
+    fn in_order(&self, ids: Vec<String>) -> Vec<String> {
+        let set: HashSet<String> = ids.into_iter().collect();
+        self.scene
+            .order()
+            .into_iter()
+            .filter(|id| set.contains(id))
+            .collect()
+    }
+
+    // --- text
+
+    fn font_of(e: &Element) -> text::Font {
+        let t = e.text.as_ref();
+        text::Font {
+            family: t.map_or(5.0, |t| t.font_family),
+            size: t.map_or(20.0, |t| t.font_size),
+            line_height: t.map_or(1.25, |t| t.line_height),
+        }
+    }
+
+    /// Lays a shape's label out again after the shape changed: re-wrapped to
+    /// its width when `rewrap`, the shape grown to fit it if need be, and the
+    /// label placed and turned as the shape is (`handleBindTextResize`,
+    /// `computeBoundTextPosition`).
+    fn sync_label(&mut self, container: &str, rewrap: bool) {
+        let Some(tid) = self.bound_text_of(container) else {
+            return;
+        };
+        let (Some(c), Some(t)) = (
+            self.scene.by_id(container).cloned(),
+            self.scene.by_id(&tid).cloned(),
+        ) else {
+            return;
+        };
+        let Some(tv) = t.text.clone() else { return };
+        let font = Self::font_of(&t);
+        let original = t
+            .raw()
+            .get("originalText")
+            .and_then(Value::as_str)
+            .unwrap_or(&tv.text)
+            .to_owned();
+        let wrapped = if rewrap {
+            text::wrap(
+                &original,
+                font,
+                text::max_width(&c, font.size),
+                self.measure.as_ref(),
+            )
+        } else {
+            tv.text.clone()
+        };
+        let (w, h) = text::measure(&wrapped, font, self.measure.as_ref());
+        if c.kind != Kind::Arrow && h > text::max_height(&c, h) {
+            let height = text::container_dimension(h, c.kind);
+            self.change(container, vec![update_num("height", height)]);
+        }
+        let Some(c) = self.scene.by_id(container).cloned() else {
+            return;
+        };
+        let (x, y) = text::bound_position(&c, &tv.text_align, &tv.vertical_align, w, h);
+        self.change(
+            &tid,
+            vec![
+                update("text", wrapped),
+                update_num("width", w),
+                update_num("height", h),
+                update_num("x", x),
+                update_num("y", y),
+                update_num("angle", c.angle),
+            ],
+        );
+    }
+
+    /// Starts typing a new text at `p`, its first line's top left.
+    pub fn start_text(&mut self, p: Point) {
+        self.finish_text();
+        self.begin();
+        let raw = new_text_element(
+            p[0],
+            p[1],
+            &self.style,
+            self.font_family,
+            self.font_size,
+            &self.text_align,
+            "top",
+            None,
+        );
+        if let Some(id) = self.add(self.scene.elements.len(), raw) {
+            self.selection.clear();
+            self.editing = Some(TextEdit {
+                id,
+                container: None,
+                is_new: true,
+            });
+        }
+    }
+
+    /// Starts typing into a text element, or into the label of a shape,
+    /// making the label if it has none. False for anything else.
+    pub fn edit_at_element(&mut self, id: &str) -> bool {
+        let Some(e) = self.visible(id).cloned() else {
+            return false;
+        };
+        self.finish_text();
+        if e.text.is_some() {
+            let container = e.text.as_ref().and_then(|t| t.container_id.clone());
+            self.begin();
+            self.history.touch(&self.scene, id);
+            self.changes.ids.insert(id.to_owned());
+            self.editing = Some(TextEdit {
+                id: id.to_owned(),
+                container,
+                is_new: false,
+            });
+            return true;
+        }
+        // `isTextBindableContainer`; arrows get labels in their own step.
+        if !matches!(e.kind, Kind::Rectangle | Kind::Diamond | Kind::Ellipse) {
+            return false;
+        }
+        if let Some(tid) = self.bound_text_of(id) {
+            return self.edit_at_element(&tid);
+        }
+        self.begin();
+        let c = geometry::center(geometry::bounds(&e));
+        let raw = new_text_element(
+            c[0],
+            c[1],
+            &self.style,
+            self.font_family,
+            self.font_size,
+            "center",
+            "middle",
+            Some(id),
+        );
+        let at = self
+            .scene
+            .position(id)
+            .map_or(self.scene.elements.len(), |i| i + 1);
+        let Some(tid) = self.add(at, raw) else {
+            return false;
+        };
+        let mut bound = match e.raw().get("boundElements") {
+            Some(Value::Array(b)) => b.clone(),
+            _ => Vec::new(),
+        };
+        bound.push(json!({ "type": "text", "id": tid }));
+        self.change(id, vec![update("boundElements", Value::Array(bound))]);
+        self.change(&tid, vec![update_num("angle", e.angle)]);
+        self.editing = Some(TextEdit {
+            id: tid,
+            container: Some(id.to_owned()),
+            is_new: true,
+        });
+        true
+    }
+
+    /// A double click: type into what is there, or start new text.
+    pub fn double_click(&mut self, p: Point) {
+        if self.tool != Tool::Selection {
+            return;
+        }
+        let hit = self.element_at(p).map(|e| e.id.clone());
+        match hit {
+            Some(id) => {
+                self.edit_at_element(&id);
+            }
+            None => self.start_text(p),
+        }
+    }
+
+    /// The text element being typed into, and the text typed so far.
+    pub fn editing_text(&self) -> Option<(&Element, String)> {
+        let edit = self.editing.as_ref()?;
+        let e = self.scene.by_id(&edit.id)?;
+        let original = e
+            .raw()
+            .get("originalText")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        Some((e, original))
+    }
+
+    /// What has been typed so far: the element follows it (measured, and
+    /// wrapped inside a shape) as Excalidraw's text box does.
+    pub fn set_text(&mut self, typed: &str) {
+        let Some(edit) = self.editing.clone() else {
+            return;
+        };
+        let Some(e) = self.scene.by_id(&edit.id).cloned() else {
+            return;
+        };
+        let typed = text::normalize(typed);
+        if let Some(container) = &edit.container {
+            self.change(
+                &edit.id,
+                vec![update("originalText", typed.clone()), update("text", typed)],
+            );
+            self.sync_label(container, true);
+            return;
+        }
+        let font = Self::font_of(&e);
+        let (w, h) = text::measure(&typed, font, self.measure.as_ref());
+        // Left-aligned text grows to the right; centred grows both ways.
+        let dx = match e.text.as_ref().map_or("left", |t| t.text_align.as_str()) {
+            "center" => (w - e.width) / 2.0,
+            "right" => w - e.width,
+            _ => 0.0,
+        };
+        self.change(
+            &edit.id,
+            vec![
+                update("text", typed.clone()),
+                update("originalText", typed),
+                update_num("width", w),
+                update_num("height", h),
+                update_num("x", e.x - dx),
+            ],
+        );
+    }
+
+    /// Ends the typing. Text left empty is no text: a new one leaves no
+    /// trace, an old one is deleted (with its place in its shape).
+    pub fn finish_text(&mut self) {
+        let Some(edit) = self.editing.take() else {
+            return;
+        };
+        self.changes.ids.insert(edit.id.clone());
+        let empty = self
+            .scene
+            .by_id(&edit.id)
+            .and_then(|e| {
+                e.raw()
+                    .get("originalText")
+                    .and_then(Value::as_str)
+                    .map(|t| t.trim().is_empty())
+            })
+            .unwrap_or(true);
+        if empty && edit.is_new {
+            let ids = self.scene.order();
+            self.history.cancel(&mut self.scene);
+            self.remove_new(&edit.id);
+            self.changes.ids.extend(ids);
+            return;
+        }
+        if empty {
+            self.change(&edit.id, vec![update("isDeleted", true)]);
+            if let Some(container) = &edit.container {
+                if let Some(Value::Array(bound)) = self
+                    .scene
+                    .by_id(container)
+                    .and_then(|c| c.raw().get("boundElements"))
+                    .cloned()
+                {
+                    let kept: Vec<Value> = bound
+                        .into_iter()
+                        .filter(|b| b.get("id").and_then(Value::as_str) != Some(&edit.id))
+                        .collect();
+                    self.change(
+                        container,
+                        vec![update(
+                            "boundElements",
+                            if kept.is_empty() {
+                                Value::Null
+                            } else {
+                                Value::Array(kept)
+                            },
+                        )],
+                    );
+                }
+            }
+        }
+        self.commit();
+        self.selection = match (&edit.container, empty) {
+            (Some(c), _) => vec![c.clone()],
+            (None, false) => vec![edit.id.clone()],
+            (None, true) => Vec::new(),
+        };
+    }
+
     // --- copies
 
     /// The selection as copies with new ids and new groups (nested groups
@@ -825,10 +1217,43 @@ impl Editor {
                 c.insert("versionNonce".into(), json!(0));
                 c.insert("updated".into(), json!(scene::edit::now_ms()));
                 c.insert("index".into(), Value::Null);
-                // Bindings point at elements that were not copied with them.
-                for key in ["boundElements", "startBinding", "endBinding", "containerId"] {
+                // Bindings follow the copies when both ends were copied, and
+                // are dropped when not.
+                if let Some(container) = c.get("containerId").and_then(Value::as_str) {
+                    let mapped = ids.get(container).cloned();
+                    c.insert(
+                        "containerId".into(),
+                        mapped.map_or(Value::Null, Value::from),
+                    );
+                }
+                if let Some(Value::Array(bound)) = c.get("boundElements").cloned() {
+                    let kept: Vec<Value> = bound
+                        .iter()
+                        .filter_map(|b| {
+                            let new = ids.get(b.get("id")?.as_str()?)?;
+                            let mut b = b.clone();
+                            b["id"] = json!(new);
+                            Some(b)
+                        })
+                        .collect();
+                    c.insert(
+                        "boundElements".into(),
+                        if kept.is_empty() {
+                            Value::Null
+                        } else {
+                            Value::Array(kept)
+                        },
+                    );
+                }
+                for key in ["startBinding", "endBinding"] {
+                    let mapped = c.get(key).and_then(|b| {
+                        let new = ids.get(b.get("elementId")?.as_str()?)?;
+                        let mut b = b.clone();
+                        b["elementId"] = json!(new);
+                        Some(b)
+                    });
                     if c.contains_key(key) {
-                        c.insert(key.into(), Value::Null);
+                        c.insert(key.into(), mapped.unwrap_or(Value::Null));
                     }
                 }
                 c
@@ -838,7 +1263,7 @@ impl Editor {
 
     /// Ctrl+D: copies just above the originals, offset, and selected.
     pub fn duplicate(&mut self) {
-        let ids = self.selected_in_order();
+        let ids = self.in_order(self.with_labels(self.selected_in_order()));
         if ids.is_empty() {
             return;
         }
@@ -864,7 +1289,7 @@ impl Editor {
 
     /// The selection in Excalidraw's clipboard format, files included.
     pub fn copy(&self) -> Option<String> {
-        let ids = self.selected_in_order();
+        let ids = self.in_order(self.with_labels(self.selected_in_order()));
         if ids.is_empty() {
             return None;
         }
@@ -912,10 +1337,7 @@ impl Editor {
         }
         // Where they were, to centre them on the pointer.
         let probe = Scene::parse(&json!({ "type": "excalidraw", "elements": raws }).to_string());
-        let Some(b) = probe
-            .ok()
-            .and_then(|s| bounds_of(s.visible()))
-        else {
+        let Some(b) = probe.ok().and_then(|s| bounds_of(s.visible())) else {
             return false;
         };
         let c = geometry::center(b);
