@@ -94,7 +94,11 @@ pub fn describe(s: &Session) -> String {
 /// if they have none): what was discarded on the way out stays discarded.
 pub fn snapshot(app: &mut App, discarded: &HashSet<String>) -> Result<(), String> {
     let mut inputs = Vec::new();
+    let canvas = app.canvas();
     for tab in &mut app.tabs {
+        if let Some(canvas) = &canvas {
+            tab.doc.editor.scene.set_view_background_color(canvas);
+        }
         let path = tab.path.as_ref().map(|p| p.to_string_lossy().into_owned());
         if discarded.contains(&tab.id) {
             let Some(p) = &tab.path else { continue };

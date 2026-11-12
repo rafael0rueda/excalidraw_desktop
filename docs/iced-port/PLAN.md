@@ -284,7 +284,8 @@ Kept or added:
 | 2 | Editing core | **Done** 2026-11-11 (results below) |
 | 3 | Text and arrows | **Done** 2026-11-12 (results below) |
 | 4 | Files, tabs, session | **Done** 2026-11-12 (results below) |
-| 5–8 | | Not started |
+| 5 | Themes | **Done** 2026-11-12 (results below) |
+| 6–8 | | Not started |
 
 ### Phase 2 result, 2026-11-11
 
@@ -446,4 +447,66 @@ Checked:
 - By hand in a real window: the handover from a second launch.
 
 75 tests in the workspace. The chrome is plain widgets until phase 5.
+
+### Phase 5 result, 2026-11-12
+
+Themes work as in the Tauri app, from the same files and rules
+(`app/src/theme.rs` ports `src/theme/*.ts`):
+
+- **The ten presets.** A test holds them to `src/theme/presets.ts`.
+- **User themes** are JSON in `themes/`, with the same parsing, error
+  messages and `<id>.json` rule. A user theme with a preset's id takes the
+  preset's place. Files are written in the schema's order, byte for byte as
+  `JSON.stringify(…, null, 2)`.
+- **Settings** use core's `settings.json`: `theme` (an id or `system`), plus
+  `light_theme` and `dark_theme`.
+- **Follow system** reads the desktop portal's `color-scheme` through
+  `mundy` (already in the tree, through iced). It is read before the window
+  opens and followed while the app runs.
+- **What a theme paints:**
+  - the canvas;
+  - the colours new elements are drawn in, unless the user picked their
+    own (`apply.ts`'s unclaimed rule);
+  - the selection colour;
+  - all the chrome: the tab bar, the File and Theme menus, the tool bar as
+    a floating island, dialogs, the window's light or dark title bar.
+- **Saved drawings and snapshots** carry the chosen theme's canvas colour as
+  `viewBackgroundColor`, as the Tauri app writes it.
+- **Theme menu:** Follow system (Light/Dark), every theme with a check on
+  the one in use, Customise themes… (Ctrl+,), Reload user themes (which
+  says what it skipped and why).
+- **Theme editor**, a panel on the right, with the same rules as
+  `ThemeEditor.tsx`:
+  - Appearance (Use, and the light and dark pair);
+  - Start from, Name, Dark colour scheme;
+  - the ten colours as hex fields, with a red border while a value is not a
+    colour;
+  - Save, Save as new (a fresh id), Delete for user themes, Close.
+  - The whole window paints the draft as it is edited; a half-typed colour
+    paints as it was.
+  - Leaving an unsaved draft asks first.
+  - Saving while following the desktop fills the light or dark slot.
+  - One difference: iced has no desktop colour chooser, so a swatch opens
+    hue, saturation and value sliders under its field.
+
+The development modes take `--theme ID`. Without it they keep the light
+theme and each drawing's own canvas colour, for comparison with Excalidraw.
+
+Checked:
+
+- **Tests:**
+  - unit tests for the colour grammar, `mix` and `emphasis`, the file
+    format, ids, choosing a theme and the light/dark slots;
+  - the app flow test extended through `App::update`: following the desktop
+    as it turns dark, stroke defaults across theme changes, settings
+    written, a saved file's canvas colour, the editor's draft, the discard
+    question, Save as new, Delete, Reload's report.
+- **Screenshots:** Light, Kanagawa Wave and Nord with the menus and the
+  editor.
+- **Live:** the portal read on this desktop (dark).
+- **Not tried:** switching the desktop between light and dark while the app
+  runs.
+
+81 tests in the workspace. The tool bar still has text labels; icons are
+part of the parity work (phase 8).
 

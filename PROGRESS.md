@@ -15,6 +15,8 @@ Phase 3 (fonts, text, labels, arrow bindings, line editor) is done.
 Phase 4 (tabs, open/save/save as, recent, unsaved guard, autosave and crash
 recovery, CLI args, single instance) is done; it keeps its own config dir,
 `~/.config/excalidraw-desktop-iced`.
+Phase 5 (themes: ten presets, user themes, theme editor, follow system) is
+done.
 
 ## Decisions already made (do not re-litigate)
 

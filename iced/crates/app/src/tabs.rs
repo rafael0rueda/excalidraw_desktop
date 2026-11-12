@@ -20,6 +20,8 @@ pub struct Tab {
     pub text_box: Option<(String, text_editor::Content)>,
     /// Changed since its last snapshot.
     pub unsnapshotted: bool,
+    /// The theme stroke and fill last given to its new elements.
+    pub themed: Option<(String, String)>,
 }
 
 /// A fresh tab id: 32 hex digits, as `safe_id` accepts.
@@ -32,7 +34,7 @@ pub fn new_id() -> String {
 
 impl Tab {
     pub fn new(id: String, path: Option<PathBuf>, doc: Document, view: View) -> Self {
-        Self { id, path, doc, view, built_at: RefCell::new(None), text_box: None, unsnapshotted: true }
+        Self { id, path, doc, view, built_at: RefCell::new(None), text_box: None, unsnapshotted: true, themed: None }
     }
 
     /// The file's name, or what an unsaved drawing is called.

@@ -5,7 +5,8 @@
 //! Tabs (Ctrl+N, Ctrl+W, Ctrl+Tab, Ctrl+1…9), files (Ctrl+O, Ctrl+S,
 //! Ctrl+Shift+S, the File menu with recent drawings), autosave and crash
 //! recovery, and one running copy: a second launch hands its drawings over.
-//! Draw with the tool bar or Excalidraw's keys; Ctrl+Q quits.
+//! Draw with the tool bar or Excalidraw's keys; Ctrl+Q quits. Themes: the
+//! Theme menu, and the theme editor (Ctrl+,), as the Tauri app has them.
 //!
 //! Until it replaces the Tauri app, this build keeps its state apart, in
 //! `~/.config/excalidraw-desktop-iced`, so it cannot touch the real session.
@@ -14,6 +15,8 @@
 //! `--bench SECONDS` pans, then zooms, and prints timings (the phase 1 gate).
 //! `--screenshot out.png [--zoom F]` saves the window once drawn, and exits.
 //! `--chrome` keeps the tab bar and tools in that screenshot.
+//! `--theme ID` draws in that theme (the light one otherwise, with the
+//! drawing's own canvas colour, as Excalidraw shows it).
 //! `--script FILE` replays editor actions first (see script.rs).
 //! `NO_MSAA=1` turns antialiasing off, to separate what MSAA does to thin
 //! lines (it thickens them; see PLAN.md) from what the geometry is.
@@ -31,12 +34,14 @@ mod session;
 mod tabs;
 #[cfg(test)]
 mod tests;
+mod theme;
+mod theme_editor;
 mod toolbar;
 mod view;
 
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 
-use chrome::Answer;
+use chrome::{Answer, Menu, TAB_BAR};
 use doc::{fit, Document};
 use editor::Tool;
 use excalidraw_desktop_core::recent::{self, RecentEntry};
@@ -53,9 +58,6 @@ use view::{Input, SceneView, Timings, View};
 
 const WINDOW: Size = Size::new(1280.0, 800.0);
 
-/// The tab bar's height: the drawing gets the window less this.
-pub const TAB_BAR: f32 = 36.0;
-
 /// This build's config directory, apart from the Tauri app's.
 const APP_DIR: &str = "excalidraw-desktop-iced";
 
@@ -68,6 +70,10 @@ struct Args {
     script: Option<String>,
     /// With `--screenshot`: the window as it is, tab bar and tools included.
     chrome: bool,
+    /// A development run's theme.
+    theme: Option<String>,
+    /// The desktop prefers dark, as it said before the window opened.
+    system_dark: bool,
 }
 
 impl Args {
@@ -95,6 +101,7 @@ fn args() -> Args {
             "--zoom" => args.zoom = value().and_then(|s| s.parse().ok()),
             "--script" => args.script = value(),
             "--chrome" => args.chrome = true,
+            "--theme" => args.theme = value(),
             flag if flag.starts_with('-') => {}
             _ => {
                 let p = PathBuf::from(&a);
@@ -136,11 +143,17 @@ pub enum Message {
     SaveAs,
     SaveAsPicked(String, Option<PathBuf>, Option<After>),
     ClearRecent,
-    ToggleMenu,
+    ToggleMenu(Menu),
     Quit,
     Answer(Answer),
     Autosave(Instant),
     HandedOver(Vec<PathBuf>),
+    /// From the Theme menu: a theme id, or `theme::SYSTEM`.
+    SelectTheme(String),
+    Theme(theme_editor::Edit),
+    ReloadThemes,
+    /// The desktop switched between light and dark.
+    SystemDark(bool),
 }
 
 /// A question the app is waiting on.
@@ -148,6 +161,11 @@ pub enum Prompt {
     Unsaved { tab: String, title: String, then: After },
     Recover { what: String, session: Session },
     Error(String),
+    /// Something to read, not a problem: what Reload user themes found.
+    Info(String),
+    /// Leaving a theme draft unsaved; `then` is what was asked for.
+    DiscardTheme { name: String, then: theme_editor::Edit },
+    DeleteTheme { name: String },
 }
 
 /// A quit in progress: which tabs have been asked about, and which of them
@@ -173,7 +191,13 @@ pub struct App {
     sized: bool,
     recent: Vec<RecentEntry>,
     prompt: Option<Prompt>,
-    menu_open: bool,
+    menu: Option<Menu>,
+    themes: theme::Themes,
+    /// The theme editor, when open.
+    panel: Option<theme_editor::Panel>,
+    /// A development run without `--theme`: each drawing on its own canvas
+    /// colour, as Excalidraw itself shows it, for comparing the two.
+    file_background: bool,
     quitting: Option<Quitting>,
     /// Drawings named on the command line, opened once recovery is settled.
     pending_open: Vec<PathBuf>,
@@ -233,7 +257,10 @@ impl App {
             sized: false,
             recent: Vec::new(),
             prompt: None,
-            menu_open: false,
+            menu: None,
+            themes: if args.dev() { theme::Themes::fixed(args.theme.as_deref().unwrap_or(theme::FALLBACK)) } else { theme::Themes::load(args.system_dark) },
+            panel: None,
+            file_background: args.dev() && args.theme.is_none(),
             quitting: None,
             pending_open: Vec::new(),
             last_change: None,
@@ -335,6 +362,29 @@ impl App {
         }
     }
 
+    /// The theme on screen: the editor's draft while it is open.
+    fn active_theme(&self) -> theme::Theme {
+        match &self.panel {
+            Some(p) => p.paintable(),
+            None => self.themes.chosen(),
+        }
+    }
+
+    pub fn look(&self) -> theme::Look {
+        theme::Look::of(&self.active_theme())
+    }
+
+    fn theme(&self) -> iced::Theme {
+        let t = self.active_theme();
+        theme::Look::of(&t).iced(&t.name)
+    }
+
+    /// The canvas colour a drawing is saved with: the chosen theme's, as
+    /// the Tauri app writes it (never a draft's).
+    pub fn canvas(&self) -> Option<String> {
+        (!self.dev).then(|| self.themes.chosen().colors.canvas)
+    }
+
     fn tab(&self) -> &Tab {
         &self.tabs[self.active]
     }
@@ -358,7 +408,23 @@ impl App {
                 self.last_change = Some(Instant::now());
             }
         }
+        // New elements draw in the theme's colours, unless the user picked
+        // their own: a default still at Excalidraw's own or at the last
+        // theme's is the theme's to change (apply.ts).
+        let t = self.active_theme();
         let tab = &mut self.tabs[self.active];
+        let wanted = (t.colors.stroke, t.colors.fill);
+        if tab.themed.as_ref() != Some(&wanted) {
+            let last = tab.themed.take();
+            let style = &mut tab.doc.editor.style;
+            if style.stroke_color == theme::FACTORY_STROKE || last.as_ref().is_none_or(|l| l.0 == style.stroke_color) {
+                style.stroke_color = wanted.0.clone();
+            }
+            if style.background_color == theme::FACTORY_FILL || last.as_ref().is_none_or(|l| l.1 == style.background_color) {
+                style.background_color = wanted.1.clone();
+            }
+            tab.themed = Some(wanted);
+        }
         tab.doc.layers.apply(&tab.doc.editor.scene, changes);
         tab.doc.editor.zoom = f64::from(tab.view.zoom);
         let editing = tab.doc.editor.editing_text().map(|(e, typed)| (e.id.clone(), typed));
@@ -471,6 +537,9 @@ impl App {
     /// Writes tab `id` to `path`, atomically, as Excalidraw saves a file.
     fn write_to(&mut self, id: &str, path: PathBuf) -> Result<(), String> {
         let Some(i) = self.position(id) else { return Err("the tab is gone".into()) };
+        if let Some(canvas) = self.canvas() {
+            self.tabs[i].doc.editor.scene.set_view_background_color(&canvas);
+        }
         let json = self.tabs[i].doc.editor.scene.to_file_json();
         excalidraw_desktop_core::files::write_atomic(&path, json.as_bytes())?;
         let path = std::fs::canonicalize(&path).unwrap_or(path);
@@ -618,7 +687,7 @@ impl App {
             Some(Prompt::Unsaved { tab, then, .. }) => match answer {
                 Answer::Save => self.save_tab(tab, Some(then)),
                 Answer::Discard => self.continue_after(&tab, then, true),
-                Answer::Cancel => {
+                Answer::Cancel | Answer::Confirm => {
                     self.quitting = None;
                     Task::none()
                 }
@@ -635,7 +704,19 @@ impl App {
                 self.after_restore();
                 Task::none()
             }
-            Some(Prompt::Error(_)) | None => Task::none(),
+            Some(Prompt::DiscardTheme { then, .. }) => {
+                if answer == Answer::Discard {
+                    self.theme_edit(then, true);
+                }
+                Task::none()
+            }
+            Some(Prompt::DeleteTheme { .. }) => {
+                if answer == Answer::Confirm {
+                    self.theme_edit(theme_editor::Edit::Delete, true);
+                }
+                Task::none()
+            }
+            Some(Prompt::Error(_) | Prompt::Info(_)) | None => Task::none(),
         }
     }
 
@@ -646,17 +727,17 @@ impl App {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         // While a question is up, it is the only thing that can be answered.
-        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..)) {
+        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_)) {
             return Task::none();
         }
         // The menu closes on anything done in the window (a click outside it
         // only closes it), not on the clocks or the pointer passing over.
         let action = !matches!(
             message,
-            Message::ToggleMenu | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::Input(Input::Move(..))
+            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_) | Message::Input(Input::Move(..))
         );
-        if self.menu_open && action {
-            self.menu_open = false;
+        if self.menu.is_some() && action {
+            self.menu = None;
             if matches!(message, Message::Input(Input::Down(..) | Input::DoubleClick(_))) {
                 return Task::none();
             }
@@ -742,7 +823,11 @@ impl App {
                 let _ = recent::clear();
                 self.recent.clear();
             }
-            Message::ToggleMenu => self.menu_open = !self.menu_open,
+            Message::ToggleMenu(m) => self.menu = if self.menu == Some(m) { None } else { Some(m) },
+            Message::SelectTheme(id) => self.theme_edit(theme_editor::Edit::Use(id), false),
+            Message::Theme(e) => self.theme_edit(e, false),
+            Message::ReloadThemes => self.reload_themes(),
+            Message::SystemDark(dark) => self.themes.system_dark = dark,
             Message::Quit => return self.quit(),
             Message::Answer(a) => return self.answer(a),
             Message::Autosave(now) => {
@@ -814,9 +899,14 @@ impl App {
                     }
                     return Task::none();
                 }
-                if self.menu_open && key == Key::Named(Named::Escape) {
-                    self.menu_open = false;
-                    return Task::none();
+                if key == Key::Named(Named::Escape) {
+                    if self.menu.take().is_some() {
+                        return Task::none();
+                    }
+                    if self.panel.is_some() {
+                        self.theme_edit(theme_editor::Edit::Close, false);
+                        return Task::none();
+                    }
                 }
                 let ctrl = modifiers.command();
                 let shift = modifiers.shift();
@@ -841,6 +931,10 @@ impl App {
                         return self.close_tab(&id);
                     }
                     (_, "q") if ctrl => return self.quit(),
+                    (_, ",") if ctrl => {
+                        let e = if self.panel.is_some() { theme_editor::Edit::Close } else { theme_editor::Edit::Open };
+                        self.theme_edit(e, false);
+                    }
                     (_, "c") if ctrl => {
                         if let Some(text) = self.tab().doc.editor.copy() {
                             return clipboard::write(text);
@@ -881,12 +975,14 @@ impl App {
     fn view(&self) -> Element<'_, Message> {
         let tab = self.tab();
         let d = &tab.doc;
+        let look = self.look();
         let scene = SceneView {
             layers: &d.layers,
             editor: &d.editor,
             built_at: &tab.built_at,
             view: tab.view,
-            background: d.background,
+            background: if self.file_background { d.background } else { look.canvas },
+            selection: look.accent,
             panning: self.space || d.editor.tool == Tool::Hand,
             timings: self.bench.as_ref().map(|_| &self.timings),
             on_input: Box::new(Message::Input),
@@ -902,14 +998,23 @@ impl App {
             // The drawing, and the text box if typing: no chrome.
             return layers.into();
         }
-        let status = text(self.status.clone().unwrap_or_default()).size(12).color(Color::from_rgb(0.4, 0.4, 0.4));
-        layers = layers.push(column![toolbar::toolbar(&d.editor), container(status).padding(8)].width(Length::Fill));
+        let status = text(self.status.clone().unwrap_or_default()).size(12).color(look.muted);
+        // Centred in what the theme editor leaves of the drawing.
+        let beside = if self.panel.is_some() { theme_editor::WIDTH } else { 0.0 };
+        let top = column![toolbar::toolbar(look, &d.editor), container(status).padding(iced::Padding { top: 0.0, right: 8.0, bottom: 8.0, left: 8.0 })].width(Length::Fill);
+        layers = layers.push(container(top).padding(iced::Padding { right: beside, ..iced::Padding::ZERO }));
+        if let Some(panel) = &self.panel {
+            // Takes the pointer over it; the drawing beside it stays live.
+            layers = layers.push(theme_editor::view(self, panel));
+        }
         let mut window = stack![column![chrome::tab_bar(self), layers].height(Length::Fill)];
-        if self.menu_open {
-            window = window.push(chrome::file_menu(self));
+        match self.menu {
+            Some(Menu::File) => window = window.push(chrome::file_menu(self)),
+            Some(Menu::Theme) => window = window.push(chrome::theme_menu(self)),
+            None => {}
         }
         if let Some(prompt) = &self.prompt {
-            window = window.push(opaque(chrome::prompt(prompt)));
+            window = window.push(opaque(chrome::prompt(look, prompt)));
         }
         window.into()
     }
@@ -974,6 +1079,7 @@ impl App {
         if !self.dev {
             subs.push(iced::time::every(Duration::from_millis(400)).map(Message::Autosave));
             subs.push(Subscription::run(instance::incoming).map(Message::HandedOver));
+            subs.push(Subscription::run(system_scheme).map(Message::SystemDark));
         }
         Subscription::batch(subs)
     }
@@ -982,6 +1088,12 @@ impl App {
         let tab = self.tab();
         format!("{}{} — Excalidraw (Iced)", if tab.dirty() { "• " } else { "" }, tab.title())
     }
+}
+
+/// The desktop's light or dark preference as it changes, from the portal.
+fn system_scheme() -> impl iced::futures::Stream<Item = bool> {
+    use iced::futures::StreamExt;
+    mundy::Preferences::stream(mundy::Interest::ColorScheme).map(|p| p.color_scheme == mundy::ColorScheme::Dark)
 }
 
 /// Puts the bundled fonts straight into iced's font database, borrowed from
@@ -998,7 +1110,7 @@ fn load_fonts() {
 }
 
 fn main() -> iced::Result {
-    let args = args();
+    let mut args = args();
     // Held until the app exits: the kernel lets go of it if the app dies.
     let mut _lock = None;
     if !args.dev() {
@@ -1014,6 +1126,10 @@ fn main() -> iced::Result {
                 std::process::exit(1);
             }
         }
+        // Asked before the window opens, so a dark desktop never sees the
+        // light theme first. No portal: light, as the Tauri app assumes.
+        args.system_dark = mundy::Preferences::once_blocking(mundy::Interest::ColorScheme, Duration::from_millis(300))
+            .is_some_and(|p| p.color_scheme == mundy::ColorScheme::Dark);
         // What a run that died mid-write left behind; nothing writes yet.
         for dir in ["", "session", "themes"] {
             files::sweep_temp_files(&store::config_dir().join(dir));
@@ -1022,6 +1138,7 @@ fn main() -> iced::Result {
     let app = iced::application(move || App::boot(args.clone()), App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
+        .theme(App::theme)
         .window_size(WINDOW)
         .exit_on_close_request(false)
         .antialiasing(std::env::var_os("NO_MSAA").is_none());

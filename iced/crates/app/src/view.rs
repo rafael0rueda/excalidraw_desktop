@@ -87,6 +87,9 @@ pub struct SceneView<'a, Message> {
     pub built_at: &'a RefCell<Option<f32>>,
     pub view: View,
     pub background: Color,
+    /// Selection outlines and handles: the theme's accent (Excalidraw's
+    /// `--color-selection`).
+    pub selection: Color,
     /// Dragging pans instead of editing: the Hand tool, or Space held.
     pub panning: bool,
     pub timings: Option<&'a RefCell<Timings>>,
@@ -112,12 +115,6 @@ fn modifiers(m: keyboard::Modifiers) -> editor::Modifiers {
     }
 }
 
-/// Excalidraw's selection colour.
-const SELECTION: Color = Color::from_rgb(
-    0x69 as f32 / 255.0,
-    0x65 as f32 / 255.0,
-    0xdb as f32 / 255.0,
-);
 
 fn outline(points: &[Point]) -> Path {
     Path::new(|b| {
@@ -133,7 +130,8 @@ impl<Message> SceneView<'_, Message> {
     /// Selection outlines, handles and the rubber band, in screen pixels.
     fn overlay(&self, frame: &mut Frame<Renderer>) {
         let to = |p: [f64; 2]| self.view.to_screen(p);
-        let line = Stroke::default().with_width(1.0).with_color(SELECTION);
+        let selection = self.selection;
+        let line = Stroke::default().with_width(1.0).with_color(selection);
         let ed = self.editor;
         let selected: Vec<_> = ed
             .selection
@@ -170,7 +168,7 @@ impl<Message> SceneView<'_, Message> {
                 editor::PointHandle::Point(i, at) => {
                     let dot = Path::circle(to(at), 5.0);
                     let picked = ed.selected_point == Some(i);
-                    frame.fill(&dot, if picked { SELECTION } else { Color::WHITE });
+                    frame.fill(&dot, if picked { selection } else { Color::WHITE });
                     frame.stroke(&dot, line);
                 }
                 editor::PointHandle::Mid(_, at) => {
@@ -179,7 +177,7 @@ impl<Message> SceneView<'_, Message> {
                         &dot,
                         Color {
                             a: 0.3,
-                            ..SELECTION
+                            ..selection
                         },
                     );
                 }
@@ -190,7 +188,7 @@ impl<Message> SceneView<'_, Message> {
         if let Some(e) = ed.binding_hint.as_ref().and_then(|id| ed.scene.by_id(id)) {
             let wide = Stroke::default().with_width(6.0).with_color(Color {
                 a: 0.35,
-                ..SELECTION
+                ..selection
             });
             frame.stroke(&outline(&editor::geometry::corners(e).map(to)), wide);
         }
@@ -201,7 +199,7 @@ impl<Message> SceneView<'_, Message> {
                 &rect,
                 Color {
                     a: 0.08,
-                    ..SELECTION
+                    ..selection
                 },
             );
             frame.stroke(&rect, line);

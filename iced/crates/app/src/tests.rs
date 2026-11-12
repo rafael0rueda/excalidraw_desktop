@@ -95,14 +95,14 @@ fn files_tabs_autosave_recovery_and_quit() {
 
     // The File menu stays open while the clocks tick and the pointer moves,
     // and a click on the drawing only closes it.
-    send(&mut app, Message::ToggleMenu);
+    send(&mut app, Message::ToggleMenu(Menu::File));
     autosave(&mut app);
     send(&mut app, Message::Input(Input::Move([5.0, 5.0], NONE)));
-    assert!(app.menu_open);
+    assert_eq!(app.menu, Some(Menu::File));
     let before = app.tab().doc.editor.scene.elements.len();
     send(&mut app, Message::Input(Input::Down([300.0, 300.0], NONE)));
     send(&mut app, Message::Input(Input::Up([300.0, 300.0], NONE)));
-    assert!(!app.menu_open);
+    assert_eq!(app.menu, None);
     assert_eq!(app.tab().doc.editor.scene.elements.len(), before);
 
     // Ctrl+Tab and Ctrl+1 move between tabs.
@@ -187,6 +187,69 @@ fn files_tabs_autosave_recovery_and_quit() {
     send(&mut app, Message::SaveAsPicked(id, Some(tmp.join("c")), None));
     assert!(tmp.join("c.excalidraw").is_file());
     assert_eq!(app.tab().title(), "c.excalidraw");
+
+    // --- themes. Following the desktop (the default): its light theme until
+    // it turns dark.
+    use theme_editor::Edit;
+    assert_eq!(app.themes.chosen().id, "kanagawa-lotus");
+    send(&mut app, Message::SystemDark(true));
+    assert_eq!(app.themes.chosen().id, "kanagawa-wave");
+
+    // New elements draw in the theme's stroke; a colour picked by hand
+    // survives a change of theme, the theme's own does not.
+    draw_rectangle(&mut app, [0.0, 0.0]);
+    let last = |app: &App| app.tab().doc.editor.scene.visible().last().unwrap().stroke_color.clone();
+    assert_eq!(last(&app), "#DCD7BA");
+    app.tab_mut().doc.editor.style.stroke_color = "#ff0000".into();
+    send(&mut app, Message::SelectTheme("nord".into()));
+    assert_eq!(app.tab().doc.editor.style.stroke_color, "#ff0000");
+    app.tab_mut().doc.editor.style.stroke_color = "#d8dee9".into();
+    send(&mut app, Message::SelectTheme("dracula".into()));
+    assert_eq!(app.tab().doc.editor.style.stroke_color, "#f8f8f2");
+    let settings: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("settings.json")).unwrap()).unwrap();
+    assert_eq!(settings["theme"], "dracula");
+
+    // A saved drawing carries the theme's canvas colour, as Tauri's do.
+    send(&mut app, Message::Save);
+    let saved = scene::Scene::parse(&std::fs::read_to_string(tmp.join("c.excalidraw")).unwrap()).unwrap();
+    assert_eq!(saved.view_background_color(), Some("#282a36"));
+
+    // The editor paints its draft, a half-typed colour as it was, and
+    // nothing is kept until Save.
+    send(&mut app, Message::Theme(Edit::Open));
+    assert_eq!(app.panel.as_ref().unwrap().draft.id, "dracula");
+    send(&mut app, Message::Theme(Edit::Color(5, "#12".into())));
+    assert_eq!(app.look().accent, theme::color("#bd93f9"));
+    send(&mut app, Message::Theme(Edit::Color(5, " #ff00aa".into())));
+    assert_eq!(app.look().accent, theme::color("#ff00aa"));
+    assert_eq!(app.themes.chosen().colors.accent, "#bd93f9");
+    // Closing with changes asks; keeping them goes on editing.
+    send(&mut app, Message::Theme(Edit::Close));
+    assert!(matches!(app.prompt, Some(Prompt::DiscardTheme { .. })));
+    send(&mut app, Message::Answer(Answer::Cancel));
+    assert!(app.panel.is_some());
+    // Save as new: a fresh id, the original left alone, and it is put on.
+    send(&mut app, Message::Theme(Edit::Name("My Dracula".into())));
+    send(&mut app, Message::Theme(Edit::SaveAsNew));
+    let file = dir.join("themes/my-dracula.json");
+    let written = theme::parse(&serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap()).unwrap();
+    assert_eq!((written.name.as_str(), written.colors.accent.as_str()), ("My Dracula", "#ff00aa"));
+    assert_eq!(app.themes.settings.theme, "my-dracula");
+    assert!(!app.panel.as_ref().unwrap().modified());
+    assert_eq!(app.themes.find("dracula").unwrap().colors.accent, "#bd93f9");
+    // Delete asks first; then the file goes, and so does the editor.
+    send(&mut app, Message::Theme(Edit::Delete));
+    assert!(matches!(app.prompt, Some(Prompt::DeleteTheme { .. })));
+    send(&mut app, Message::Answer(Answer::Confirm));
+    assert!(!file.exists() && app.panel.is_none());
+
+    // Reload says what it skipped, and why.
+    std::fs::write(dir.join("themes/broken.json"), "{").unwrap();
+    std::fs::write(dir.join("themes/misnamed.json"), theme::serialize(&theme::PRESETS[2])).unwrap();
+    send(&mut app, Message::ReloadThemes);
+    let Some(Prompt::Info(text)) = &app.prompt else { panic!("expected what Reload found") };
+    assert!(text.starts_with("Loaded 0 user themes from "), "{text}");
+    assert!(text.contains("broken.json: ") && text.contains("so it has to be named nord.json"), "{text}");
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

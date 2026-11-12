@@ -116,6 +116,24 @@ impl Scene {
             .as_str()
     }
 
+    /// Sets the canvas colour saved with the drawing: the theme's, as the
+    /// Tauri app writes it. Not an edit: no version moves, nothing to undo.
+    pub fn set_view_background_color(&mut self, css: &str) {
+        if self.view_background_color() == Some(css) {
+            return;
+        }
+        let state = self
+            .raw
+            .entry("appState")
+            .or_insert_with(|| Value::Object(Default::default()));
+        if !state.is_object() {
+            *state = Value::Object(Default::default());
+        }
+        if let Some(state) = state.as_object_mut() {
+            state.insert("viewBackgroundColor".into(), Value::String(css.to_owned()));
+        }
+    }
+
     /// An embedded image by `fileId`: its MIME type and `data:` URL.
     pub fn file(&self, id: &str) -> Option<(&str, &str)> {
         let file = self.raw.get("files")?.get(id)?;
