@@ -282,7 +282,8 @@ Kept or added:
 | 0 | Workspace + extract core | **Done** 2026-11-11: `iced/crates/core` (20 tests), src-tauri wrappers (6 tests), clippy clean, `npm run check` 41/41, CI runs both |
 | 1 | Spike + gate | **Done** 2026-11-11, gate **GO** (results above). Crates `rough`, `scene`, `render`, `app` (viewer: `excalidraw-iced FILE`, drag or wheel to pan, Ctrl+wheel to zoom) |
 | 2 | Editing core | **Done** 2026-11-11 (results below) |
-| 3–8 | | Not started |
+| 3 | Text and arrows | **Done** 2026-11-12 (results below) |
+| 4–8 | | Not started |
 
 ### Phase 2 result, 2026-11-11
 
@@ -374,4 +375,23 @@ which can sit off the text on lines shorter than the widest.
   saved here (both ends, both shapes' `boundElements`, the label).
 - Not yet: elbow arrows' fixed-point bindings, and dragging an arrow's end
   onto a shape after it is drawn (comes with point editing, next).
+
+### Phase 3 result, 2026-11-12
+
+Done: merged fonts (step 1), text and shape labels (step 2), arrow labels
+and bindings (step 3), and the line editor: a handle on every point of a
+selected line or arrow and in the middle of each segment; drag to move
+(Shift: 15°), drag a middle one to add a point, Delete to remove the one
+picked; an arrow's end dropped on a shape binds. 74 tests in the workspace.
+
+Performance, measured against the phase 2 build side by side today (a
+worktree of `c944672`): panning the 10k scene is unchanged (116 fps both;
+yesterday's 132 was the machine), zooming dropped from 80 to 70 fps, worst
+frame 105 ms (was 76). The likely cause is text re-rasterised at each zoom
+step from the merged 42 000-glyph Excalifont; still 1.8× Excalidraw's 38 fps.
+To look at with the renderer work (W1).
+
+Still open from the phase 3 scope: elbow arrows (drawing them, and their
+fixed-point bindings); verifying by hand the typing experience the
+screenshots cannot show (IME, the caret on centred labels).
 

@@ -11,6 +11,7 @@ Phase 0 moved the disk logic (`store`, `scope`, `files`, `recent`, `session`,
 on; `src-tauri/src` keeps only thin `#[tauri::command]` wrappers.
 Phase 1 (viewer + go/no-go gate) is done: **GO**, numbers in the plan.
 Phase 2 (editing: draw, select, transform, undo, clipboard, save) is done.
+Phase 3 (fonts, text, labels, arrow bindings, line editor) is done.
 
 ## Decisions already made (do not re-litigate)
 
