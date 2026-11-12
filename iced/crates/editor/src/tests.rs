@@ -569,7 +569,8 @@ fn an_arrow_drawn_onto_a_shape_binds_and_follows_it() {
 
     // The arrow dragged away on its own lets go.
     ed.selection = vec![a.clone()];
-    drag(&mut ed, [100.0, 50.0], [100.0, 400.0], NONE);
+    // By its body, away from the handle in its middle that adds a point.
+    drag(&mut ed, [60.0, 50.0], [60.0, 400.0], NONE);
     assert_eq!(binding(&ed, &a, "endBinding"), None);
     assert_eq!(get(&ed, &r).raw()["boundElements"], Value::Null);
 }
@@ -608,4 +609,75 @@ fn a_straight_arrow_does_not_bind_both_ends_to_one_shape() {
         Some(r.as_str())
     );
     assert_eq!(binding(&ed, &a, "endBinding"), None);
+}
+
+// --- the line editor
+
+fn handle_point(ed: &Editor, i: usize) -> Point {
+    ed.point_handles()
+        .into_iter()
+        .find_map(|h| match h {
+            PointHandle::Point(j, p) if j == i => Some(p),
+            _ => None,
+        })
+        .unwrap()
+}
+
+#[test]
+fn dragging_adding_and_removing_line_points() {
+    let mut ed = empty();
+    ed.tool = Tool::Line;
+    drag(&mut ed, [0.0, 0.0], [200.0, 0.0], NONE);
+    let l = ed.selection[0].clone();
+    // The end, dragged down.
+    let end = handle_point(&ed, 1);
+    drag(&mut ed, end, [200.0, 100.0], NONE);
+    assert_eq!(
+        get(&ed, &l).linear.clone().unwrap().points,
+        vec![[0.0, 0.0], [200.0, 100.0]]
+    );
+    // The start, dragged: the element moves so its first point stays at the origin.
+    drag(&mut ed, [0.0, 0.0], [-50.0, 0.0], NONE);
+    let e = get(&ed, &l).clone();
+    assert_eq!((e.x, e.y), (-50.0, 0.0));
+    assert_eq!(e.linear.unwrap().points, vec![[0.0, 0.0], [250.0, 100.0]]);
+    // The middle handle adds a point.
+    let mid = ed
+        .point_handles()
+        .into_iter()
+        .find_map(|h| match h {
+            PointHandle::Mid(_, p) => Some(p),
+            _ => None,
+        })
+        .unwrap();
+    drag(&mut ed, mid, [100.0, -80.0], NONE);
+    let pts = get(&ed, &l).linear.clone().unwrap().points;
+    assert_eq!(pts.len(), 3);
+    assert_eq!(pts[1], [150.0, -80.0]);
+    // Delete removes the point just dragged; undo brings it back.
+    ed.key(Key::Delete, NONE);
+    assert_eq!(get(&ed, &l).linear.clone().unwrap().points.len(), 2);
+    assert!(!get(&ed, &l).is_deleted, "only the point goes");
+    ed.undo();
+    assert_eq!(get(&ed, &l).linear.clone().unwrap().points.len(), 3);
+}
+
+#[test]
+fn an_arrow_end_dragged_onto_a_shape_binds() {
+    let mut ed = empty();
+    let r = rect(&mut ed, 300.0, 0.0, 100.0, 100.0);
+    ed.tool = Tool::Arrow;
+    drag(&mut ed, [0.0, 50.0], [150.0, 50.0], NONE);
+    let a = ed.selection[0].clone();
+    assert_eq!(binding(&ed, &a, "endBinding"), None);
+    let end = handle_point(&ed, 1);
+    ed.pointer_down(end, NONE);
+    ed.pointer_move([296.0, 50.0], NONE);
+    assert_eq!(
+        ed.binding_hint.as_deref(),
+        Some(r.as_str()),
+        "the target is highlighted on the way"
+    );
+    ed.pointer_up([296.0, 50.0], NONE);
+    assert_eq!(binding(&ed, &a, "endBinding").as_deref(), Some(r.as_str()));
 }

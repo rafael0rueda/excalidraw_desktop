@@ -108,7 +108,23 @@ enum Gesture {
         id: String,
         origin: Point,
     },
+    /// Dragging one point of a line or arrow.
+    Point {
+        id: String,
+        index: usize,
+    },
 }
+
+/// A handle of the line editor: a point, or the middle of a segment
+/// (dragging it adds a point there).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PointHandle {
+    Point(usize, Point),
+    Mid(usize, Point),
+}
+
+/// Point handles' radius on screen.
+const POINT_HANDLE_PX: f64 = 5.0;
 
 pub struct Editor {
     pub scene: Scene,
@@ -130,6 +146,8 @@ pub struct Editor {
     pub marquee: Option<Bounds>,
     /// The shape an arrow being drawn would bind to, for the overlay.
     pub binding_hint: Option<String>,
+    /// The line point last picked, which Delete removes.
+    pub selected_point: Option<usize>,
     /// The text being typed, if any: the app shows its own text box over it.
     pub editing: Option<TextEdit>,
     /// `currentItemFontFamily`, `currentItemFontSize`, `currentItemTextAlign`.
@@ -182,6 +200,7 @@ impl Editor {
             dirty: false,
             marquee: None,
             binding_hint: None,
+            selected_point: None,
             editing: None,
             font_family: 5.0,
             font_size: 20.0,
@@ -368,6 +387,9 @@ impl Editor {
             Tool::Selection => {}
             _ => return Cursor::Crosshair,
         }
+        if self.point_handle_at(p).is_some() {
+            return Cursor::Move;
+        }
         if let Some(h) = self.handle_at(p) {
             return Cursor::Resize(h);
         }
@@ -396,6 +418,8 @@ impl Editor {
         if self.gesture.is_some() {
             return;
         }
+        // A picked line point stays picked only by being pressed again.
+        self.selected_point = None;
         if self.editing.is_some() {
             // A click elsewhere ends the typing; it does nothing else.
             self.finish_text();
@@ -423,6 +447,30 @@ impl Editor {
             return;
         }
         if self.tool != Tool::Selection {
+            return;
+        }
+        if let Some(handle) = self.point_handle_at(p) {
+            let Some(id) = self.selection.first().cloned() else {
+                return;
+            };
+            self.begin();
+            let index = match handle {
+                PointHandle::Point(i, _) => i,
+                PointHandle::Mid(i, at) => {
+                    // A new point where the middle handle was.
+                    let Some(e) = self.scene.by_id(&id).cloned() else {
+                        return;
+                    };
+                    let Some(mut points) = e.linear.as_ref().map(|l| l.points.clone()) else {
+                        return;
+                    };
+                    points.insert(i + 1, geometry::to_local(&e, at));
+                    self.set_points(&id, points);
+                    i + 1
+                }
+            };
+            self.selected_point = Some(index);
+            self.gesture = Some(Gesture::Point { id, index });
             return;
         }
         if let Some(handle) = self.handle_at(p) {
@@ -541,6 +589,10 @@ impl Editor {
                 }
                 self.gesture = Some(Gesture::Rotate(r));
             }
+            Some(Gesture::Point { id, index }) => {
+                self.move_point(&id, index, p, m);
+                self.gesture = Some(Gesture::Point { id, index });
+            }
             Some(Gesture::Create { id, origin }) => {
                 self.create_to(&id, origin, p, m);
                 // What the arrow's end would bind to, shown while drawing.
@@ -654,6 +706,22 @@ impl Editor {
                 }
             }
             Some(Gesture::Marquee { .. }) | None => {}
+            Some(Gesture::Point { id, index }) => {
+                // An arrow's end let go onto a shape binds to it.
+                let is_end = self
+                    .scene
+                    .by_id(&id)
+                    .and_then(|e| {
+                        e.linear
+                            .as_ref()
+                            .map(|l| index == 0 || index + 1 == l.points.len())
+                    })
+                    .unwrap_or(false);
+                if is_end {
+                    self.rebind(&id);
+                }
+                self.commit();
+            }
             Some(Gesture::Drag { origins, .. }) => {
                 // An arrow moved without the shapes it is bound to binds to
                 // whatever its ends are on now, or to nothing.
@@ -734,7 +802,11 @@ impl Editor {
             (Key::Char('['), true, false) => self.send_backward(),
             (Key::Char(']'), true, true) | (Key::Char('}'), true, _) => self.bring_to_front(),
             (Key::Char('['), true, true) | (Key::Char('{'), true, _) => self.send_to_back(),
-            (Key::Delete | Key::Backspace, _, _) => self.delete_selected(),
+            (Key::Delete | Key::Backspace, _, _) => {
+                if !self.delete_selected_point() {
+                    self.delete_selected();
+                }
+            }
             (Key::Escape, _, _) => {
                 self.selection.clear();
                 self.tool = Tool::Selection;
@@ -856,6 +928,125 @@ impl Editor {
         }
         self.commit();
         self.selection.clear();
+    }
+
+    // --- the line editor
+
+    /// The line or arrow whose points can be edited: the only one selected.
+    fn point_edited(&self) -> Option<&Element> {
+        let [id] = self.selection.as_slice() else {
+            return None;
+        };
+        self.visible(id)
+            .filter(|e| e.linear.as_ref().is_some_and(|l| !l.elbowed))
+    }
+
+    /// The handles of the line editor, for drawing them.
+    pub fn point_handles(&self) -> Vec<PointHandle> {
+        let Some(e) = self.point_edited() else {
+            return Vec::new();
+        };
+        let Some(l) = e.linear.as_ref() else {
+            return Vec::new();
+        };
+        let mut out: Vec<PointHandle> = l
+            .points
+            .iter()
+            .enumerate()
+            .map(|(i, p)| PointHandle::Point(i, geometry::to_scene(e, *p)))
+            .collect();
+        for i in 0..l.points.len().saturating_sub(1) {
+            let mid = geometry::segment_mid(e, i);
+            // Only where the segment is long enough to tell it from its ends.
+            let long = geometry::distance(
+                geometry::to_scene(e, l.points[i]),
+                geometry::to_scene(e, l.points[i + 1]),
+            ) * self.zoom
+                > POINT_HANDLE_PX * 6.0;
+            if let (Some(m), true) = (mid, long) {
+                out.push(PointHandle::Mid(i, m));
+            }
+        }
+        out
+    }
+
+    fn point_handle_at(&self, p: Point) -> Option<PointHandle> {
+        let reach = (POINT_HANDLE_PX + 3.0) / self.zoom;
+        self.point_handles().into_iter().find(|h| {
+            let (PointHandle::Point(_, at) | PointHandle::Mid(_, at)) = *h;
+            geometry::distance(at, p) <= reach
+        })
+    }
+
+    /// Sets a line's points, keeping its first point at its origin by moving
+    /// the element instead, as `LinearElementEditor` does.
+    fn set_points(&mut self, id: &str, points: Vec<Point>) {
+        let Some(e) = self.scene.by_id(id).cloned() else {
+            return;
+        };
+        let o = points[0];
+        let points: Vec<Point> = points.iter().map(|p| [p[0] - o[0], p[1] - o[1]]).collect();
+        self.change(
+            id,
+            vec![
+                update_points(&points),
+                update_num("x", e.x + o[0]),
+                update_num("y", e.y + o[1]),
+            ],
+        );
+        self.sync_label(id, false);
+    }
+
+    fn move_point(&mut self, id: &str, index: usize, p: Point, m: Modifiers) {
+        let Some(e) = self.scene.by_id(id).cloned() else {
+            return;
+        };
+        let Some(mut points) = e.linear.as_ref().map(|l| l.points.clone()) else {
+            return;
+        };
+        if index >= points.len() {
+            return;
+        }
+        let mut q = geometry::to_local(&e, p);
+        if m.shift && points.len() > 1 {
+            // 15° steps from the neighbouring point.
+            let n = points[if index == 0 { 1 } else { index - 1 }];
+            let (dx, dy) = (q[0] - n[0], q[1] - n[1]);
+            let step = std::f64::consts::PI / 12.0;
+            let a = (dy.atan2(dx) / step).round() * step;
+            let len = dx.hypot(dy);
+            q = [n[0] + len * a.cos(), n[1] + len * a.sin()];
+        }
+        points[index] = q;
+        self.set_points(id, points);
+        let is_end = index == 0 || index + 1 == e.linear.as_ref().map_or(0, |l| l.points.len());
+        self.binding_hint = (e.kind == Kind::Arrow && is_end)
+            .then(|| self.bindable_at(p, id))
+            .flatten();
+    }
+
+    /// Delete with a line point picked: that point goes, if two are left.
+    fn delete_selected_point(&mut self) -> bool {
+        let (Some(i), Some(e)) = (self.selected_point, self.point_edited().cloned()) else {
+            return false;
+        };
+        let Some(mut points) = e.linear.as_ref().map(|l| l.points.clone()) else {
+            return false;
+        };
+        if points.len() <= 2 || i >= points.len() {
+            return false;
+        }
+        points.remove(i);
+        self.begin();
+        self.set_points(&e.id, points);
+        if e.kind == Kind::Arrow
+            && (i == 0 || i == e.linear.as_ref().map_or(0, |l| l.points.len()) - 1)
+        {
+            self.rebind(&e.id);
+        }
+        self.commit();
+        self.selected_point = None;
+        true
     }
 
     // --- bindings

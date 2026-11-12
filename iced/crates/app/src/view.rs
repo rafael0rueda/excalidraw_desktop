@@ -163,6 +163,28 @@ impl<Message> SceneView<'_, Message> {
                 frame.stroke(&shape, line);
             }
         }
+        // The line editor: a circle on every point, a fainter one in the
+        // middle of each segment to add a point there.
+        for handle in ed.point_handles() {
+            match handle {
+                editor::PointHandle::Point(i, at) => {
+                    let dot = Path::circle(to(at), 5.0);
+                    let picked = ed.selected_point == Some(i);
+                    frame.fill(&dot, if picked { SELECTION } else { Color::WHITE });
+                    frame.stroke(&dot, line);
+                }
+                editor::PointHandle::Mid(_, at) => {
+                    let dot = Path::circle(to(at), 4.0);
+                    frame.fill(
+                        &dot,
+                        Color {
+                            a: 0.3,
+                            ..SELECTION
+                        },
+                    );
+                }
+            }
+        }
         // The shape an arrow being drawn would bind to, as Excalidraw
         // highlights it.
         if let Some(e) = ed.binding_hint.as_ref().and_then(|id| ed.scene.by_id(id)) {

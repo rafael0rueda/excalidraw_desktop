@@ -106,6 +106,22 @@ pub fn bounds_of<'a>(elements: impl IntoIterator<Item = &'a Element>) -> Option<
     elements.into_iter().map(bounds).reduce(union)
 }
 
+/// The middle of segment `i` of a line, in the scene: along the curve when
+/// it is curved (`getSegmentMidPoint`).
+pub fn segment_mid(e: &Element, i: usize) -> Option<Point> {
+    let l = e.linear.as_ref()?;
+    let (a, b) = (*l.points.get(i)?, *l.points.get(i + 1)?);
+    let local = if e.roundness.is_some() && l.points.len() > 2 {
+        let bez = rough::points::curve_to_bezier(&l.points, 0.0)?;
+        let (p0, c1, c2, p1) = (bez[3 * i], bez[3 * i + 1], bez[3 * i + 2], bez[3 * i + 3]);
+        let f = |k: usize| 0.125 * p0[k] + 0.375 * c1[k] + 0.375 * c2[k] + 0.125 * p1[k];
+        [f(0), f(1)]
+    } else {
+        [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]
+    };
+    Some(to_scene(e, local))
+}
+
 /// Where an arrow's label is centred (`getBoundTextElementPosition`): its
 /// middle point when it has an odd number, else the middle of its middle
 /// segment, along the curve when it is curved.
@@ -137,6 +153,10 @@ pub fn arrow_label_center(e: &Element) -> Option<Point> {
         [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]
     };
     Some(to_scene(e, local))
+}
+
+pub fn distance(a: Point, b: Point) -> f64 {
+    (b[0] - a[0]).hypot(b[1] - a[1])
 }
 
 fn dist_to_segment(p: Point, a: Point, b: Point) -> f64 {
