@@ -106,6 +106,39 @@ pub fn bounds_of<'a>(elements: impl IntoIterator<Item = &'a Element>) -> Option<
     elements.into_iter().map(bounds).reduce(union)
 }
 
+/// Where an arrow's label is centred (`getBoundTextElementPosition`): its
+/// middle point when it has an odd number, else the middle of its middle
+/// segment, along the curve when it is curved.
+pub fn arrow_label_center(e: &Element) -> Option<Point> {
+    let l = e.linear.as_ref()?;
+    let n = l.points.len();
+    if n < 2 {
+        return None;
+    }
+    if n % 2 == 1 {
+        return Some(to_scene(e, l.points[n / 2]));
+    }
+    let i = n / 2 - 1;
+    let (a, b) = (l.points[i], l.points[i + 1]);
+    let local = if e.roundness.is_some() && n > 2 {
+        // The cubic Excalidraw draws for that segment, at its middle.
+        let bez = rough::points::curve_to_bezier(&l.points, 0.0)?;
+        let (p0, c1, c2, p1) = (bez[3 * i], bez[3 * i + 1], bez[3 * i + 2], bez[3 * i + 3]);
+        let t = 0.5;
+        let mt = 1.0 - t;
+        let f = |k: usize| {
+            mt * mt * mt * p0[k]
+                + 3.0 * mt * mt * t * c1[k]
+                + 3.0 * mt * t * t * c2[k]
+                + t * t * t * p1[k]
+        };
+        [f(0), f(1)]
+    } else {
+        [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]
+    };
+    Some(to_scene(e, local))
+}
+
 fn dist_to_segment(p: Point, a: Point, b: Point) -> f64 {
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
     let len2 = dx * dx + dy * dy;

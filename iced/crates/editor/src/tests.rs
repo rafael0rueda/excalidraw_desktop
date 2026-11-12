@@ -480,3 +480,35 @@ fn excalidraw_files_with_labels_round_trip_through_the_editor() {
         ]
     );
 }
+
+#[test]
+fn arrow_labels_sit_on_the_middle_and_follow() {
+    let mut ed = empty();
+    ed.tool = Tool::Arrow;
+    drag(&mut ed, [0.0, 0.0], [200.0, 0.0], NONE);
+    let a = ed.selection[0].clone();
+    ed.selection.clear();
+    ed.double_click([100.0, 0.0]);
+    assert_eq!(
+        ed.editing.as_ref().and_then(|e| e.container.clone()),
+        Some(a.clone())
+    );
+    ed.set_text("mid");
+    ed.finish_text();
+    let label = label_of(&ed, &a);
+    let centre = [label.x + label.width / 2.0, label.y + label.height / 2.0];
+    assert!(
+        (centre[0] - 100.0).abs() < 1e-9 && centre[1].abs() < 1e-9,
+        "{centre:?}"
+    );
+    assert_eq!(label.angle, 0.0);
+    ed.selection = vec![a.clone()];
+    ed.key(Key::Down, SHIFT);
+    let moved = label_of(&ed, &a);
+    assert_eq!(moved.y - label.y, 5.0);
+    // Lines take no label.
+    ed.tool = Tool::Line;
+    drag(&mut ed, [0.0, 100.0], [200.0, 100.0], NONE);
+    let l = ed.selection[0].clone();
+    assert!(!ed.edit_at_element(&l));
+}

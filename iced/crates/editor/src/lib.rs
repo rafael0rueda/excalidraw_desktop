@@ -944,7 +944,19 @@ impl Editor {
         let Some(c) = self.scene.by_id(container).cloned() else {
             return;
         };
-        let (x, y) = text::bound_position(&c, &tv.text_align, &tv.vertical_align, w, h);
+        // An arrow's label sits on its middle, upright; a shape's is placed
+        // inside it and turns with it.
+        let ((x, y), angle) = if c.kind == Kind::Arrow {
+            let Some(m) = geometry::arrow_label_center(&c) else {
+                return;
+            };
+            ((m[0] - w / 2.0, m[1] - h / 2.0), 0.0)
+        } else {
+            (
+                text::bound_position(&c, &tv.text_align, &tv.vertical_align, w, h),
+                c.angle,
+            )
+        };
         self.change(
             &tid,
             vec![
@@ -953,7 +965,7 @@ impl Editor {
                 update_num("height", h),
                 update_num("x", x),
                 update_num("y", y),
-                update_num("angle", c.angle),
+                update_num("angle", angle),
             ],
         );
     }
@@ -1001,8 +1013,11 @@ impl Editor {
             });
             return true;
         }
-        // `isTextBindableContainer`; arrows get labels in their own step.
-        if !matches!(e.kind, Kind::Rectangle | Kind::Diamond | Kind::Ellipse) {
+        // `isTextBindableContainer`: shapes, and arrows (not lines).
+        if !matches!(
+            e.kind,
+            Kind::Rectangle | Kind::Diamond | Kind::Ellipse | Kind::Arrow
+        ) {
             return false;
         }
         if let Some(tid) = self.bound_text_of(id) {
@@ -1033,7 +1048,13 @@ impl Editor {
         };
         bound.push(json!({ "type": "text", "id": tid }));
         self.change(id, vec![update("boundElements", Value::Array(bound))]);
-        self.change(&tid, vec![update_num("angle", e.angle)]);
+        self.change(
+            &tid,
+            vec![update_num(
+                "angle",
+                if e.kind == Kind::Arrow { 0.0 } else { e.angle },
+            )],
+        );
         self.editing = Some(TextEdit {
             id: tid,
             container: Some(id.to_owned()),

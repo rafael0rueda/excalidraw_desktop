@@ -96,6 +96,9 @@ pub struct Prepared {
     pub bounds: [f64; 4],
     /// The frame this element is clipped to, if any.
     pub clip: Option<[f64; 4]>,
+    /// A scene box nothing of this element is drawn in: an arrow's label,
+    /// with `BOUND_TEXT_PADDING` around it, as Excalidraw clears it.
+    pub cut: Option<[f64; 4]>,
 }
 
 impl Prepared {
@@ -222,6 +225,26 @@ fn local_bounds(e: &Element) -> [f64; 4] {
     }
 }
 
+/// An arrow's label box, widened by `BOUND_TEXT_PADDING`.
+fn label_cut(arrow: &Element, scene: &Scene) -> Option<[f64; 4]> {
+    let bound = arrow.raw().get("boundElements")?.as_array()?;
+    let id = bound
+        .iter()
+        .find(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))?
+        .get("id")?
+        .as_str()?;
+    let t = scene
+        .by_id(id)
+        .filter(|t| !t.is_deleted && t.text.is_some())?;
+    const PADDING: f64 = 5.0;
+    Some([
+        t.x - PADDING,
+        t.y - PADDING,
+        t.x + t.width + PADDING,
+        t.y + t.height + PADDING,
+    ])
+}
+
 /// Everything Excalidraw draws for `e`. `canvas_background` fills the
 /// "outline" arrowheads, as the canvas colour does in Excalidraw.
 pub fn prepare(e: &Element, scene: &Scene, canvas_background: &str) -> Prepared {
@@ -312,6 +335,11 @@ pub fn prepare(e: &Element, scene: &Scene, canvas_background: &str) -> Prepared 
         opacity: frame.map_or(100.0, |f| f.opacity) * e.opacity / 10000.0,
         bounds: [0.0; 4],
         clip: frame.map(|f| [f.x, f.y, f.x + f.width, f.y + f.height]),
+        cut: if e.kind == Kind::Arrow {
+            label_cut(e, scene)
+        } else {
+            None
+        },
     };
     // Rough strokes wander a few pixels outside the shape, arrowheads and
     // freehand outlines further; the margin only has to be generous.

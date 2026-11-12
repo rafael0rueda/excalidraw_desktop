@@ -82,15 +82,35 @@ pub fn element(frame: &mut Frame<Renderer>, id: &str, p: &Prepared, images: &Ima
             item_into(f, id, item, p, images, zoom);
         }
     };
-    match p.clip {
-        Some([x0, y0, x1, y1]) => {
-            let region = Rectangle::new(
-                Point::new(x0 as f32 * zoom, y0 as f32 * zoom),
-                Size::new((x1 - x0) as f32 * zoom, (y1 - y0) as f32 * zoom),
-            );
-            frame.with_clip(region, draw);
+    // Where it may draw, in scene units: its frame, or everywhere it reaches.
+    let area = p.clip.unwrap_or(p.bounds);
+    let regions: Vec<[f64; 4]> = match p.cut {
+        // iced has no inverse clip: the four bands around the label's box
+        // together are everything but it.
+        Some([cx0, cy0, cx1, cy1]) => {
+            let [x0, y0, x1, y1] = area;
+            vec![
+                [x0, y0, x1, cy0.min(y1)],
+                [x0, cy1.max(y0), x1, y1],
+                [x0, cy0.max(y0), cx0.min(x1), cy1.min(y1)],
+                [cx1.max(x0), cy0.max(y0), x1, cy1.min(y1)],
+            ]
         }
-        None => draw(frame),
+        None if p.clip.is_some() => vec![area],
+        None => {
+            draw(frame);
+            return;
+        }
+    };
+    for [x0, y0, x1, y1] in regions {
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+        let region = Rectangle::new(
+            Point::new(x0 as f32 * zoom, y0 as f32 * zoom),
+            Size::new((x1 - x0) as f32 * zoom, (y1 - y0) as f32 * zoom),
+        );
+        frame.with_clip(region, draw);
     }
 }
 
