@@ -1,0 +1,15 @@
+[package]
+name = "fontmerge"
+version = "0.0.0"
+description = "Merges the Unicode-range subsets of one TrueType font back into one font"
+authors = ["rafa"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+ttf-parser = "0.25"
+
+[dev-dependencies]
+wuff = "0.2"

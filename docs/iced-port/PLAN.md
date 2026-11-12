@@ -313,3 +313,21 @@ shapes, editing a line's points (2-point lines get no box handles until
 then), eraser, frames' screen-sized chrome; re-tessellating off the UI thread
 (a zoom-bucket change at 10k still costs up to 41 ms).
 
+### Phase 3, step 1: fonts (2026-11-11)
+
+cosmic-text uses one file per family name, so Excalidraw's per-range font
+files are merged at build time (`iced/crates/fontmerge`, tested on every
+character of Excalifont: same outline, same advance). Xiaolai is merged into
+Excalifont, which is what Excalidraw's CJK fallback amounts to. Greek,
+Cyrillic, Vietnamese and CJK now render in Excalidraw's faces.
+
+- The fonts are loaded into iced's font database borrowed from the binary:
+  iced's own `font()` copied them to the heap (+40 MB for Excalifont's
+  22 MB). Peak memory on the small scene: 93 MB (was 96 before merging).
+- The binary grows to 55 MB, mostly Excalifont+Xiaolai uncompressed. The
+  packages compress it (phase 7); storing WOFF2 and decoding at start would
+  cost start-up time instead.
+- Known limitation: only the Basic Latin file's kerning and mark positioning
+  survive, so accents built from a base and a combining mark in another file
+  (Vietnamese ế in Excalifont) sit slightly off.
+

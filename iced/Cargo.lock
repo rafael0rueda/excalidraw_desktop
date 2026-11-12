@@ -990,6 +990,7 @@ dependencies = [
  "base64",
  "editor",
  "excalidraw-desktop-core",
+ "fontmerge",
  "iced",
  "image",
  "render",
@@ -1109,6 +1110,14 @@ dependencies = [
  "slotmap",
  "tinyvec",
  "ttf-parser",
+]
+
+[[package]]
+name = "fontmerge"
+version = "0.0.0"
+dependencies = [
+ "ttf-parser",
+ "wuff",
 ]
 
 [[package]]

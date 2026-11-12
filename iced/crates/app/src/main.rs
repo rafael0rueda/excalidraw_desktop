@@ -487,15 +487,31 @@ impl App {
     }
 }
 
+/// Puts the bundled fonts straight into iced's font database, borrowed from
+/// the binary. `Application::font` copies them onto the heap first, which
+/// for Excalifont with its CJK glyphs (22 MB) cost as much memory again;
+/// borrowed, only the pages of glyphs actually drawn are ever read in.
+fn load_fonts() {
+    use iced::advanced::graphics::text::cosmic_text::fontdb;
+    let mut system = iced::advanced::graphics::text::font_system()
+        .write()
+        .expect("the font system lock is not poisoned");
+    for (_, bytes) in FONTS {
+        let source: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = std::sync::Arc::new(*bytes);
+        system
+            .raw()
+            .db_mut()
+            .load_font_source(fontdb::Source::Binary(source));
+    }
+}
+
 fn main() -> iced::Result {
     let args = args();
-    let mut app = iced::application(move || App::boot(args.clone()), App::update, App::view)
+    let app = iced::application(move || App::boot(args.clone()), App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .window_size(WINDOW)
         .antialiasing(std::env::var_os("NO_MSAA").is_none());
-    for (_, bytes) in FONTS {
-        app = app.font(*bytes);
-    }
+    load_fonts();
     app.run()
 }
