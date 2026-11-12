@@ -283,7 +283,8 @@ Kept or added:
 | 1 | Spike + gate | **Done** 2026-11-11, gate **GO** (results above). Crates `rough`, `scene`, `render`, `app` (viewer: `excalidraw-iced FILE`, drag or wheel to pan, Ctrl+wheel to zoom) |
 | 2 | Editing core | **Done** 2026-11-11 (results below) |
 | 3 | Text and arrows | **Done** 2026-11-12 (results below) |
-| 4–8 | | Not started |
+| 4 | Files, tabs, session | **Done** 2026-11-12 (results below) |
+| 5–8 | | Not started |
 
 ### Phase 2 result, 2026-11-11
 
@@ -394,4 +395,55 @@ To look at with the renderer work (W1).
 Still open from the phase 3 scope: elbow arrows (drawing them, and their
 fixed-point bindings); verifying by hand the typing experience the
 screenshots cannot show (IME, the caret on centred labels).
+
+### Phase 4 result, 2026-11-12
+
+`excalidraw-iced [drawing…]` is now an app rather than a viewer of one file:
+
+- **Tabs**, each with its own drawing, view and undo history: Ctrl+N, Ctrl+W,
+  Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+1…8, Ctrl+9 for the last. A "•" marks
+  unsaved ones. Closing the last tab leaves an empty one.
+- **Files**: Open (Ctrl+O), Save (Ctrl+S), Save as (Ctrl+Shift+S) through
+  rfd's XDG portal dialogs. Writes are atomic, through core's `write_atomic`.
+  Save writes back only to `.excalidraw` files; a drawing opened from
+  `.json` is saved under a new name. Save as adds a missing `.excalidraw` and
+  refuses a file that is open in another tab. A file already open is brought
+  forward, not opened twice. A blank untitled tab is reused.
+- **File menu** with the recent drawings (core's `recent`, same scope rule)
+  and Clear recent.
+- **Unsaved-changes guard** on closing a tab, Ctrl+Q and the window's close
+  button: Save / Discard / Cancel for each unsaved tab, shown first. Escape
+  is Cancel. A cancelled Save dialog cancels the quit.
+- **Autosave and recovery** through core's `session`, the same files and
+  rules as the Tauri app. Tabs are snapshotted 1.2 s after drawing pauses,
+  never to the drawing's own file. A clean exit reopens the session as it
+  was. After a crash, the app asks "N drawings were not saved… Recover?"
+  first. Unreadable snapshots are moved aside, not pruned. Work discarded on
+  the way out stays discarded.
+- **Command line**: drawings named are opened after the session. Relative
+  paths are resolved; names that are not UTF-8 are skipped with a message,
+  not a panic.
+- **One running copy**: core's `flock`, plus a Unix socket
+  (`instance.sock`). A second launch hands its drawings to the first, which
+  opens them and asks for focus, and the second launch exits with 0.
+- **Its own config directory**, `~/.config/excalidraw-desktop-iced` (core's
+  `set_app_dir`), so it cannot touch the Tauri app's session while both
+  exist.
+
+The dev modes (`--bench`, `--screenshot`, `--script`) still work on one
+drawing and never touch the config directory. `--chrome` keeps the tab bar
+and tools in screenshots.
+
+Checked:
+
+- An app-level test runs the whole flow through `App::update` against a
+  temporary config directory:
+  - open from the command line, draw, autosave;
+  - a second tab, the close guard, tab keys, the File menu;
+  - "crash", recover, save in place;
+  - quit discarding everything, then a clean restore;
+  - handover, a bad file, closing the last tab, the Save as rules.
+- By hand in a real window: the handover from a second launch.
+
+75 tests in the workspace. The chrome is plain widgets until phase 5.
 

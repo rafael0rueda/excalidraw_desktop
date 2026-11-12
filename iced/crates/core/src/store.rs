@@ -3,6 +3,17 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+/// The directory's name under the config base. Set once, before anything
+/// reads or writes, by an app that must not share the default: the Iced
+/// build, until it replaces the Tauri one, keeps out of the real session.
+static APP_DIR: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// Names this app's config directory. Only the first call counts; returns
+/// whether it was that one.
+pub fn set_app_dir(name: &'static str) -> bool {
+    APP_DIR.set(name).is_ok()
+}
+
 /// Config lives under XDG_CONFIG_HOME so it sits alongside the rest of the
 /// user's desktop configuration rather than in an app-private blob.
 pub fn config_dir() -> PathBuf {
@@ -10,7 +21,7 @@ pub fn config_dir() -> PathBuf {
         // HOME unset or relative as well: ask the password database, as
         // glib's `home_dir` did before this moved out of the Tauri crate.
         .unwrap_or_else(|| home_dir().join(".config"))
-        .join("excalidraw-desktop")
+        .join(APP_DIR.get().copied().unwrap_or("excalidraw-desktop"))
 }
 
 /// The user's home: `HOME` if set, else the password database entry, which

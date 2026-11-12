@@ -10,15 +10,21 @@ publish = false
 
 [dependencies]
 # Pinned exactly (plan W3): an upgrade is a deliberate change to this crate only.
-iced = { version = "=0.14.0", features = ["canvas", "image", "advanced"] }
+# `smol`: timers, for autosave.
+iced = { version = "=0.14.0", features = ["canvas", "image", "advanced", "smol"] }
 scene = { path = "../scene" }
 render = { path = "../render" }
 excalidraw-desktop-core = { path = "../core" }
 editor = { path = "../editor" }
 base64 = "0.22"
+# File dialogs through the XDG desktop portal: no GTK.
+rfd = "0.18"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 
 [build-dependencies]
 fontmerge = { path = "../fontmerge" }
 wuff = "0.2"
 ttf-parser = "0.25"
+
+[dev-dependencies]
+serde_json = "1"

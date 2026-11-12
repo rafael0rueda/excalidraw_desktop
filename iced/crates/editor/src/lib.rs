@@ -231,6 +231,11 @@ impl Editor {
         self.dirty
     }
 
+    /// Marks the drawing as differing from its file: a recovered snapshot.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
     pub fn mark_saved(&mut self) {
         self.dirty = false;
     }

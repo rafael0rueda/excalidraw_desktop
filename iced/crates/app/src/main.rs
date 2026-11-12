@@ -1,76 +1,115 @@
-//! Excalidraw Desktop on Iced — phase 2: editing.
+//! Excalidraw Desktop on Iced (docs/iced-port/PLAN.md).
 //!
-//!   excalidraw-iced drawing.excalidraw
-//!   excalidraw-iced --bench 10 drawing.excalidraw
+//!   excalidraw-iced [drawing.excalidraw…]
 //!
-//! Draw with the toolbar or Excalidraw's keys (V R D O A L P, H to pan, Q to
-//! keep the tool); select, move, resize, rotate; Ctrl+Z/Y, Ctrl+C/X/V/D,
-//! Ctrl+G, Ctrl+[ ], Delete; Ctrl+S saves to the file it was opened from.
-//! Pan with the wheel, a middle drag or Space+drag; Ctrl+wheel zooms,
-//! Shift+1 fits the drawing.
+//! Tabs (Ctrl+N, Ctrl+W, Ctrl+Tab, Ctrl+1…9), files (Ctrl+O, Ctrl+S,
+//! Ctrl+Shift+S, the File menu with recent drawings), autosave and crash
+//! recovery, and one running copy: a second launch hands its drawings over.
+//! Draw with the tool bar or Excalidraw's keys; Ctrl+Q quits.
 //!
-//! `--bench SECONDS` pans, then zooms, for that long and prints frame timings,
-//! memory and start-up time, for the go/no-go gate in docs/iced-port/PLAN.md.
-//! `--screenshot out.png [--zoom F]` saves the window once drawn, and exits:
-//! the drawing fitted to the window, then zoomed F times about its centre.
+//! Until it replaces the Tauri app, this build keeps its state apart, in
+//! `~/.config/excalidraw-desktop-iced`, so it cannot touch the real session.
+//!
+//! Development modes, which leave all of that alone and work on one drawing:
+//! `--bench SECONDS` pans, then zooms, and prints timings (the phase 1 gate).
+//! `--screenshot out.png [--zoom F]` saves the window once drawn, and exits.
+//! `--chrome` keeps the tab bar and tools in that screenshot.
 //! `--script FILE` replays editor actions first (see script.rs).
 //! `NO_MSAA=1` turns antialiasing off, to separate what MSAA does to thin
 //! lines (it thickens them; see PLAN.md) from what the geometry is.
 
 mod bench;
+mod chrome;
+mod doc;
 mod images;
+mod instance;
 mod layers;
 mod measure;
 mod paint;
 mod script;
+mod session;
+mod tabs;
+#[cfg(test)]
+mod tests;
 mod toolbar;
 mod view;
 
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 
-use editor::{Editor, Tool};
+use chrome::Answer;
+use doc::{fit, Document};
+use editor::Tool;
+use excalidraw_desktop_core::recent::{self, RecentEntry};
+use excalidraw_desktop_core::scope::Allowed;
+use excalidraw_desktop_core::session::Session;
 use iced::keyboard::{self, key::Named, Key};
-use iced::widget::{column, container, stack, text, text_editor};
-use iced::{clipboard, window, Color, Element, Length, Point, Size, Subscription, Task, Vector};
-use layers::Layers;
-use std::cell::RefCell;
-use std::path::PathBuf;
+use iced::widget::{column, container, opaque, stack, text, text_editor};
+use iced::{clipboard, window, Color, Element, Length, Point, Size, Subscription, Task};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use tabs::Tab;
 use view::{Input, SceneView, Timings, View};
 
 const WINDOW: Size = Size::new(1280.0, 800.0);
 
-/// A new drawing, as Excalidraw writes an empty one.
-const EMPTY: &str = r##"{"type":"excalidraw","version":2,"source":"excalidraw-desktop","elements":[],"appState":{"viewBackgroundColor":"#ffffff"},"files":{}}"##;
+/// The tab bar's height: the drawing gets the window less this.
+pub const TAB_BAR: f32 = 36.0;
 
-#[derive(Clone, Debug)]
+/// This build's config directory, apart from the Tauri app's.
+const APP_DIR: &str = "excalidraw-desktop-iced";
+
+#[derive(Clone, Debug, Default)]
 struct Args {
-    path: Option<String>,
+    paths: Vec<PathBuf>,
     bench: Option<f32>,
     screenshot: Option<String>,
-    zoom: f32,
+    zoom: Option<f32>,
     script: Option<String>,
+    /// With `--screenshot`: the window as it is, tab bar and tools included.
+    chrome: bool,
 }
 
+impl Args {
+    /// A development run: one drawing, no session, no single-instance lock.
+    fn dev(&self) -> bool {
+        self.bench.is_some() || self.screenshot.is_some() || self.script.is_some()
+    }
+}
+
+/// The command line. A name that is not valid UTF-8 is dropped with a word,
+/// rather than the panic `std::env::args` gives (review 2026-11-04, BE-1).
 fn args() -> Args {
-    let mut args = Args {
-        path: None,
-        bench: None,
-        screenshot: None,
-        zoom: 1.0,
-        script: None,
-    };
-    let mut it = std::env::args().skip(1);
+    let mut args = Args::default();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let mut it = std::env::args_os().skip(1);
     while let Some(a) = it.next() {
+        let Some(a) = a.to_str().map(str::to_owned) else {
+            eprintln!("excalidraw-iced: not opening {}: the name is not valid UTF-8", Path::new(&a).display());
+            continue;
+        };
+        let mut value = || it.next().and_then(|v| v.into_string().ok());
         match a.as_str() {
-            "--bench" => args.bench = it.next().and_then(|s| s.parse().ok()),
-            "--screenshot" => args.screenshot = it.next(),
-            "--zoom" => args.zoom = it.next().and_then(|s| s.parse().ok()).unwrap_or(1.0),
-            "--script" => args.script = it.next(),
-            _ => args.path = Some(a),
+            "--bench" => args.bench = value().and_then(|s| s.parse().ok()),
+            "--screenshot" => args.screenshot = value(),
+            "--zoom" => args.zoom = value().and_then(|s| s.parse().ok()),
+            "--script" => args.script = value(),
+            "--chrome" => args.chrome = true,
+            flag if flag.starts_with('-') => {}
+            _ => {
+                let p = PathBuf::from(&a);
+                args.paths.push(if p.is_absolute() { p } else { cwd.join(p) });
+            }
         }
     }
     args
+}
+
+/// What happens once an unsaved-changes question is answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum After {
+    Close,
+    Quit,
 }
 
 #[derive(Debug, Clone)]
@@ -87,84 +126,77 @@ pub enum Message {
     Shot(window::Screenshot),
     TextAction(text_editor::Action),
     TextDone,
+    SelectTab(usize),
+    CloseTab(String),
+    NewTab,
+    Open,
+    Opened(Vec<PathBuf>),
+    OpenPath(PathBuf),
+    Save,
+    SaveAs,
+    SaveAsPicked(String, Option<PathBuf>, Option<After>),
+    ClearRecent,
+    ToggleMenu,
+    Quit,
+    Answer(Answer),
+    Autosave(Instant),
+    HandedOver(Vec<PathBuf>),
 }
 
-struct Document {
-    editor: Editor,
-    layers: Layers,
-    background: Color,
+/// A question the app is waiting on.
+pub enum Prompt {
+    Unsaved { tab: String, title: String, then: After },
+    Recover { what: String, session: Session },
+    Error(String),
+}
+
+/// A quit in progress: which tabs have been asked about, and which of them
+/// the answer was to discard.
+#[derive(Default)]
+struct Quitting {
+    asked: HashSet<String>,
+    discarded: HashSet<String>,
 }
 
 pub struct App {
-    path: Option<PathBuf>,
-    doc: Result<Document, String>,
-    view: View,
+    tabs: Vec<Tab>,
+    active: usize,
+    /// Paths this app may read and write: picked in a dialog, named on the
+    /// command line, or from its own lists. Recent files and the session
+    /// only ever hold these (core's rule, shared with the Tauri app).
+    allowed: Allowed,
+    /// The drawing's area: the window less the tab bar, if shown.
     size: Size,
-    built_at: RefCell<Option<f32>>,
-    timings: RefCell<Timings>,
+    /// The tab bar's height, or nothing when it is not shown.
+    bar: f32,
+    /// Whether the window has said its real size yet.
+    sized: bool,
+    recent: Vec<RecentEntry>,
+    prompt: Option<Prompt>,
+    menu_open: bool,
+    quitting: Option<Quitting>,
+    /// Drawings named on the command line, opened once recovery is settled.
+    pending_open: Vec<PathBuf>,
+    /// When drawing last changed anything, for autosave.
+    last_change: Option<Instant>,
+    dev: bool,
+    timings: std::cell::RefCell<Timings>,
     bench: Option<bench::Bench>,
     launched: Instant,
     load_time: Duration,
     screenshot: Option<String>,
+    chrome: bool,
     zoom: f32,
     ticks: u32,
     /// Space held: dragging pans.
     space: bool,
-    modifiers: keyboard::Modifiers,
     /// The last pointer position, in the scene: where pastes land.
     pointer: [f64; 2],
     status: Option<String>,
-    /// The text box over the text being typed: (element id, its contents).
-    text_box: Option<(String, text_editor::Content)>,
-}
-
-fn load(path: &str) -> Result<Document, String> {
-    let path = std::path::Path::new(path);
-    excalidraw_desktop_core::files::readable(path, excalidraw_desktop_core::files::MAX_TEXT_BYTES)?;
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let scene = scene::Scene::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(document(scene))
 }
 
 /// The text box's widget id, to focus it when typing starts.
 const TEXT_BOX: &str = "text-box";
-
-fn document(scene: scene::Scene) -> Document {
-    // This app's theme owns the canvas colour (PROGRESS.md); until themes
-    // arrive in phase 5 the drawing's own is used.
-    let css = scene
-        .view_background_color()
-        .unwrap_or("#ffffff")
-        .to_owned();
-    let layers = Layers::new(&scene, &css);
-    let mut editor = Editor::new(scene);
-    editor.set_measure(Box::new(measure::Shaped));
-    let bg = render::color::parse(&css);
-    Document {
-        editor,
-        layers,
-        background: Color::from_rgba(bg.r, bg.g, bg.b, bg.a),
-    }
-}
-
-/// The view that shows the whole drawing, with a margin.
-fn fit(bounds: Option<[f64; 4]>, size: Size) -> View {
-    let Some(b) = bounds else {
-        return View {
-            pan: Vector::new(size.width / 2.0, size.height / 2.0),
-            zoom: 1.0,
-        };
-    };
-    let (w, h) = ((b[2] - b[0]) as f32, (b[3] - b[1]) as f32);
-    let zoom = ((size.width - 80.0) / w.max(1.0))
-        .min((size.height - 80.0) / h.max(1.0))
-        .clamp(View::MIN_ZOOM, 1.0);
-    let pan = Vector::new(
-        (size.width - w * zoom) / 2.0 - b[0] as f32 * zoom,
-        (size.height - h * zoom) / 2.0 - b[1] as f32 * zoom,
-    );
-    View { pan, zoom }
-}
 
 /// The editor's own key, for a key press, if it has one.
 fn editor_key(key: &Key) -> Option<editor::Key> {
@@ -182,22 +214,66 @@ fn editor_key(key: &Key) -> Option<editor::Key> {
     })
 }
 
+/// Saving writes back only to an `.excalidraw` file; anything else (a
+/// drawing opened from `.json`) is saved under a new name instead.
+fn saves_in_place(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("excalidraw"))
+}
+
 impl App {
     fn boot(args: Args) -> (Self, Task<Message>) {
         let launched = Instant::now();
-        let doc = match &args.path {
-            Some(path) if std::path::Path::new(path).exists() => load(path),
-            // A new drawing, saved to that name with Ctrl+S.
-            _ => Ok(document(
-                scene::Scene::parse(EMPTY).expect("an empty drawing parses"),
-            )),
+        let bar = if args.bench.is_some() || (args.screenshot.is_some() && !args.chrome) { 0.0 } else { TAB_BAR };
+        let mut app = Self {
+            tabs: Vec::new(),
+            active: 0,
+            allowed: Allowed::default(),
+            size: Size::new(WINDOW.width, WINDOW.height - bar),
+            bar,
+            sized: false,
+            recent: Vec::new(),
+            prompt: None,
+            menu_open: false,
+            quitting: None,
+            pending_open: Vec::new(),
+            last_change: None,
+            dev: args.dev(),
+            timings: Default::default(),
+            bench: None,
+            launched,
+            load_time: Duration::ZERO,
+            screenshot: args.screenshot.clone(),
+            chrome: args.chrome,
+            zoom: args.zoom.unwrap_or(1.0),
+            ticks: 0,
+            space: false,
+            pointer: [0.0, 0.0],
+            status: None,
         };
-        let mut doc = doc;
-        if let (Some(file), Ok(d)) = (&args.script, &mut doc) {
-            match std::fs::read_to_string(file)
-                .map_err(|e| e.to_string())
-                .and_then(|t| script::run(&mut d.editor, &t))
-            {
+        if app.dev {
+            app.boot_dev(&args);
+        } else {
+            app.boot_session(&args);
+        }
+        let task = app.sync();
+        (app, task)
+    }
+
+    /// One drawing, edited by `--script`, measured by `--bench`.
+    fn boot_dev(&mut self, args: &Args) {
+        let path = args.paths.first().cloned();
+        let mut d = match &path {
+            Some(p) if p.exists() => match doc::read(p) {
+                Ok(scene) => Document::new(scene),
+                Err(e) => {
+                    eprintln!("{e}");
+                    Document::empty()
+                }
+            },
+            _ => Document::empty(),
+        };
+        if let Some(file) = &args.script {
+            match std::fs::read_to_string(file).map_err(|e| e.to_string()).and_then(|t| script::run(&mut d.editor, &t)) {
                 Ok(()) => {
                     let changes = d.editor.take_changes();
                     d.layers.apply(&d.editor.scene, changes);
@@ -205,104 +281,362 @@ impl App {
                 Err(e) => eprintln!("--script {file}: {e}"),
             }
         }
-        let load_time = launched.elapsed();
-        let centre = Point::new(WINDOW.width / 2.0, WINDOW.height / 2.0);
-        let view = doc.as_ref().map_or(
-            View {
-                pan: Vector::ZERO,
-                zoom: 1.0,
-            },
-            |d| fit(d.layers.bounds(), WINDOW).zoomed(args.zoom, centre),
-        );
-        if let Ok(d) = &doc {
-            eprintln!(
-                "loaded {} elements in {:.1} ms",
-                d.layers.prepared.len(),
-                load_time.as_secs_f64() * 1e3
-            );
-            if let Some(b) = d.layers.bounds() {
-                // For iced/bench/webkit.py, which shows Excalidraw at the same view.
-                eprintln!("bounds {} {} {} {}", b[0], b[1], b[2], b[3]);
-            }
+        self.load_time = self.launched.elapsed();
+        let centre = Point::new(self.size.width / 2.0, self.size.height / 2.0);
+        let view = fit(d.layers.bounds(), self.size).zoomed(self.zoom, centre);
+        eprintln!("loaded {} elements in {:.1} ms", d.layers.prepared.len(), self.load_time.as_secs_f64() * 1e3);
+        if let Some(b) = d.layers.bounds() {
+            // For iced/bench/webkit.py, which shows Excalidraw at the same view.
+            eprintln!("bounds {} {} {} {}", b[0], b[1], b[2], b[3]);
         }
-        let app = Self {
-            path: args.path.map(PathBuf::from),
-            doc,
-            view,
-            size: WINDOW,
-            built_at: RefCell::new(None),
-            timings: RefCell::new(Timings::default()),
-            bench: args.bench.map(|s| bench::Bench::new(s, view)),
-            launched,
-            load_time,
-            screenshot: args.screenshot,
-            zoom: args.zoom,
-            ticks: 0,
-            space: false,
-            modifiers: keyboard::Modifiers::default(),
-            pointer: [0.0, 0.0],
-            status: None,
-            text_box: None,
-        };
-        let mut app = app;
-        let task = app.sync();
-        (app, task)
+        self.bench = args.bench.map(|s| bench::Bench::new(s, view));
+        self.tabs.push(Tab::new(tabs::new_id(), path, d, view));
     }
 
-    /// Brings the caches up to date after the editor changed something.
+    /// The last session back, and the drawings named on the command line.
+    fn boot_session(&mut self, args: &Args) {
+        for p in &args.paths {
+            self.allowed.allow(p);
+        }
+        self.pending_open = args.paths.iter().filter(|p| p.is_file()).cloned().collect();
+        match session::load(self) {
+            session::Restored::Tabs(tabs, active) => {
+                self.tabs = tabs;
+                self.active = active.and_then(|a| self.tabs.iter().position(|t| t.id == a)).unwrap_or(0);
+                self.after_restore();
+            }
+            session::Restored::Ask(s) => {
+                self.prompt = Some(Prompt::Recover { what: session::describe(&s), session: s });
+                self.tabs.push(Tab::new(tabs::new_id(), None, Document::empty(), fit(None, self.size)));
+            }
+        }
+        self.recent = recent::list(&self.allowed);
+    }
+
+    /// Once the session is settled: the command line's drawings, a blank tab
+    /// if there is nothing else, and a first snapshot to mark the run open.
+    fn after_restore(&mut self) {
+        let pending = std::mem::take(&mut self.pending_open);
+        self.open_paths(pending);
+        if self.tabs.is_empty() {
+            self.tabs.push(Tab::new(tabs::new_id(), None, Document::empty(), fit(None, self.size)));
+        }
+        self.active = self.active.min(self.tabs.len() - 1);
+        self.snapshot();
+    }
+
+    fn snapshot(&mut self) {
+        if self.dev {
+            return;
+        }
+        let discarded = self.quitting.as_ref().map(|q| q.discarded.clone()).unwrap_or_default();
+        if let Err(e) = session::snapshot(self, &discarded) {
+            self.status = Some(format!("Autosave failed: {e}"));
+        }
+    }
+
+    fn tab(&self) -> &Tab {
+        &self.tabs[self.active]
+    }
+
+    fn tab_mut(&mut self) -> &mut Tab {
+        &mut self.tabs[self.active]
+    }
+
+    fn position(&self, id: &str) -> Option<usize> {
+        self.tabs.iter().position(|t| t.id == id)
+    }
+
     /// Brings the caches and the text box up to date with the editor.
     fn sync(&mut self) -> Task<Message> {
-        let Ok(d) = &mut self.doc else {
-            return Task::none();
-        };
-        let changes = d.editor.take_changes();
-        d.layers.apply(&d.editor.scene, changes);
-        d.editor.zoom = f64::from(self.view.zoom);
-        let editing = d
-            .editor
-            .editing_text()
-            .map(|(e, typed)| (e.id.clone(), typed));
+        let dev = self.dev;
+        let tab = &mut self.tabs[self.active];
+        let changes = tab.doc.editor.take_changes();
+        if !changes.ids.is_empty() || changes.order {
+            tab.unsnapshotted = true;
+            if !dev {
+                self.last_change = Some(Instant::now());
+            }
+        }
+        let tab = &mut self.tabs[self.active];
+        tab.doc.layers.apply(&tab.doc.editor.scene, changes);
+        tab.doc.editor.zoom = f64::from(tab.view.zoom);
+        let editing = tab.doc.editor.editing_text().map(|(e, typed)| (e.id.clone(), typed));
         match editing {
-            Some((id, typed))
-                if self
-                    .text_box
-                    .as_ref()
-                    .is_none_or(|(box_id, _)| *box_id != id) =>
-            {
+            Some((id, typed)) if tab.text_box.as_ref().is_none_or(|(box_id, _)| *box_id != id) => {
                 let mut content = text_editor::Content::with_text(&typed);
                 content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-                self.text_box = Some((id, content));
+                tab.text_box = Some((id, content));
                 iced::widget::operation::focus(TEXT_BOX)
             }
             Some(_) => Task::none(),
             None => {
-                self.text_box = None;
+                tab.text_box = None;
                 Task::none()
             }
         }
     }
 
     fn set_view(&mut self, view: View) {
-        self.view = view;
-        if let Ok(d) = &mut self.doc {
-            d.editor.zoom = f64::from(view.zoom);
+        let tab = self.tab_mut();
+        tab.view = view;
+        tab.doc.editor.zoom = f64::from(view.zoom);
+    }
+
+    fn select_tab(&mut self, i: usize) {
+        if i < self.tabs.len() && i != self.active {
+            // Typing ends with the tab it was in.
+            self.tab_mut().doc.editor.finish_text();
+            let _ = self.sync();
+            self.active = i;
+            self.snapshot();
         }
     }
 
-    fn save(&mut self) {
-        let (Some(path), Ok(d)) = (&self.path, &mut self.doc) else {
-            return;
-        };
-        let json = d.editor.scene.to_file_json();
-        self.status = Some(
-            match excalidraw_desktop_core::files::write_atomic(path, json.as_bytes()) {
-                Ok(()) => {
-                    d.editor.mark_saved();
-                    format!("Saved {}", path.display())
+    fn new_tab(&mut self) {
+        self.tabs.push(Tab::new(tabs::new_id(), None, Document::empty(), fit(None, self.size)));
+        self.active = self.tabs.len() - 1;
+        self.snapshot();
+    }
+
+    // --- files
+
+    /// Opens each drawing: brought forward if already open, into the
+    /// current tab if that is blank and untitled, else into a new one.
+    fn open_paths(&mut self, paths: Vec<PathBuf>) {
+        let mut problems = Vec::new();
+        for p in paths {
+            let p = std::fs::canonicalize(&p).unwrap_or(p);
+            if let Some(i) = self.tabs.iter().position(|t| t.path.as_deref() == Some(p.as_path())) {
+                self.active = i;
+                continue;
+            }
+            match doc::read(&p) {
+                Ok(scene) => {
+                    self.allowed.allow(&p);
+                    let d = Document::new(scene);
+                    let view = fit(d.layers.bounds(), self.size);
+                    let tab = Tab::new(tabs::new_id(), Some(p.clone()), d, view);
+                    let reuse = self.tabs.get(self.active).is_some_and(|t| t.path.is_none() && t.doc.is_blank());
+                    if reuse {
+                        self.tabs[self.active] = tab;
+                    } else {
+                        self.tabs.push(tab);
+                        self.active = self.tabs.len() - 1;
+                    }
+                    let _ = recent::push(&self.allowed, p.to_string_lossy().into_owned());
                 }
-                Err(e) => format!("Could not save: {e}"),
+                Err(e) => problems.push(e),
+            }
+        }
+        self.recent = recent::list(&self.allowed);
+        if !problems.is_empty() {
+            self.prompt = Some(Prompt::Error(format!("Could not open:\n{}", problems.join("\n"))));
+        }
+        if !self.tabs.is_empty() {
+            self.snapshot();
+        }
+    }
+
+    fn pick_open() -> Task<Message> {
+        Task::perform(
+            async {
+                rfd::AsyncFileDialog::new()
+                    .add_filter("Excalidraw drawing", &["excalidraw", "json"])
+                    .pick_files()
+                    .await
+                    .map(|files| files.into_iter().map(|f| f.path().to_path_buf()).collect())
+                    .unwrap_or_default()
             },
-        );
+            Message::Opened,
+        )
+    }
+
+    fn pick_save(&self, id: String, then: Option<After>) -> Task<Message> {
+        let name = self.position(&id).map(|i| self.tabs[i].title()).unwrap_or_default();
+        let name = if name == "Untitled" { "drawing.excalidraw".to_owned() } else { name };
+        Task::perform(
+            async move {
+                rfd::AsyncFileDialog::new()
+                    .add_filter("Excalidraw drawing", &["excalidraw"])
+                    .set_file_name(name)
+                    .save_file()
+                    .await
+                    .map(|f| f.path().to_path_buf())
+            },
+            move |path| Message::SaveAsPicked(id.clone(), path, then),
+        )
+    }
+
+    /// Writes tab `id` to `path`, atomically, as Excalidraw saves a file.
+    fn write_to(&mut self, id: &str, path: PathBuf) -> Result<(), String> {
+        let Some(i) = self.position(id) else { return Err("the tab is gone".into()) };
+        let json = self.tabs[i].doc.editor.scene.to_file_json();
+        excalidraw_desktop_core::files::write_atomic(&path, json.as_bytes())?;
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        self.allowed.allow(&path);
+        let tab = &mut self.tabs[i];
+        tab.doc.editor.mark_saved();
+        tab.path = Some(path.clone());
+        tab.unsnapshotted = true;
+        self.status = Some(format!("Saved {}", path.display()));
+        let _ = recent::push(&self.allowed, path.to_string_lossy().into_owned());
+        self.recent = recent::list(&self.allowed);
+        self.snapshot();
+        Ok(())
+    }
+
+    /// Saves tab `id`: in place if it has an `.excalidraw` file, else by
+    /// asking where. `then` continues a close or quit once it is saved.
+    fn save_tab(&mut self, id: String, then: Option<After>) -> Task<Message> {
+        let Some(i) = self.position(&id) else { return Task::none() };
+        self.tabs[i].doc.editor.finish_text();
+        match self.tabs[i].path.clone().filter(|p| saves_in_place(p)) {
+            Some(path) => match self.write_to(&id, path) {
+                Ok(()) => then.map_or(Task::none(), |then| self.continue_after(&id, then, false)),
+                Err(e) => {
+                    self.quitting = None;
+                    self.prompt = Some(Prompt::Error(format!("Could not save: {e}")));
+                    Task::none()
+                }
+            },
+            None => self.pick_save(id, then),
+        }
+    }
+
+    fn save_as_picked(&mut self, id: String, path: Option<PathBuf>, then: Option<After>) -> Task<Message> {
+        let Some(mut path) = path else {
+            // The dialog was cancelled: so is whatever was waiting on it.
+            self.quitting = None;
+            return Task::none();
+        };
+        if !saves_in_place(&path) {
+            path.as_mut_os_string().push(".excalidraw");
+        }
+        let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if let Some(other) = self.tabs.iter().find(|t| t.id != id && t.path.as_deref() == Some(canonical.as_path())) {
+            self.quitting = None;
+            self.prompt = Some(Prompt::Error(format!(
+                "{} is open in another tab. Close that tab first, or save under a different name.",
+                other.title()
+            )));
+            return Task::none();
+        }
+        match self.write_to(&id, path) {
+            Ok(()) => then.map_or(Task::none(), |then| self.continue_after(&id, then, false)),
+            Err(e) => {
+                self.quitting = None;
+                self.prompt = Some(Prompt::Error(format!("Could not save: {e}")));
+                Task::none()
+            }
+        }
+    }
+
+    // --- closing and quitting
+
+    /// Closes a tab, asking first if it has unsaved changes (and showing it,
+    /// so the question is about something visible).
+    fn close_tab(&mut self, id: &str) -> Task<Message> {
+        let Some(i) = self.position(id) else { return Task::none() };
+        if self.tabs[i].dirty() {
+            self.select_tab(i);
+            self.prompt = Some(Prompt::Unsaved { tab: id.to_owned(), title: self.tabs[i].title(), then: After::Close });
+            return Task::none();
+        }
+        self.remove_tab(id);
+        Task::none()
+    }
+
+    /// Closing the last tab leaves an empty one: quitting is Ctrl+Q.
+    fn remove_tab(&mut self, id: &str) {
+        let Some(i) = self.position(id) else { return };
+        self.tabs.remove(i);
+        if self.tabs.is_empty() {
+            self.tabs.push(Tab::new(tabs::new_id(), None, Document::empty(), fit(None, self.size)));
+        }
+        if self.active >= self.tabs.len() || i < self.active {
+            self.active = self.active.saturating_sub(1).min(self.tabs.len() - 1);
+        }
+        self.snapshot();
+    }
+
+    fn quit(&mut self) -> Task<Message> {
+        if self.quitting.is_some() || self.prompt.is_some() {
+            return Task::none();
+        }
+        if self.dev {
+            return iced::exit();
+        }
+        self.tab_mut().doc.editor.finish_text();
+        let _ = self.sync();
+        self.quitting = Some(Quitting::default());
+        self.quit_step()
+    }
+
+    /// Asks about the next tab with unsaved changes, or, with none left,
+    /// ends the session and exits.
+    fn quit_step(&mut self) -> Task<Message> {
+        let Some(q) = &self.quitting else { return Task::none() };
+        let next = self.tabs.iter().position(|t| t.dirty() && !q.asked.contains(&t.id));
+        match next {
+            Some(i) => {
+                self.select_tab(i);
+                let tab = &self.tabs[i];
+                self.prompt = Some(Prompt::Unsaved { tab: tab.id.clone(), title: tab.title(), then: After::Quit });
+                Task::none()
+            }
+            None => {
+                let discarded = self.quitting.take().map(|q| q.discarded).unwrap_or_default();
+                session::end(self, &discarded);
+                instance::release();
+                iced::exit()
+            }
+        }
+    }
+
+    /// Carries on after tab `id` was saved or discarded.
+    fn continue_after(&mut self, id: &str, then: After, discarded: bool) -> Task<Message> {
+        match then {
+            After::Close => {
+                self.remove_tab(id);
+                Task::none()
+            }
+            After::Quit => {
+                if let Some(q) = &mut self.quitting {
+                    q.asked.insert(id.to_owned());
+                    if discarded {
+                        q.discarded.insert(id.to_owned());
+                    }
+                }
+                self.quit_step()
+            }
+        }
+    }
+
+    fn answer(&mut self, answer: Answer) -> Task<Message> {
+        match self.prompt.take() {
+            Some(Prompt::Unsaved { tab, then, .. }) => match answer {
+                Answer::Save => self.save_tab(tab, Some(then)),
+                Answer::Discard => self.continue_after(&tab, then, true),
+                Answer::Cancel => {
+                    self.quitting = None;
+                    Task::none()
+                }
+            },
+            Some(Prompt::Recover { session, .. }) => {
+                let (tabs, problems) = session::open(self, session, answer == Answer::Save);
+                if !tabs.is_empty() {
+                    self.tabs = tabs;
+                    self.active = 0;
+                }
+                if !problems.is_empty() {
+                    self.prompt = Some(Prompt::Error(problems.join("\n")));
+                }
+                self.after_restore();
+                Task::none()
+            }
+            Some(Prompt::Error(_)) | None => Task::none(),
+        }
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -311,94 +645,131 @@ impl App {
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
+        // While a question is up, it is the only thing that can be answered.
+        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..)) {
+            return Task::none();
+        }
+        // The menu closes on anything done in the window (a click outside it
+        // only closes it), not on the clocks or the pointer passing over.
+        let action = !matches!(
+            message,
+            Message::ToggleMenu | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::Input(Input::Move(..))
+        );
+        if self.menu_open && action {
+            self.menu_open = false;
+            if matches!(message, Message::Input(Input::Down(..) | Input::DoubleClick(_))) {
+                return Task::none();
+            }
+        }
         match message {
             Message::Input(Input::View(view)) => self.set_view(view),
             Message::Input(input) => {
-                let Ok(d) = &mut self.doc else {
-                    return Task::none();
-                };
+                let pointer = &mut self.pointer;
+                let editor = &mut self.tabs[self.active].doc.editor;
                 match input {
-                    Input::Down(p, m) => d.editor.pointer_down(p, m),
+                    Input::Down(p, m) => editor.pointer_down(p, m),
                     Input::Move(p, m) => {
-                        self.pointer = p;
-                        d.editor.pointer_move(p, m);
+                        *pointer = p;
+                        editor.pointer_move(p, m);
                     }
-                    Input::Up(p, m) => d.editor.pointer_up(p, m),
-                    Input::DoubleClick(p) => d.editor.double_click(p),
+                    Input::Up(p, m) => editor.pointer_up(p, m),
+                    Input::DoubleClick(p) => editor.double_click(p),
                     Input::View(_) => {}
                 }
             }
             Message::Tool(tool) => {
-                if let Ok(d) = &mut self.doc {
-                    d.editor.tool = tool;
-                    if tool != Tool::Selection {
-                        d.editor.selection.clear();
-                    }
+                let editor = &mut self.tab_mut().doc.editor;
+                editor.tool = tool;
+                if tool != Tool::Selection {
+                    editor.selection.clear();
                 }
             }
             Message::ToggleLock => {
-                if let Ok(d) = &mut self.doc {
-                    d.editor.tool_locked = !d.editor.tool_locked;
-                }
+                let editor = &mut self.tab_mut().doc.editor;
+                editor.tool_locked = !editor.tool_locked;
             }
-            Message::Undo => {
-                if let Ok(d) = &mut self.doc {
-                    d.editor.undo();
-                }
-            }
-            Message::Redo => {
-                if let Ok(d) = &mut self.doc {
-                    d.editor.redo();
-                }
-            }
+            Message::Undo => self.tab_mut().doc.editor.undo(),
+            Message::Redo => self.tab_mut().doc.editor.redo(),
             Message::Key(event) => return self.key(event),
             Message::TextAction(action) => {
-                if let (Some((_, content)), Ok(d)) = (&mut self.text_box, &mut self.doc) {
+                let tab = self.tab_mut();
+                if let Some((_, content)) = &mut tab.text_box {
                     let edit = action.is_edit();
                     content.perform(action);
                     if edit {
-                        d.editor.set_text(&content.text());
+                        let typed = content.text();
+                        tab.doc.editor.set_text(&typed);
                     }
                 }
             }
-            Message::TextDone => {
-                if let Ok(d) = &mut self.doc {
-                    d.editor.finish_text();
-                }
-            }
+            Message::TextDone => self.tab_mut().doc.editor.finish_text(),
             Message::Paste(text) => {
-                if let (Some(text), Ok(d)) = (text, &mut self.doc) {
-                    if !d.editor.paste(&text, self.pointer) {
-                        self.status = Some(
-                            "Only Excalidraw shapes can be pasted yet; text comes in phase 3"
-                                .into(),
-                        );
+                let at = self.pointer;
+                if let Some(text) = text {
+                    if !self.tab_mut().doc.editor.paste(&text, at) {
+                        self.status = Some("Only Excalidraw shapes can be pasted".into());
                     }
+                }
+            }
+            Message::SelectTab(i) => self.select_tab(i),
+            Message::CloseTab(id) => return self.close_tab(&id),
+            Message::NewTab => self.new_tab(),
+            Message::Open => return Self::pick_open(),
+            Message::Opened(paths) => self.open_paths(paths),
+            Message::OpenPath(path) => self.open_paths(vec![path]),
+            Message::HandedOver(paths) => {
+                for p in &paths {
+                    self.allowed.allow(p);
+                }
+                if self.prompt.is_some() {
+                    self.pending_open.extend(paths);
+                } else {
+                    self.open_paths(paths);
+                }
+                return window::latest().and_then(window::gain_focus);
+            }
+            Message::Save => {
+                let id = self.tab().id.clone();
+                return self.save_tab(id, None);
+            }
+            Message::SaveAs => {
+                let id = self.tab().id.clone();
+                self.tab_mut().doc.editor.finish_text();
+                return self.pick_save(id, None);
+            }
+            Message::SaveAsPicked(id, path, then) => return self.save_as_picked(id, path, then),
+            Message::ClearRecent => {
+                let _ = recent::clear();
+                self.recent.clear();
+            }
+            Message::ToggleMenu => self.menu_open = !self.menu_open,
+            Message::Quit => return self.quit(),
+            Message::Answer(a) => return self.answer(a),
+            Message::Autosave(now) => {
+                if !self.dev && self.quitting.is_none() {
+                    session::tick(self, now);
                 }
             }
             Message::Resized(size) => {
-                let first = self.size == WINDOW;
+                let first = !self.sized;
+                self.sized = true;
+                let size = Size::new(size.width, (size.height - self.bar).max(1.0));
                 self.size = size;
                 if first {
-                    if let Ok(d) = &self.doc {
-                        let view = fit(d.layers.bounds(), size)
-                            .zoomed(self.zoom, Point::new(size.width / 2.0, size.height / 2.0));
-                        self.set_view(view);
-                        if let Some(b) = &mut self.bench {
-                            b.base = view;
-                        }
+                    let zoom = self.zoom;
+                    for tab in &mut self.tabs {
+                        tab.view = fit(tab.doc.layers.bounds(), size).zoomed(zoom, Point::new(size.width / 2.0, size.height / 2.0));
+                    }
+                    let view = self.tab().view;
+                    self.set_view(view);
+                    if let Some(b) = &mut self.bench {
+                        b.base = view;
                     }
                 }
             }
             Message::Shot(shot) => {
                 if let Some(path) = &self.screenshot {
-                    match image::RgbaImage::from_raw(
-                        shot.size.width,
-                        shot.size.height,
-                        shot.rgba.to_vec(),
-                    )
-                    .map(|img| img.save(path))
-                    {
+                    match image::RgbaImage::from_raw(shot.size.width, shot.size.height, shot.rgba.to_vec()).map(|img| img.save(path)) {
                         Some(Ok(())) => eprintln!("saved {path}"),
                         _ => eprintln!("could not save {path}"),
                     }
@@ -410,21 +781,20 @@ impl App {
                     self.ticks += 1;
                     // A few frames in, so the window has its size and the fonts are in.
                     if self.ticks == 5 {
-                        return window::latest()
-                            .and_then(window::screenshot)
-                            .map(Message::Shot);
+                        return window::latest().and_then(window::screenshot).map(Message::Shot);
                     }
                     return Task::none();
                 }
-                let Some(b) = &mut self.bench else {
-                    return Task::none();
-                };
                 let launched = self.launched;
-                match b.tick(now, launched, self.size) {
+                let size = self.size;
+                let Some(b) = &mut self.bench else { return Task::none() };
+                match b.tick(now, launched, size) {
                     Some(view) => self.set_view(view),
                     None => {
-                        let elements = self.doc.as_ref().map_or(0, |d| d.layers.prepared.len());
-                        b.report(&self.timings.borrow(), elements, self.load_time);
+                        let elements = self.tab().doc.layers.prepared.len();
+                        if let Some(b) = &self.bench {
+                            b.report(&self.timings.borrow(), elements, self.load_time);
+                        }
                         return iced::exit();
                     }
                 }
@@ -435,50 +805,70 @@ impl App {
 
     fn key(&mut self, event: keyboard::Event) -> Task<Message> {
         match event {
-            keyboard::Event::ModifiersChanged(m) => self.modifiers = m,
-            keyboard::Event::KeyReleased {
-                key: Key::Named(Named::Space),
-                ..
-            } => self.space = false,
+            keyboard::Event::KeyReleased { key: Key::Named(Named::Space), .. } => self.space = false,
             keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                if self.prompt.is_some() {
+                    // Escape is Cancel, never Discard (review 2026-11-04, ST-1).
+                    if key == Key::Named(Named::Escape) && !matches!(self.prompt, Some(Prompt::Recover { .. })) {
+                        return self.answer(Answer::Cancel);
+                    }
+                    return Task::none();
+                }
+                if self.menu_open && key == Key::Named(Named::Escape) {
+                    self.menu_open = false;
+                    return Task::none();
+                }
                 let ctrl = modifiers.command();
-                match key.as_ref() {
-                    Key::Named(Named::Space) => self.space = true,
-                    Key::Character("s") if ctrl => self.save(),
-                    Key::Character("c") if ctrl => {
-                        if let Some(text) = self.doc.as_ref().ok().and_then(|d| d.editor.copy()) {
+                let shift = modifiers.shift();
+                let lower = match key.as_ref() {
+                    Key::Character(c) => c.to_lowercase(),
+                    _ => String::new(),
+                };
+                let centre = Point::new(self.size.width / 2.0, self.size.height / 2.0);
+                match (key.as_ref(), lower.as_str()) {
+                    (Key::Named(Named::Space), _) => self.space = true,
+                    (Key::Named(Named::Tab), _) if ctrl => {
+                        let n = self.tabs.len();
+                        let next = if shift { (self.active + n - 1) % n } else { (self.active + 1) % n };
+                        self.select_tab(next);
+                    }
+                    (_, "s") if ctrl && shift => return self.handle(Message::SaveAs),
+                    (_, "s") if ctrl => return self.handle(Message::Save),
+                    (_, "o") if ctrl => return Self::pick_open(),
+                    (_, "n") if ctrl => self.new_tab(),
+                    (_, "w") if ctrl => {
+                        let id = self.tab().id.clone();
+                        return self.close_tab(&id);
+                    }
+                    (_, "q") if ctrl => return self.quit(),
+                    (_, "c") if ctrl => {
+                        if let Some(text) = self.tab().doc.editor.copy() {
                             return clipboard::write(text);
                         }
                     }
-                    Key::Character("x") if ctrl => {
-                        if let Some(text) = self.doc.as_mut().ok().and_then(|d| d.editor.cut()) {
+                    (_, "x") if ctrl => {
+                        if let Some(text) = self.tab_mut().doc.editor.cut() {
                             return clipboard::write(text);
                         }
                     }
-                    Key::Character("v") if ctrl => return clipboard::read().map(Message::Paste),
+                    (_, "v") if ctrl => return clipboard::read().map(Message::Paste),
+                    // Ctrl+1…8: that tab; Ctrl+9: the last.
+                    (_, d) if ctrl && d.len() == 1 && ("1"..="9").contains(&d) => {
+                        let n: usize = d.parse().unwrap_or(1);
+                        let i = if n == 9 { self.tabs.len() - 1 } else { n - 1 };
+                        self.select_tab(i.min(self.tabs.len() - 1));
+                    }
                     // Shift+1: the whole drawing in view, as in Excalidraw.
-                    Key::Character("!" | "1") if modifiers.shift() => {
-                        if let Ok(d) = &self.doc {
-                            let view = fit(d.layers.bounds(), self.size);
-                            self.set_view(view);
-                        }
+                    (_, "!" | "1") if shift => {
+                        let view = fit(self.tab().doc.layers.bounds(), self.size);
+                        self.set_view(view);
                     }
-                    Key::Character("=" | "+") if ctrl => self.set_view(self.view.zoomed(
-                        1.25,
-                        Point::new(self.size.width / 2.0, self.size.height / 2.0),
-                    )),
-                    Key::Character("-") if ctrl => self.set_view(self.view.zoomed(
-                        0.8,
-                        Point::new(self.size.width / 2.0, self.size.height / 2.0),
-                    )),
+                    (_, "=" | "+") if ctrl => self.set_view(self.tab().view.zoomed(1.25, centre)),
+                    (_, "-") if ctrl => self.set_view(self.tab().view.zoomed(0.8, centre)),
                     _ => {
-                        if let (Some(k), Ok(d)) = (editor_key(&key), &mut self.doc) {
-                            let m = editor::Modifiers {
-                                shift: modifiers.shift(),
-                                alt: modifiers.alt(),
-                                ctrl,
-                            };
-                            d.editor.key(k, m);
+                        if let Some(k) = editor_key(&key) {
+                            let m = editor::Modifiers { shift, alt: modifiers.alt(), ctrl };
+                            self.tab_mut().doc.editor.key(k, m);
                         }
                     }
                 }
@@ -489,15 +879,13 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let d = match &self.doc {
-            Ok(d) => d,
-            Err(e) => return container(text(e.clone())).center(Length::Fill).into(),
-        };
+        let tab = self.tab();
+        let d = &tab.doc;
         let scene = SceneView {
             layers: &d.layers,
             editor: &d.editor,
-            built_at: &self.built_at,
-            view: self.view,
+            built_at: &tab.built_at,
+            view: tab.view,
             background: d.background,
             panning: self.space || d.editor.tool == Tool::Hand,
             timings: self.bench.as_ref().map(|_| &self.timings),
@@ -506,27 +894,24 @@ impl App {
         if self.bench.is_some() {
             return scene.into();
         }
-        if self.screenshot.is_some() {
-            // The drawing, and the text box if typing: no tool bar.
-            let mut layers = stack![Element::from(scene)];
-            if let Some(text_box) = self.text_box(d) {
-                layers = layers.push(text_box);
-            }
-            return layers.into();
-        }
-        let status = text(self.status.clone().unwrap_or_default())
-            .size(12)
-            .color(Color::from_rgb(0.4, 0.4, 0.4));
         let mut layers = stack![Element::from(scene)];
-        if let Some(text_box) = self.text_box(d) {
+        if let Some(text_box) = self.text_box(tab) {
             layers = layers.push(text_box);
         }
-        layers
-            .push(
-                column![toolbar::toolbar(&d.editor), container(status).padding(8)]
-                    .width(Length::Fill),
-            )
-            .into()
+        if self.screenshot.is_some() && !self.chrome {
+            // The drawing, and the text box if typing: no chrome.
+            return layers.into();
+        }
+        let status = text(self.status.clone().unwrap_or_default()).size(12).color(Color::from_rgb(0.4, 0.4, 0.4));
+        layers = layers.push(column![toolbar::toolbar(&d.editor), container(status).padding(8)].width(Length::Fill));
+        let mut window = stack![column![chrome::tab_bar(self), layers].height(Length::Fill)];
+        if self.menu_open {
+            window = window.push(chrome::file_menu(self));
+        }
+        if let Some(prompt) = &self.prompt {
+            window = window.push(opaque(chrome::prompt(prompt)));
+        }
+        window.into()
     }
 
     /// The text box over the text being typed. It takes the typing (input
@@ -539,42 +924,31 @@ impl App {
     /// `window::screenshot` captures (with either renderer, also in a stock
     /// iced app), so it could not be checked, and a left-aligned box over a
     /// centred label would not show what the label becomes anyway.
-    fn text_box<'a>(&'a self, d: &'a Document) -> Option<Element<'a, Message>> {
-        let (id, content) = self.text_box.as_ref()?;
-        let e = d.editor.scene.by_id(id)?;
+    fn text_box<'a>(&'a self, tab: &'a Tab) -> Option<Element<'a, Message>> {
+        let (id, content) = tab.text_box.as_ref()?;
+        let e = tab.doc.editor.scene.by_id(id)?;
         let t = e.text.as_ref()?;
-        let zoom = self.view.zoom;
-        let at = self.view.to_screen([e.x, e.y]);
+        let zoom = tab.view.zoom;
+        let at = tab.view.to_screen([e.x, e.y]);
         let color = render::color::parse(&e.stroke_color);
         let color = Color::from_rgba(color.r, color.g, color.b, color.a);
         let size = t.font_size as f32 * zoom;
         // A label's box is exactly its width, so the caret wraps where it
         // does; free text gets room to grow.
-        let width = if t.container_id.is_some() {
-            (e.width as f32 * zoom).max(size)
-        } else {
-            ((e.width as f32 * zoom).max(size) + size).max(40.0)
-        };
+        let width = if t.container_id.is_some() { (e.width as f32 * zoom).max(size) } else { ((e.width as f32 * zoom).max(size) + size).max(40.0) };
         let editor = text_editor(content)
             .id(TEXT_BOX)
             .on_action(Message::TextAction)
             .font(paint::font(t.font_family))
             .size(size)
-            .line_height(text::LineHeight::Absolute(iced::Pixels(
-                (t.font_size * t.line_height) as f32 * zoom,
-            )))
+            .line_height(text::LineHeight::Absolute(iced::Pixels((t.font_size * t.line_height) as f32 * zoom)))
             .padding(0)
             .width(width)
             // A label wraps inside its shape; free text only where typed.
-            .wrapping(if t.container_id.is_some() {
-                text::Wrapping::Word
-            } else {
-                text::Wrapping::None
-            })
+            .wrapping(if t.container_id.is_some() { text::Wrapping::Word } else { text::Wrapping::None })
             .key_binding(|press| {
                 let done = matches!(press.key.as_ref(), Key::Named(Named::Escape))
-                    || (matches!(press.key.as_ref(), Key::Named(Named::Enter))
-                        && press.modifiers.command());
+                    || (matches!(press.key.as_ref(), Key::Named(Named::Enter)) && press.modifiers.command());
                 if done {
                     Some(text_editor::Binding::Custom(Message::TextDone))
                 } else {
@@ -588,38 +962,25 @@ impl App {
                 selection: Color { a: 0.25, ..color },
                 ..text_editor::default(theme, status)
             });
-        Some(
-            container(editor)
-                .padding(iced::Padding {
-                    top: at.y,
-                    left: at.x,
-                    right: 0.0,
-                    bottom: 0.0,
-                })
-                .into(),
-        )
+        Some(container(editor).padding(iced::Padding { top: at.y, left: at.x, right: 0.0, bottom: 0.0 }).into())
     }
 
     fn subscription(&self) -> Subscription<Message> {
         let resize = window::resize_events().map(|(_, size)| Message::Resized(size));
         if self.bench.is_some() || self.screenshot.is_some() {
-            Subscription::batch([resize, window::frames().map(Message::Tick)])
-        } else {
-            Subscription::batch([resize, keyboard::listen().map(Message::Key)])
+            return Subscription::batch([resize, window::frames().map(Message::Tick)]);
         }
+        let mut subs = vec![resize, keyboard::listen().map(Message::Key), window::close_requests().map(|_| Message::Quit)];
+        if !self.dev {
+            subs.push(iced::time::every(Duration::from_millis(400)).map(Message::Autosave));
+            subs.push(Subscription::run(instance::incoming).map(Message::HandedOver));
+        }
+        Subscription::batch(subs)
     }
 
     fn title(&self) -> String {
-        let name = self
-            .path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map_or("Untitled".into(), |n| n.to_string_lossy().into_owned());
-        let dirty = self.doc.as_ref().is_ok_and(|d| d.editor.is_dirty());
-        format!(
-            "{}{name} — Excalidraw (Iced)",
-            if dirty { "• " } else { "" }
-        )
+        let tab = self.tab();
+        format!("{}{} — Excalidraw (Iced)", if tab.dirty() { "• " } else { "" }, tab.title())
     }
 }
 
@@ -629,24 +990,40 @@ impl App {
 /// borrowed, only the pages of glyphs actually drawn are ever read in.
 fn load_fonts() {
     use iced::advanced::graphics::text::cosmic_text::fontdb;
-    let mut system = iced::advanced::graphics::text::font_system()
-        .write()
-        .expect("the font system lock is not poisoned");
+    let mut system = iced::advanced::graphics::text::font_system().write().expect("the font system lock is not poisoned");
     for (_, bytes) in FONTS {
         let source: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = std::sync::Arc::new(*bytes);
-        system
-            .raw()
-            .db_mut()
-            .load_font_source(fontdb::Source::Binary(source));
+        system.raw().db_mut().load_font_source(fontdb::Source::Binary(source));
     }
 }
 
 fn main() -> iced::Result {
     let args = args();
+    // Held until the app exits: the kernel lets go of it if the app dies.
+    let mut _lock = None;
+    if !args.dev() {
+        use excalidraw_desktop_core::{files, store};
+        store::set_app_dir(APP_DIR);
+        let _ = store::ensure_private_dir(&store::config_dir());
+        let drawings: Vec<PathBuf> = args.paths.iter().filter(|p| p.is_file()).map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone())).collect();
+        match instance::claim(&drawings) {
+            Ok(instance::Claim::First(lock)) => _lock = lock,
+            Ok(instance::Claim::HandedOver) => return Ok(()),
+            Err(why) => {
+                eprintln!("excalidraw-iced: {why}");
+                std::process::exit(1);
+            }
+        }
+        // What a run that died mid-write left behind; nothing writes yet.
+        for dir in ["", "session", "themes"] {
+            files::sweep_temp_files(&store::config_dir().join(dir));
+        }
+    }
     let app = iced::application(move || App::boot(args.clone()), App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .window_size(WINDOW)
+        .exit_on_close_request(false)
         .antialiasing(std::env::var_os("NO_MSAA").is_none());
     load_fonts();
     app.run()
