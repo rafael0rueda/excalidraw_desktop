@@ -46,7 +46,7 @@ impl Kind {
     }
 
     /// `isUsingAdaptiveRadius`.
-    fn uses_adaptive_radius(self) -> bool {
+    pub fn uses_adaptive_radius(self) -> bool {
         matches!(
             self,
             Kind::Rectangle | Kind::Embeddable | Kind::Iframe | Kind::Image

@@ -72,6 +72,8 @@ pub struct Style {
     pub opacity: f64,
     /// `currentItemRoundness`: "round" or "sharp".
     pub round: bool,
+    /// `currentItemArrowType`: "round" or "sharp" (elbow arrows: phase 10).
+    pub arrow_round: bool,
     pub start_arrowhead: Option<String>,
     pub end_arrowhead: Option<String>,
 }
@@ -88,6 +90,7 @@ impl Default for Style {
             roughness: 1.0,
             opacity: 100.0,
             round: true,
+            arrow_round: true,
             start_arrowhead: None,
             end_arrowhead: Some("arrow".into()),
         }
@@ -118,9 +121,12 @@ fn points_value(points: &[[f64; 2]]) -> Value {
 pub fn new_element(kind: &str, x: f64, y: f64, style: &Style) -> Map<String, Value> {
     // `getDefaultRoundnessTypeForElement`.
     let roundness = match kind {
+        // New arrows take theirs from the arrow type.
+        "arrow" if style.arrow_round => json!({ "type": 2 }),
+        "arrow" => Value::Null,
         _ if !style.round => Value::Null,
         "rectangle" | "embeddable" | "iframe" | "image" => json!({ "type": 3 }),
-        "diamond" | "line" | "arrow" => json!({ "type": 2 }),
+        "diamond" | "line" => json!({ "type": 2 }),
         _ => Value::Null,
     };
     let mut m = Map::new();

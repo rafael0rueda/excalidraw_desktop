@@ -11,6 +11,7 @@
 mod binding;
 pub mod geometry;
 mod history;
+mod props;
 pub mod text;
 mod transform;
 
@@ -23,6 +24,7 @@ use scene::edit::{
 use scene::{Element, Kind, Scene};
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
+pub use props::{Field, Panel, Prop, FONT_SIZES};
 pub use text::Measure;
 pub use transform::Handle;
 
@@ -154,6 +156,8 @@ pub struct Editor {
     pub font_family: f64,
     pub font_size: f64,
     pub text_align: String,
+    /// Ctrl+Alt+C's element, and its label: what Ctrl+Alt+V pastes.
+    copied_styles: Option<(Element, Option<Element>)>,
     measure: Box<dyn Measure>,
 }
 
@@ -205,6 +209,7 @@ impl Editor {
             font_family: 5.0,
             font_size: 20.0,
             text_align: "left".into(),
+            copied_styles: None,
             measure: Box::new(Approx),
         }
     }

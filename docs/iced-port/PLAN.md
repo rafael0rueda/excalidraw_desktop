@@ -288,7 +288,10 @@ Kept or added:
 | 5 | Themes | **Done** 2026-11-12 (results below) |
 | 6 | Export + library | **Done** 2026-11-13 (results below) |
 | 7 | Packaging | **Done** 2026-11-13 (results below) |
-| 8 | Parity review | **Done** 2026-11-13: not at parity, recommendation keep both and continue (phases 9–11); decision pending |
+| 8 | Parity review | **Done** 2026-11-13: not at parity, decision: keep both, phases 9–11 |
+| 9 | Properties panel | In progress |
+| 10 | The rest of the editor | Not started |
+| 11 | Desktop parity | Not started |
 
 ### Phase 2 result, 2026-11-11
 
@@ -785,4 +788,4 @@ To reach parity, three more phases, then this review again:
 | 10 | The rest of the editor | L | Image tool and pasting images; eraser; links (edit, and open http, https and mailto in the browser); frames; elbow arrows; context menu; align, distribute, flip, lock; zoom controls; grid and snapping; pasting text |
 | 11 | Desktop parity | M | Shortcuts by physical key, `Ctrl+T` and `Ctrl+PageUp`/`PageDown`; remembered window size and position; dragging library items; the by-hand checks above; fuzzing and `cargo-deny` |
 
-**Decision (replace, keep both, or stop): Rafa's, pending.**
+**Decision, 2026-11-13 (Rafa): keep both and go with phases 9–11.**

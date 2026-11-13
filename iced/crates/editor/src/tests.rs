@@ -681,3 +681,157 @@ fn an_arrow_end_dragged_onto_a_shape_binds() {
     ed.pointer_up([296.0, 50.0], NONE);
     assert_eq!(binding(&ed, &a, "endBinding").as_deref(), Some(r.as_str()));
 }
+
+#[test]
+fn the_panel_shows_what_the_tool_and_selection_can_change() {
+    let mut ed = empty();
+    assert!(ed.panel().is_none(), "no tool, no selection, no panel");
+    ed.tool = Tool::Rectangle;
+    let p = ed.panel().unwrap();
+    assert_eq!(p.stroke_color, Some(Some("#1e1e1e".into())));
+    assert_eq!(p.background_color, Some(Some("transparent".into())));
+    assert_eq!(p.fill_style, None, "no fill choices for a transparent background");
+    assert_eq!(p.round, Some(Some(true)));
+    assert_eq!(p.arrowheads, None);
+    assert_eq!(p.font_family, None);
+    assert!(!p.actions);
+
+    ed.tool = Tool::Arrow;
+    let p = ed.panel().unwrap();
+    assert_eq!(p.arrowheads, Some((None, Some("arrow".into()))));
+    assert_eq!(p.arrow_round, Some(Some(true)));
+    assert_eq!(p.round, None, "arrows have an arrow type instead of edges");
+
+    ed.tool = Tool::Text;
+    let p = ed.panel().unwrap();
+    assert_eq!((p.font_family, p.font_size), (Some(Some(5.0)), Some(Some(20.0))));
+    assert_eq!(p.text_align, Some(Some("left".into())));
+    assert_eq!(p.stroke_width, None);
+
+    // A selection: its own values, or nothing picked when they disagree.
+    let a = rect(&mut ed, 0.0, 0.0, 50.0, 50.0);
+    let b = rect(&mut ed, 100.0, 0.0, 50.0, 50.0);
+    ed.selection = vec![a.clone(), b.clone()];
+    ed.set_prop(Prop::StrokeWidth(4.0));
+    assert_eq!(get(&ed, &a).stroke_width, 4.0);
+    assert_eq!(get(&ed, &b).stroke_width, 4.0);
+    ed.selection = vec![a.clone()];
+    ed.set_prop(Prop::StrokeWidth(1.0));
+    ed.selection = vec![a.clone(), b.clone()];
+    let p = ed.panel().unwrap();
+    assert_eq!(p.stroke_width, Some(None), "1 and 4: nothing picked");
+    assert!(p.actions);
+    assert_eq!(ed.style.stroke_width, 1.0, "the last choice is what new shapes get");
+}
+
+#[test]
+fn changing_properties_is_one_undo_step_each() {
+    let mut ed = empty();
+    let r = rect(&mut ed, 0.0, 0.0, 80.0, 40.0);
+    let seed = get(&ed, &r).seed;
+    ed.set_prop(Prop::BackgroundColor("#a5d8ff".into()));
+    assert_eq!(ed.panel().unwrap().fill_style, Some(Some("solid".into())), "fill choices appear with a colour");
+    ed.set_prop(Prop::FillStyle("cross-hatch".into()));
+    ed.set_prop(Prop::Roughness(2.0));
+    ed.set_prop(Prop::Round(false));
+    ed.set_prop(Prop::StrokeStyle("dashed".into()));
+    ed.set_prop(Prop::Opacity(60.0));
+    let e = get(&ed, &r);
+    assert_eq!(
+        (e.background_color.as_str(), e.fill_style.as_str(), e.roughness, e.roundness, e.stroke_style.as_str(), e.opacity),
+        ("#a5d8ff", "cross-hatch", 2.0, None, "dashed", 60.0)
+    );
+    assert_ne!(e.seed, seed, "a new sloppiness draws afresh");
+    ed.undo();
+    assert_eq!(get(&ed, &r).opacity, 100.0);
+    assert_eq!(get(&ed, &r).stroke_style, "dashed", "one step back is one change back");
+    ed.set_prop(Prop::Round(true));
+    assert_eq!(get(&ed, &r).roundness.map(|r| r.kind), Some(3.0), "rectangles round adaptively");
+
+    // New elements take the choices.
+    let n = rect(&mut ed, 200.0, 0.0, 30.0, 30.0);
+    let e = get(&ed, &n);
+    assert_eq!((e.background_color.as_str(), e.fill_style.as_str(), e.roughness), ("#a5d8ff", "cross-hatch", 2.0));
+}
+
+#[test]
+fn arrow_type_and_arrowheads() {
+    let mut ed = empty();
+    ed.set_prop(Prop::ArrowRound(false));
+    ed.set_prop(Prop::StartArrowhead(Some("dot".into())));
+    ed.tool = Tool::Arrow;
+    drag(&mut ed, [0.0, 0.0], [100.0, 0.0], NONE);
+    let a = ed.selection[0].clone();
+    let e = get(&ed, &a);
+    assert_eq!(e.roundness, None, "a sharp arrow");
+    assert_eq!(e.linear.as_ref().unwrap().start_arrowhead.as_deref(), Some("dot"));
+    ed.set_prop(Prop::EndArrowhead(Some("crowfoot_many".into())));
+    ed.set_prop(Prop::ArrowRound(true));
+    let e = get(&ed, &a);
+    assert_eq!(e.linear.as_ref().unwrap().end_arrowhead.as_deref(), Some("crowfoot_many"));
+    assert_eq!(e.roundness.map(|r| r.kind), Some(2.0));
+    assert_eq!(e.raw()["endArrowhead"], json!("crowfoot_many"));
+}
+
+#[test]
+fn font_changes_lay_text_out_again() {
+    let mut ed = empty();
+    ed.key(Key::Char('t'), NONE);
+    ed.pointer_down([100.0, 100.0], NONE);
+    let id = ed.editing.clone().unwrap().id;
+    ed.set_text("abcd");
+    ed.key(Key::Escape, NONE);
+    let before = get(&ed, &id).clone();
+    assert_eq!((before.width, before.height), (40.0, 25.0));
+    ed.set_prop(Prop::FontSize(36.0));
+    let e = get(&ed, &id).clone();
+    // Approx measures half the size a character: 4 × 18 wide, 36 × 1.25 tall.
+    assert_eq!((e.width, e.height), (72.0, 45.0));
+    assert_eq!((e.x, e.y), (100.0, 100.0 - 10.0), "left-aligned keeps x, centred vertically");
+    ed.set_prop(Prop::FontFamily(6.0));
+    let e = get(&ed, &id).clone();
+    assert_eq!(e.text.as_ref().unwrap().line_height, 1.35, "Nunito's line height");
+    assert_eq!(e.height, 36.0 * 1.35);
+    ed.step_font_size(true);
+    assert_eq!(get(&ed, &id).text.as_ref().unwrap().font_size, 40.0, "36 + 10%, rounded");
+    assert_eq!(ed.font_size, 40.0);
+
+    // A shape's label: the shape is selected, the label changes.
+    let r = rect(&mut ed, 0.0, 300.0, 120.0, 60.0);
+    ed.selection.clear();
+    ed.double_click([0.0, 330.0]);
+    ed.set_text("one two");
+    ed.key(Key::Escape, NONE);
+    ed.selection = vec![r.clone()];
+    let p = ed.panel().unwrap();
+    assert_eq!(p.font_size, Some(Some(40.0)), "the label's size, shown for its shape");
+    assert_eq!(p.vertical_align, Some(Some("middle".into())));
+    ed.set_prop(Prop::FontSize(16.0));
+    ed.set_prop(Prop::VerticalAlign("top".into()));
+    let l = label_of(&ed, &r);
+    assert_eq!(l.text.as_ref().unwrap().font_size, 16.0);
+    assert_eq!(l.y, get(&ed, &r).y + 5.0, "at the top, inside the padding");
+    ed.set_prop(Prop::StrokeColor("#e03131".into()));
+    assert_eq!(label_of(&ed, &r).stroke_color, "#e03131", "colour reaches the label");
+}
+
+#[test]
+fn copying_and_pasting_styles() {
+    let mut ed = empty();
+    let a = rect(&mut ed, 0.0, 0.0, 50.0, 50.0);
+    ed.set_prop(Prop::StrokeColor("#2f9e44".into()));
+    ed.set_prop(Prop::StrokeWidth(4.0));
+    ed.style = Style::default();
+    ed.tool = Tool::Ellipse;
+    drag(&mut ed, [100.0, 0.0], [150.0, 50.0], NONE);
+    let b = ed.selection[0].clone();
+    ed.selection = vec![a.clone()];
+    assert!(ed.copy_styles());
+    ed.selection = vec![b.clone()];
+    ed.paste_styles();
+    let e = get(&ed, &b);
+    assert_eq!((e.stroke_color.as_str(), e.stroke_width), ("#2f9e44", 4.0));
+    assert_eq!(e.roundness, None, "an ellipse cannot take the rectangle's corners");
+    ed.undo();
+    assert_eq!(get(&ed, &b).stroke_width, 2.0);
+}

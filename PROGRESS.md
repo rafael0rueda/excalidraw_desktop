@@ -26,8 +26,8 @@ Phase 8 (parity review) is done: everything the README lists around the
 editor is there apart from a few shortcuts, links and window geometry, but the
 editor is short of Excalidraw's, with no properties panel above all. The
 benchmarks still clear the gate. Recommended: keep both, add phases 9–11
-(properties panel, rest of the editor, desktop parity). Rafa's decision is
-pending.
+(properties panel, rest of the editor, desktop parity). Decided 2026-11-13:
+keep both, do phases 9–11.
 
 ## Decisions already made (do not re-litigate)
 
