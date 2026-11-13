@@ -65,6 +65,22 @@ pub enum Msg {
     ExportTo(Option<PathBuf>),
     /// Pictures of items, drawn on another thread: (id, width, height, RGBA).
     Pictures(Vec<(String, u32, u32, Vec<u8>)>),
+    /// An item pressed: dragged onto the drawing, or a click.
+    Grab(String),
+    /// The pointer, anywhere in the window, while an item is held.
+    DragMove(iced::Point),
+    /// Let go: on the drawing it lands there; a click without moving puts it
+    /// in the middle of the view.
+    Drop,
+}
+
+/// An item being dragged out of the panel.
+#[derive(Debug, Clone)]
+pub struct Drag {
+    pub id: String,
+    /// Where the pointer is in the window, once it has moved.
+    pub at: Option<iced::Point>,
+    start: Option<iced::Point>,
 }
 
 pub struct Library {
@@ -78,6 +94,7 @@ pub struct Library {
     /// Items whose picture is being drawn, or could not be.
     pending: std::collections::HashSet<String>,
     pub open: bool,
+    pub drag: Option<Drag>,
 }
 
 /// `restoreLibraryItems`: version 2's `libraryItems`, or version 1's
@@ -154,7 +171,7 @@ impl Library {
                 Err(e) => (Vec::new(), false, Some(format!("The library could not be read: {e}"))),
             }
         };
-        let library = Self { items, writable, persist, pictures: HashMap::new(), pending: Default::default(), open: false };
+        let library = Self { items, writable, persist, pictures: HashMap::new(), pending: Default::default(), open: false, drag: None };
         (library, problem)
     }
 
@@ -220,17 +237,36 @@ impl App {
                     return self.draw_pictures();
                 }
             }
-            Msg::Insert(id) => {
-                let Some(item) = self.library.items.iter().find(|i| self::id(i) == id) else { return Task::none() };
-                let items = elements(item).to_vec();
-                let size = self.size;
-                let tab = self.tab_mut();
-                let at = tab.view.to_scene(iced::Point::new(size.width / 2.0, size.height / 2.0));
-                let editor = &mut tab.doc.editor;
-                editor.finish_text();
-                if editor.insert(&items, None, at) {
-                    editor.tool = editor::Tool::Selection;
+            Msg::Grab(id) => self.library.drag = Some(Drag { id, at: None, start: None }),
+            Msg::DragMove(p) => {
+                if let Some(d) = &mut self.library.drag {
+                    match d.start {
+                        None => d.start = Some(p),
+                        // A few pixels of wobble is still a click.
+                        Some(s) if d.at.is_some() || (p.x - s.x).abs() + (p.y - s.y).abs() > 4.0 => d.at = Some(p),
+                        Some(_) => {}
+                    }
                 }
+            }
+            Msg::Drop => {
+                let Some(d) = self.library.drag.take() else { return Task::none() };
+                match d.at {
+                    None => return self.library(Msg::Insert(d.id)),
+                    Some(p) => {
+                        // Over the drawing, not the panel or the tab bar.
+                        let panel = crate::theme_editor::WIDTH;
+                        let y = p.y - self.bar;
+                        if y >= 0.0 && p.x < self.size.width - panel {
+                            let at = self.tab().view.to_scene(iced::Point::new(p.x, y));
+                            self.insert_library_item(&d.id, at);
+                        }
+                    }
+                }
+            }
+            Msg::Insert(id) => {
+                let size = self.size;
+                let at = self.tab().view.to_scene(iced::Point::new(size.width / 2.0, size.height / 2.0));
+                self.insert_library_item(&id, at);
             }
             Msg::Remove(id) => {
                 if let Some(item) = self.library.items.iter().find(|i| self::id(i) == id) {
@@ -379,7 +415,7 @@ impl App {
 // ------------------------------------------------------------ the panel
 
 use crate::chrome::{self, small};
-use iced::widget::{button, column, container, image, row, scrollable, stack, text, tooltip, Space};
+use iced::widget::{button, column, container, image, mouse_area, pin, row, scrollable, stack, text, tooltip, Space};
 use iced::{Alignment, Background, Border, Element, Length};
 
 fn lib(m: Msg) -> Message {
@@ -395,8 +431,10 @@ fn cell<'a>(app: &'a App, item: &'a Map<String, Value>) -> Element<'a, Message> 
         Some(handle) => image(handle.clone()).width(CELL - 10.0).height(CELL - 10.0).content_fit(iced::ContentFit::Contain).into(),
         None => text(name(item).unwrap_or("…").to_owned()).size(10).color(look.muted).into(),
     };
-    let body = button(container(face).center(CELL - 2.0)).on_press(lib(Msg::Insert(id.clone()))).padding(0).width(CELL).height(CELL).style(move |_, status| {
-        let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    // Pressed, then dragged onto the drawing or let go as a click.
+    let held = app.library.drag.as_ref().is_some_and(|d| d.id == id);
+    let body = button(container(face).center(CELL - 2.0)).padding(0).width(CELL).height(CELL).style(move |_, status| {
+        let hover = held || matches!(status, button::Status::Hovered | button::Status::Pressed);
         button::Style {
             background: Some(Background::Color(look.canvas)),
             border: Border { color: if hover { look.accent } else { look.surface_alt }, width: 1.0, radius: 6.0.into() },
@@ -404,6 +442,7 @@ fn cell<'a>(app: &'a App, item: &'a Map<String, Value>) -> Element<'a, Message> 
             ..button::Style::default()
         }
     });
+    let body = mouse_area(body).on_press(lib(Msg::Grab(id.clone()))).interaction(iced::mouse::Interaction::Grab);
     let remove = button(text("×").size(11)).on_press(lib(Msg::Remove(id))).padding([0, 4]).style(chrome::chip(look, false));
     let both = stack![body, container(remove).align_right(CELL)];
     match name(item) {
@@ -451,7 +490,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     } else {
         grid.into()
     };
-    let hint = text("Click a shape to put it in the middle of the view.").size(12).color(look.muted);
+    let hint = text("Drag a shape onto the drawing, or click it to put it in the middle of the view.").size(12).color(look.muted);
 
     let header = row![
         text("Library").size(16).color(look.text),
@@ -465,4 +504,27 @@ pub fn view(app: &App) -> Element<'_, Message> {
     container(container(card).width(crate::theme_editor::WIDTH).height(Length::Fill).style(move |t| container::Style { border: Border { radius: 0.0.into(), ..chrome::island(look)(t).border }, ..chrome::island(look)(t) }))
         .align_right(Length::Fill)
         .into()
+}
+
+impl App {
+    /// A copy of library item `id` on the drawing, centred on `at`.
+    fn insert_library_item(&mut self, id: &str, at: [f64; 2]) {
+        let Some(item) = self.library.items.iter().find(|i| self::id(i) == id) else { return };
+        let items = elements(item).to_vec();
+        let editor = &mut self.tab_mut().doc.editor;
+        editor.finish_text();
+        if editor.insert(&items, None, at) {
+            editor.tool = editor::Tool::Selection;
+        }
+    }
+}
+
+/// The item being dragged, under the pointer.
+pub fn ghost(app: &App) -> Option<Element<'_, Message>> {
+    let d = app.library.drag.as_ref()?;
+    let at = d.at?;
+    let picture = app.library.pictures.get(&d.id)?;
+    let size = CELL - 10.0;
+    let img = image(picture.clone()).width(size).height(size).content_fit(iced::ContentFit::Contain).opacity(0.7_f32);
+    Some(pin(img).x(at.x - size / 2.0).y(at.y - size / 2.0).into())
 }

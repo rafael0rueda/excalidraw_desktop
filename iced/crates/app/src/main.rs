@@ -857,7 +857,7 @@ impl App {
         // only closes it), not on the clocks or the pointer passing over.
         let action = !matches!(
             message,
-            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::WindowState(..) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Input(Input::Move(..))
+            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::WindowState(..) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Library(library::Msg::DragMove(_)) | Message::Input(Input::Move(..))
         );
         if self.menu.is_some() && action {
             self.menu = None;
@@ -1220,6 +1220,9 @@ impl App {
             Some(Menu::Export) => window = window.push(chrome::export_menu(self)),
             None => {}
         }
+        if let Some(ghost) = library::ghost(self) {
+            window = window.push(ghost);
+        }
         if let Some(prompt) = &self.prompt {
             window = window.push(opaque(chrome::prompt(look, prompt)));
         }
@@ -1283,6 +1286,14 @@ impl App {
             return Subscription::batch([resize, window::frames().map(Message::Tick)]);
         }
         let mut subs = vec![resize, keyboard::listen().map(Message::Key), window::close_requests().map(|_| Message::Quit)];
+        if self.library.drag.is_some() {
+            // A library item held: the pointer wherever it goes, and the release.
+            subs.push(iced::event::listen_with(|event, _, _| match event {
+                iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => Some(Message::Library(library::Msg::DragMove(position))),
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => Some(Message::Library(library::Msg::Drop)),
+                _ => None,
+            }));
+        }
         if !self.dev {
             subs.push(iced::time::every(Duration::from_millis(400)).map(Message::Autosave));
             subs.push(Subscription::run(instance::incoming).map(Message::HandedOver));

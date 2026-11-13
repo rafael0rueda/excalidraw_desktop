@@ -532,3 +532,36 @@ fn shortcuts_work_on_any_layout() {
     send(&mut app, press(Key::Character("ρ".into()), Code::KeyR, keyboard::Modifiers::empty()));
     assert_eq!(app.tab().doc.editor.tool, Tool::Rectangle);
 }
+
+#[test]
+fn library_items_are_dragged_onto_the_drawing() {
+    use library::Msg;
+    let mut app = App::boot(Args { screenshot: Some("/dev/null".into()), chrome: true, ..Args::default() }).0;
+    send(&mut app, Message::Library(Msg::AddSet(library::Set::Er)));
+    let id = library::id(&app.library.items[0]).to_owned();
+    let count = |app: &App| app.tab().doc.editor.scene.visible().count();
+    // A press and release: a click, in the middle of the view.
+    send(&mut app, Message::Library(Msg::Grab(id.clone())));
+    send(&mut app, Message::Library(Msg::DragMove(Point::new(1100.0, 300.0))));
+    send(&mut app, Message::Library(Msg::Drop));
+    let after_click = count(&app);
+    assert!(after_click > 0);
+    // Dragged to a point on the drawing: it lands centred there.
+    send(&mut app, Message::Library(Msg::Grab(id.clone())));
+    send(&mut app, Message::Library(Msg::DragMove(Point::new(1100.0, 300.0))));
+    send(&mut app, Message::Library(Msg::DragMove(Point::new(200.0, 300.0))));
+    assert!(library::ghost(&app).is_some() || app.library.pictures.is_empty(), "drawn under the pointer once it has a picture");
+    send(&mut app, Message::Library(Msg::Drop));
+    assert!(count(&app) > after_click);
+    let b = app.tab().doc.editor.selection_bounds().unwrap();
+    let want = app.tab().view.to_scene(Point::new(200.0, 300.0 - app.bar));
+    assert!(((b[0] + b[2]) / 2.0 - want[0]).abs() < 1.0 && ((b[1] + b[3]) / 2.0 - want[1]).abs() < 1.0, "{b:?} vs {want:?}");
+    assert!(app.library.drag.is_none());
+    // Let go over the panel: nothing.
+    let n = count(&app);
+    send(&mut app, Message::Library(Msg::Grab(id.clone())));
+    send(&mut app, Message::Library(Msg::DragMove(Point::new(1100.0, 300.0))));
+    send(&mut app, Message::Library(Msg::DragMove(Point::new(1150.0, 320.0))));
+    send(&mut app, Message::Library(Msg::Drop));
+    assert_eq!(count(&app), n);
+}
