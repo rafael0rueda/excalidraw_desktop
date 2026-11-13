@@ -1,0 +1,26 @@
+[package]
+name = "export"
+version = "0.0.0"
+description = "Excalidraw drawings as SVG and PNG, the drawing embedded as Excalidraw embeds it"
+authors = ["rafa"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+scene = { path = "../scene" }
+render = { path = "../render" }
+editor = { path = "../editor" }
+fontmerge = { path = "../fontmerge" }
+base64 = "0.22"
+# zlib, as pako's `deflate` writes it, and the PNG chunk checksum.
+flate2 = "1"
+serde_json = "1"
+# SVG to pixels. No system fonts: a PNG looks the same on every machine,
+# drawn with the fonts the app bundles.
+resvg = { version = "0.50", default-features = false, features = ["text", "raster-images"] }
+
+[dev-dependencies]
+wuff = "0.2"
+ttf-parser = "0.25"

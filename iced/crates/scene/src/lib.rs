@@ -160,6 +160,14 @@ impl Scene {
         }
     }
 
+    /// Drops the embedded files `keep` says no to: an export of part of a
+    /// drawing carries only the images it shows.
+    pub fn retain_files(&mut self, keep: impl Fn(&str) -> bool) {
+        if let Some(Value::Object(files)) = self.raw.get_mut("files") {
+            files.retain(|id, _| keep(id));
+        }
+    }
+
     /// The drawing as Excalidraw saves it to a file (`serializeAsJSON` with
     /// `clearElementsForExport`): deleted elements left out, and lines'
     /// `lastCommittedPoint` cleared. `to_json` writes everything, unchanged.

@@ -337,9 +337,147 @@ pub fn merge(fonts: &[&[u8]]) -> Result<Vec<u8>, Error> {
     Ok(assemble(tables))
 }
 
+/// A `name` table without the licence's full text (ID 13), which is most
+/// of a small subset's size; the copyright and the licence's URL stay.
+fn short_names(table: &[u8]) -> Vec<u8> {
+    if table.len() < 6 || be16(table, 0) != 0 {
+        return table.to_vec();
+    }
+    let count = usize::from(be16(table, 2));
+    let strings = usize::from(be16(table, 4));
+    let mut records = Vec::new();
+    let mut data: Vec<u8> = Vec::new();
+    for i in 0..count {
+        let at = 6 + i * 12;
+        let Some(r) = table.get(at..at + 12) else { break };
+        if be16(r, 6) == 13 {
+            continue;
+        }
+        let (len, off) = (usize::from(be16(r, 8)), usize::from(be16(r, 10)));
+        let Some(text) = table.get(strings + off..strings + off + len) else { continue };
+        let mut rec = r.to_vec();
+        rec[10..12].copy_from_slice(&(data.len() as u16).to_be_bytes());
+        records.push(rec);
+        data.extend(text);
+    }
+    let mut out = Vec::new();
+    out.extend(0u16.to_be_bytes());
+    out.extend((records.len() as u16).to_be_bytes());
+    out.extend((6 + 12 * records.len() as u16).to_be_bytes());
+    for r in records {
+        out.extend(r);
+    }
+    out.extend(data);
+    out
+}
+
+/// A font with only the glyphs `chars` need (and `.notdef`), as Excalidraw
+/// embeds a subset of each font in the SVGs it exports. Glyphs are
+/// renumbered, so the layout tables (kerning, ligatures), which name glyphs
+/// by number, are left out; outlines, advances and metrics are kept.
+pub fn subset(font: &[u8], chars: impl IntoIterator<Item = char>) -> Result<Vec<u8>, Error> {
+    let s = Source::parse(0, font)?;
+    let mut chars_kept = BTreeMap::new();
+    let mut keep = vec![0u16];
+    let mut wanted: Vec<u16> = Vec::new();
+    for c in chars {
+        if let Some(g) = s.face.glyph_index(c) {
+            chars_kept.insert(u32::from(c), g.0);
+            wanted.push(g.0);
+        }
+    }
+    // Composite glyphs bring their components.
+    while let Some(g) = wanted.pop() {
+        if keep.contains(&g) || g >= s.num_glyphs {
+            continue;
+        }
+        keep.push(g);
+        let found = std::cell::RefCell::new(Vec::new());
+        remap_composite(s.glyphs[usize::from(g)], |c| {
+            found.borrow_mut().push(c);
+            c
+        });
+        wanted.extend(found.into_inner());
+    }
+    keep.sort_unstable();
+    let new_of = |g: u16| keep.binary_search(&g).map_or(0, |i| i as u16);
+
+    let mut glyf = Vec::new();
+    let mut loca: Vec<u32> = Vec::new();
+    let mut hmtx = Vec::new();
+    let mut advance_max = 0u16;
+    for &g in &keep {
+        loca.push(glyf.len() as u32);
+        glyf.extend(remap_composite(s.glyphs[usize::from(g)], new_of));
+        while glyf.len() % 4 != 0 {
+            glyf.push(0);
+        }
+        let (advance, lsb) = s.metrics[usize::from(g)];
+        advance_max = advance_max.max(advance);
+        hmtx.extend(advance.to_be_bytes());
+        hmtx.extend(lsb.to_be_bytes());
+    }
+    loca.push(glyf.len() as u32);
+    let total = keep.len() as u16;
+    let cmap_of: BTreeMap<u32, u16> = chars_kept.into_iter().map(|(c, g)| (c, new_of(g))).collect();
+
+    let table = |tag: &[u8; 4]| s.table(tag).map(<[u8]>::to_vec);
+    let mut head = table(b"head").ok_or(Error::Missing(0, "head"))?;
+    head[50..52].copy_from_slice(&1i16.to_be_bytes());
+    head[8..12].copy_from_slice(&[0; 4]);
+    let mut hhea = table(b"hhea").ok_or(Error::Missing(0, "hhea"))?;
+    hhea[10..12].copy_from_slice(&advance_max.to_be_bytes());
+    hhea[34..36].copy_from_slice(&total.to_be_bytes());
+    let mut maxp = table(b"maxp").ok_or(Error::Missing(0, "maxp"))?;
+    maxp[4..6].copy_from_slice(&total.to_be_bytes());
+    let mut post = table(b"post").ok_or(Error::Missing(0, "post"))?;
+    post.truncate(32);
+    post.resize(32, 0);
+    post[0..4].copy_from_slice(&0x0003_0000u32.to_be_bytes());
+    let mut tables = vec![
+        (*b"head", head),
+        (*b"hhea", hhea),
+        (*b"maxp", maxp),
+        (*b"post", post),
+        (*b"glyf", glyf),
+        (*b"loca", loca.iter().flat_map(|o| o.to_be_bytes()).collect()),
+        (*b"hmtx", hmtx),
+        (*b"cmap", cmap(&cmap_of)),
+    ];
+    if let Some(t) = s.table(b"name") {
+        tables.push((*b"name", short_names(t)));
+    }
+    for tag in [b"OS/2", b"gasp", b"cvt ", b"fpgm", b"prep"] {
+        if let Some(t) = s.table(tag) {
+            tables.push((*tag, t.to_vec()));
+        }
+    }
+    Ok(assemble(tables))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_subset_keeps_what_it_was_asked_for() {
+        let Some(fonts) = excalifont() else {
+            eprintln!("Excalidraw fonts not installed; skipped");
+            return;
+        };
+        let full = ttf_parser::Face::parse(&fonts[0], 0).unwrap();
+        let small = subset(&fonts[0], "Hello, wörld".chars()).unwrap();
+        assert!(small.len() * 5 < fonts[0].len(), "{} of {}", small.len(), fonts[0].len());
+        let out = ttf_parser::Face::parse(&small, 0).expect("the subset parses");
+        assert_eq!(out.units_per_em(), full.units_per_em());
+        assert_eq!(out.number_of_glyphs() as usize, "Helo, wörd".chars().collect::<std::collections::BTreeSet<_>>().len() + 1);
+        for c in "Hello, wörld".chars() {
+            let (a, b) = (full.glyph_index(c).unwrap(), out.glyph_index(c).expect("kept"));
+            assert_eq!(full.glyph_hor_advance(a), out.glyph_hor_advance(b), "{c}");
+            assert_eq!(full.glyph_bounding_box(a), out.glyph_bounding_box(b), "{c}");
+        }
+        assert!(out.glyph_index('z').is_none());
+    }
 
     /// Excalifont's subsets from the Excalidraw package, decoded; skipped
     /// when `node_modules` is not there.
