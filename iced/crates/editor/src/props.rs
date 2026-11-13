@@ -182,7 +182,7 @@ impl Editor {
     /// none (`showSelectedShapeActions`).
     pub fn panel(&self) -> Option<Panel> {
         let tool = tool_name(self.tool);
-        let drawing = !matches!(self.tool, Tool::Selection | Tool::Hand);
+        let drawing = !matches!(self.tool, Tool::Selection | Tool::Hand | Tool::Eraser);
         if !drawing && self.editing.is_none() && self.selection.is_empty() {
             return None;
         }

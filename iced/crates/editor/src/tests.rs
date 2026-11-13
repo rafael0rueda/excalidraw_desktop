@@ -866,3 +866,36 @@ fn inserting_an_image_and_pasting_text() {
     assert_eq!(t.raw()["autoResize"], json!(false));
     assert!(!ed.paste_text("  \n ", [0.0, 0.0], 100.0), "nothing to paste");
 }
+
+#[test]
+fn the_eraser_marks_what_it_passes_and_deletes_on_release() {
+    let mut ed = empty();
+    let a = rect(&mut ed, 0.0, 0.0, 50.0, 50.0);
+    let b = rect(&mut ed, 100.0, 0.0, 50.0, 50.0);
+    let c = rect(&mut ed, 200.0, 0.0, 50.0, 50.0);
+    // a and b grouped: touching b takes a too.
+    ed.selection = vec![a.clone(), b.clone()];
+    ed.group();
+    ed.key(Key::Char('e'), NONE);
+    assert_eq!(ed.tool, Tool::Eraser);
+    ed.pointer_down([150.0, 25.0], NONE);
+    ed.pointer_move([150.0, 60.0], NONE);
+    assert_eq!(ed.erasing, HashSet::from([a.clone(), b.clone()]), "the group, marked");
+    ed.pointer_move([200.0, 25.0], NONE);
+    assert!(ed.erasing.contains(&c));
+    ed.pointer_move([210.0, 25.0], Modifiers { alt: true, ..NONE });
+    assert!(!ed.erasing.contains(&c), "Alt takes it back");
+    ed.pointer_up([210.0, 25.0], NONE);
+    assert!(ed.erasing.is_empty());
+    assert!(get(&ed, &a).is_deleted && get(&ed, &b).is_deleted);
+    assert!(!get(&ed, &c).is_deleted);
+    ed.undo();
+    assert!(!get(&ed, &a).is_deleted, "one undo brings them back");
+
+    // Escape erases nothing.
+    ed.pointer_down([225.0, 0.0], NONE);
+    assert!(ed.erasing.contains(&c));
+    ed.key(Key::Escape, NONE);
+    assert!(ed.erasing.is_empty());
+    assert!(!get(&ed, &c).is_deleted);
+}

@@ -33,6 +33,9 @@ pub struct Layers {
     chunk_of: HashMap<String, usize>,
     /// The canvas colour, which fills "outline" arrowheads.
     canvas_css: String,
+    /// What the eraser is over: drawn at a fifth of its opacity
+    /// (`ELEMENT_READY_TO_ERASE_OPACITY`).
+    pub dimmed: std::collections::HashSet<String>,
 }
 
 fn union(a: Option<Bounds>, b: Bounds) -> Option<Bounds> {
@@ -55,6 +58,7 @@ impl Layers {
             chunks: Vec::new(),
             chunk_of: HashMap::new(),
             canvas_css: canvas_css.to_owned(),
+            dimmed: Default::default(),
         };
         for e in scene.visible() {
             layers.prepare(scene, &e.id);
@@ -66,7 +70,10 @@ impl Layers {
     fn prepare(&mut self, scene: &Scene, id: &str) {
         match scene.by_id(id).filter(|e| !e.is_deleted) {
             Some(e) => {
-                let p = render::prepare(e, scene, &self.canvas_css);
+                let mut p = render::prepare(e, scene, &self.canvas_css);
+                if self.dimmed.contains(id) {
+                    p.opacity *= 0.2;
+                }
                 if e.image.is_some() && !self.images.contains_key(id) {
                     if let Some(h) = crate::images::decode(scene, e) {
                         self.images.insert(id.to_owned(), h);

@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 mod binding;
+mod erase;
 pub mod geometry;
 mod history;
 mod insert;
@@ -42,6 +43,7 @@ pub enum Tool {
     Line,
     FreeDraw,
     Text,
+    Eraser,
 }
 
 impl Tool {
@@ -112,6 +114,10 @@ enum Gesture {
         id: String,
         origin: Point,
     },
+    /// The eraser, from where the pointer last was.
+    Erase {
+        last: Point,
+    },
     /// Dragging one point of a line or arrow.
     Point {
         id: String,
@@ -158,6 +164,9 @@ pub struct Editor {
     pub font_family: f64,
     pub font_size: f64,
     pub text_align: String,
+    /// What the eraser has passed over, to be deleted when it is released;
+    /// drawn faded meanwhile.
+    pub erasing: HashSet<String>,
     /// Ctrl+Alt+C's element, and its label: what Ctrl+Alt+V pastes.
     copied_styles: Option<(Element, Option<Element>)>,
     measure: Box<dyn Measure>,
@@ -211,6 +220,7 @@ impl Editor {
             font_family: 5.0,
             font_size: 20.0,
             text_align: "left".into(),
+            erasing: HashSet::new(),
             copied_styles: None,
             measure: Box::new(Approx),
         }
@@ -466,6 +476,10 @@ impl Editor {
             }
             return;
         }
+        if self.tool == Tool::Eraser {
+            self.erase_start(p, m);
+            return;
+        }
         if let Some(kind) = self.tool.element_type() {
             self.begin();
             let mut raw = new_element(kind, p[0], p[1], &self.style);
@@ -559,6 +573,13 @@ impl Editor {
 
     pub fn pointer_move(&mut self, p: Point, m: Modifiers) {
         match self.gesture.take() {
+            Some(Gesture::Erase { last }) => {
+                // The release repeats the last point: nothing new there.
+                if p != last {
+                    self.erase_over(last, p, m);
+                }
+                self.gesture = Some(Gesture::Erase { last: p });
+            }
             Some(Gesture::Marquee { start, base }) => {
                 let b = [
                     start[0].min(p[0]),
@@ -739,6 +760,7 @@ impl Editor {
                     self.tool = Tool::Selection;
                 }
             }
+            Some(Gesture::Erase { .. }) => self.erase_end(),
             Some(Gesture::Marquee { .. }) | None => {}
             Some(Gesture::Point { id, index }) => {
                 // An arrow's end let go onto a shape binds to it.
@@ -789,6 +811,13 @@ impl Editor {
 
     /// Escape in the middle of a gesture: everything goes back.
     pub fn cancel_gesture(&mut self) {
+        if matches!(self.gesture, Some(Gesture::Erase { .. })) {
+            // Escape: nothing is erased.
+            self.gesture = None;
+            let ids: Vec<String> = std::mem::take(&mut self.erasing).into_iter().collect();
+            self.changes.ids.extend(ids);
+            return;
+        }
         if self.gesture.take().is_some() {
             self.marquee = None;
             let ids: Vec<String> = self.scene.order();
@@ -866,6 +895,7 @@ impl Editor {
                     'l' | '6' => Tool::Line,
                     'p' | '7' => Tool::FreeDraw,
                     't' | '8' => Tool::Text,
+                    'e' | '0' => Tool::Eraser,
                     'h' => Tool::Hand,
                     'q' => {
                         self.tool_locked = !self.tool_locked;

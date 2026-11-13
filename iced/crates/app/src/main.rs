@@ -487,6 +487,9 @@ impl App {
             }
             tab.themed = Some(wanted);
         }
+        if tab.doc.layers.dimmed != tab.doc.editor.erasing {
+            tab.doc.layers.dimmed = tab.doc.editor.erasing.clone();
+        }
         tab.doc.layers.apply(&tab.doc.editor.scene, changes);
         tab.doc.editor.zoom = f64::from(tab.view.zoom);
         let editing = tab.doc.editor.editing_text().map(|(e, typed)| (e.id.clone(), typed));

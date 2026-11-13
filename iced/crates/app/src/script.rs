@@ -51,6 +51,7 @@ pub fn run(editor: &mut Editor, text: &str) -> Result<(), String> {
                     Some("arrow") => Tool::Arrow,
                     Some("line") => Tool::Line,
                     Some("draw") => Tool::FreeDraw,
+                    Some("eraser") => Tool::Eraser,
                     Some("selection") => Tool::Selection,
                     other => return Err(format!("line {n}: unknown tool {other:?}")),
                 }
