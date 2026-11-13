@@ -48,6 +48,7 @@ mod theme;
 mod theme_editor;
 mod toolbar;
 mod view;
+mod window_state;
 mod zoom;
 
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -183,6 +184,8 @@ pub enum Message {
     Context(context_menu::Action),
     /// The zoom buttons, and their keys.
     Zoom(zoom::Zoom),
+    /// The window's size, and whether it is maximized.
+    WindowState(Size, bool),
     /// Ctrl+K, and the link editor's field as typed.
     EditLink,
     LinkDraft(String),
@@ -231,6 +234,9 @@ pub struct App {
     bar: f32,
     /// Whether the window has said its real size yet.
     sized: bool,
+    /// The window's size when not maximized, and whether it is: saved on
+    /// the way out (not in development runs).
+    window: Option<window_state::WindowState>,
     recent: Vec<RecentEntry>,
     prompt: Option<Prompt>,
     menu: Option<Menu>,
@@ -306,6 +312,7 @@ impl App {
             size: Size::new(WINDOW.width, WINDOW.height - bar),
             bar,
             sized: false,
+            window: None,
             recent: Vec::new(),
             prompt: None,
             menu: None,
@@ -750,6 +757,9 @@ impl App {
                 let discarded = self.quitting.take().map(|q| q.discarded).unwrap_or_default();
                 session::end(self, &discarded);
                 instance::release();
+                if let Some(w) = self.window {
+                    let _ = window_state::save(w);
+                }
                 iced::exit()
             }
         }
@@ -840,14 +850,14 @@ impl App {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         // While a question is up, it is the only thing that can be answered.
-        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::LinkDraft(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_))) {
+        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::LinkDraft(_) | Message::Key(_) | Message::Resized(_) | Message::WindowState(..) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_))) {
             return Task::none();
         }
         // The menu closes on anything done in the window (a click outside it
         // only closes it), not on the clocks or the pointer passing over.
         let action = !matches!(
             message,
-            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Input(Input::Move(..))
+            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::WindowState(..) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Input(Input::Move(..))
         );
         if self.menu.is_some() && action {
             self.menu = None;
@@ -991,10 +1001,14 @@ impl App {
                     session::tick(self, now);
                 }
             }
-            Message::Resized(size) => {
+            Message::WindowState(size, maximized) => {
+                let normal = self.window.map_or(size, |w| w.size);
+                self.window = Some(window_state::WindowState { size: if maximized { normal } else { size }, maximized });
+            }
+            Message::Resized(window_size) => {
                 let first = !self.sized;
                 self.sized = true;
-                let size = Size::new(size.width, (size.height - self.bar).max(1.0));
+                let size = Size::new(window_size.width, (window_size.height - self.bar).max(1.0));
                 self.size = size;
                 if first {
                     let zoom = self.zoom;
@@ -1006,6 +1020,10 @@ impl App {
                     if let Some(b) = &mut self.bench {
                         b.base = view;
                     }
+                }
+                if !self.dev {
+                    // Is it maximized? Only an ordinary size is remembered as one.
+                    return window::latest().and_then(window::is_maximized).map(move |m| Message::WindowState(window_size, m));
                 }
             }
             Message::Shot(shot) => {
@@ -1309,6 +1327,7 @@ fn main() -> iced::Result {
     }
     // Held until the app exits: the kernel lets go of it if the app dies.
     let mut _lock = None;
+    let mut window_state = None;
     if !args.dev() {
         use excalidraw_desktop_core::{files, store};
         store::set_app_dir(APP_DIR);
@@ -1326,6 +1345,7 @@ fn main() -> iced::Result {
         // light theme first. No portal: light, as the Tauri app assumes.
         args.system_dark = mundy::Preferences::once_blocking(mundy::Interest::ColorScheme, Duration::from_millis(300))
             .is_some_and(|p| p.color_scheme == mundy::ColorScheme::Dark);
+        window_state = window_state::load();
         // What a run that died mid-write left behind; nothing writes yet.
         for dir in ["", "session", "themes"] {
             files::sweep_temp_files(&store::config_dir().join(dir));
@@ -1336,7 +1356,9 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .theme(App::theme)
         .window(window::Settings {
-            size: WINDOW,
+            // As it was left last time.
+            size: window_state.map_or(WINDOW, |w| w.size),
+            maximized: window_state.is_some_and(|w| w.maximized),
             // X11 shows this; Wayland takes the icon from the .desktop file.
             icon: window::icon::from_file_data(include_bytes!("../../../../src-tauri/icons/128x128.png"), None).ok(),
             platform_specific: window::settings::PlatformSpecific { application_id: APP_ID.into(), ..Default::default() },
