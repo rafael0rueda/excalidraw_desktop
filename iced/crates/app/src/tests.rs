@@ -272,5 +272,53 @@ fn files_tabs_autosave_recovery_and_quit() {
     let svg = String::from_utf8(app.job(false).unwrap().bytes(Kind::Svg).unwrap()).unwrap();
     assert!(svg.contains(r##"fill="#282a36"/>"##) && export::decode_svg(&svg).is_some());
 
+    // The library: a first run starts with the ER shapes; sets merge
+    // without doubles; it is all saved where the Tauri app keeps it.
+    use library::{Msg, Set};
+    let lib_file = dir.join("library.excalidrawlib");
+    assert_eq!(app.library.items.len(), 15);
+    assert!(!lib_file.exists(), "nothing written until something changes");
+    send(&mut app, Message::Library(Msg::AddSet(Set::Er)));
+    assert_eq!(app.library.items.len(), 15, "already there");
+    send(&mut app, Message::Library(Msg::AddSet(Set::Wave)));
+    assert_eq!(app.library.items.len(), 44);
+    assert!(app.library.open);
+    let saved = library::parse(&std::fs::read_to_string(&lib_file).unwrap()).unwrap();
+    assert_eq!(saved.len(), 44);
+    assert_eq!(library::name(&saved[0]), Some("Kanagawa Wave · Table"), "new items first");
+    // An item goes on the drawing as new elements, selected.
+    let before = app.tab().doc.editor.scene.visible().count();
+    let first = library::id(&app.library.items[0]).to_owned();
+    send(&mut app, Message::Library(Msg::Insert(first.clone())));
+    let added = app.tab().doc.editor.scene.visible().count() - before;
+    assert!(added > 1 && app.tab().doc.editor.selection.len() == added);
+    // The selection back into the library, as a new item.
+    send(&mut app, Message::Library(Msg::AddSelection));
+    assert_eq!(app.library.items.len(), 45);
+    // Removing asks first.
+    send(&mut app, Message::Library(Msg::Remove(first.clone())));
+    assert!(matches!(app.prompt, Some(Prompt::RemoveLibraryItem { .. })));
+    send(&mut app, Message::Answer(Answer::Confirm));
+    assert_eq!(app.library.items.len(), 44);
+    assert_eq!(library::parse(&std::fs::read_to_string(&lib_file).unwrap()).unwrap().len(), 44);
+    // An old (version 1) library file imports; a broken one says why.
+    let v1 = tmp.join("old.excalidrawlib");
+    std::fs::write(&v1, r#"{"type":"excalidrawlib","version":1,"library":[[{"type":"rectangle","id":"x","x":0,"y":0,"width":10,"height":10}]]}"#).unwrap();
+    let bad = tmp.join("bad.excalidrawlib");
+    std::fs::write(&bad, "{").unwrap();
+    send(&mut app, Message::Library(Msg::Imported(vec![v1, bad])));
+    assert_eq!(app.library.items.len(), 45);
+    assert!(matches!(&app.prompt, Some(Prompt::Error(e)) if e.contains("bad.excalidrawlib")));
+    send(&mut app, Message::Answer(Answer::Cancel));
+    // A library file that cannot be read is never written over.
+    std::fs::write(&lib_file, "not json").unwrap();
+    let (broken, problem) = library::Library::load(true);
+    assert!(problem.is_some() && broken.items.is_empty());
+    app.library = broken;
+    send(&mut app, Message::Library(Msg::AddSet(Set::Lotus)));
+    assert_eq!(app.library.items.len(), 29, "added, in memory");
+    assert_eq!(std::fs::read_to_string(&lib_file).unwrap(), "not json");
+    assert!(app.status.as_deref().is_some_and(|s| s.contains("not saved")), "{:?}", app.status);
+
     let _ = std::fs::remove_dir_all(&tmp);
 }

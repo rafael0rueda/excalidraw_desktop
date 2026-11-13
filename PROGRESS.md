@@ -17,6 +17,9 @@ recovery, CLI args, single instance) is done; it keeps its own config dir,
 `~/.config/excalidraw-desktop-iced`.
 Phase 5 (themes: ten presets, user themes, theme editor, follow system) is
 done.
+Phase 6 (Export menu: PNG, SVG, copy image, embedded drawing; the Library
+panel with the ER and Kanagawa ERD sets, `.excalidrawlib` import/export) is
+done. Next: phase 7 (packaging), only when asked.
 
 ## Decisions already made (do not re-litigate)
 

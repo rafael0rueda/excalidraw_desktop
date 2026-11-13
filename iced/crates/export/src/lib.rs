@@ -480,7 +480,13 @@ impl Export<'_> {
 
     /// The image at `scale` pixels per drawing unit, premultiplied.
     fn pixmap(&self, scale: f64) -> Result<resvg::tiny_skia::Pixmap, Error> {
+        self.pixmap_by(|_, _| scale)
+    }
+
+    /// The image at the scale `scale` picks for its size in drawing units.
+    fn pixmap_by(&self, scale: impl Fn(f64, f64) -> f64) -> Result<resvg::tiny_skia::Pixmap, Error> {
         let (svg, w, h) = self.write(Mode::Raster, None)?;
+        let scale = scale(w, h);
         // `getExportSize`: truncated.
         let (pw, ph) = ((w * scale).trunc().max(1.0), (h * scale).trunc().max(1.0));
         let too_large = Error::TooLarge { width: pw as u32, height: ph as u32 };
@@ -544,15 +550,25 @@ impl Export<'_> {
     /// The image as straight (not premultiplied) RGBA: for the clipboard,
     /// and for pictures of library items.
     pub fn rgba(&self, scale: f64) -> Result<(u32, u32, Vec<u8>), Error> {
-        let pixmap = self.pixmap(scale)?;
-        let (w, h) = (pixmap.width(), pixmap.height());
-        let mut data = Vec::with_capacity(pixmap.data().len());
-        for p in pixmap.pixels() {
-            let c = p.demultiply();
-            data.extend([c.red(), c.green(), c.blue(), c.alpha()]);
-        }
-        Ok((w, h, data))
+        Ok(straight(self.pixmap(scale)?))
     }
+
+    /// A picture at most `side` pixels wide and high, never enlarged past
+    /// `max_scale`: a library item's.
+    pub fn thumbnail(&self, side: f64, max_scale: f64) -> Result<(u32, u32, Vec<u8>), Error> {
+        Ok(straight(self.pixmap_by(|w, h| (side / w).min(side / h).min(max_scale))?))
+    }
+}
+
+/// Premultiplied pixels made straight RGBA.
+fn straight(pixmap: resvg::tiny_skia::Pixmap) -> (u32, u32, Vec<u8>) {
+    let (w, h) = (pixmap.width(), pixmap.height());
+    let mut data = Vec::with_capacity(pixmap.data().len());
+    for p in pixmap.pixels() {
+        let c = p.demultiply();
+        data.extend([c.red(), c.green(), c.blue(), c.alpha()]);
+    }
+    (w, h, data)
 }
 
 const FRAME_RADIUS: f64 = 8.0;

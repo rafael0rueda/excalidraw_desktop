@@ -30,6 +30,7 @@ mod exporting;
 mod images;
 mod instance;
 mod layers;
+mod library;
 mod measure;
 mod paint;
 mod script;
@@ -166,6 +167,7 @@ pub enum Message {
     Exported(Result<String, String>),
     CopyImage,
     ExportChoice(exporting::Choice),
+    Library(library::Msg),
 }
 
 /// A question the app is waiting on.
@@ -178,6 +180,7 @@ pub enum Prompt {
     /// Leaving a theme draft unsaved; `then` is what was asked for.
     DiscardTheme { name: String, then: theme_editor::Edit },
     DeleteTheme { name: String },
+    RemoveLibraryItem { id: String, name: String },
 }
 
 /// A quit in progress: which tabs have been asked about, and which of them
@@ -230,6 +233,7 @@ pub struct App {
     pointer: [f64; 2],
     status: Option<String>,
     export_prefs: excalidraw_desktop_core::settings::ExportPreferences,
+    library: library::Library,
 }
 
 /// The text box's widget id, to focus it when typing starts.
@@ -290,12 +294,18 @@ impl App {
             pointer: [0.0, 0.0],
             status: None,
             export_prefs: Default::default(),
+            library: library::Library::load(false).0,
         };
         if app.dev {
             app.boot_dev(&args);
         } else {
             app.boot_session(&args);
             app.load_export_preferences();
+            let (library, problem) = library::Library::load(true);
+            app.library = library;
+            if let (Some(p), None) = (problem, &app.prompt) {
+                app.prompt = Some(Prompt::Error(p));
+            }
         }
         let task = app.sync();
         (app, task)
@@ -383,6 +393,11 @@ impl App {
             Some(p) => p.paintable(),
             None => self.themes.chosen(),
         }
+    }
+
+    /// The canvas colour on screen, as CSS.
+    fn look_canvas_css(&self) -> String {
+        self.active_theme().colors.canvas
     }
 
     pub fn look(&self) -> theme::Look {
@@ -731,6 +746,12 @@ impl App {
                 }
                 Task::none()
             }
+            Some(Prompt::RemoveLibraryItem { id, .. }) => {
+                if answer == Answer::Confirm {
+                    self.remove_library_item(&id);
+                }
+                Task::none()
+            }
             Some(Prompt::Error(_) | Prompt::Info(_)) | None => Task::none(),
         }
     }
@@ -742,14 +763,14 @@ impl App {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         // While a question is up, it is the only thing that can be answered.
-        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_)) {
+        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_))) {
             return Task::none();
         }
         // The menu closes on anything done in the window (a click outside it
         // only closes it), not on the clocks or the pointer passing over.
         let action = !matches!(
             message,
-            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Input(Input::Move(..))
+            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Input(Input::Move(..))
         );
         if self.menu.is_some() && action {
             self.menu = None;
@@ -848,6 +869,7 @@ impl App {
             Message::Exported(result) => self.exported(result),
             Message::CopyImage => return self.copy_image(),
             Message::ExportChoice(c) => self.export_choice(c),
+            Message::Library(m) => return self.library(m),
             Message::Quit => return self.quit(),
             Message::Answer(a) => return self.answer(a),
             Message::Autosave(now) => {
@@ -925,6 +947,10 @@ impl App {
                     }
                     if self.panel.is_some() {
                         self.theme_edit(theme_editor::Edit::Close, false);
+                        return Task::none();
+                    }
+                    if self.library.open {
+                        self.library.open = false;
                         return Task::none();
                     }
                 }
@@ -1022,12 +1048,14 @@ impl App {
         }
         let status = text(self.status.clone().unwrap_or_default()).size(12).color(look.muted);
         // Centred in what the theme editor leaves of the drawing.
-        let beside = if self.panel.is_some() { theme_editor::WIDTH } else { 0.0 };
+        let beside = if self.panel.is_some() || self.library.open { theme_editor::WIDTH } else { 0.0 };
         let top = column![toolbar::toolbar(look, &d.editor), container(status).padding(iced::Padding { top: 0.0, right: 8.0, bottom: 8.0, left: 8.0 })].width(Length::Fill);
         layers = layers.push(container(top).padding(iced::Padding { right: beside, ..iced::Padding::ZERO }));
         if let Some(panel) = &self.panel {
             // Takes the pointer over it; the drawing beside it stays live.
             layers = layers.push(theme_editor::view(self, panel));
+        } else if self.library.open {
+            layers = layers.push(library::view(self));
         }
         let mut window = stack![column![chrome::tab_bar(self), layers].height(Length::Fill)];
         match self.menu {

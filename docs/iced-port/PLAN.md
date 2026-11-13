@@ -285,7 +285,8 @@ Kept or added:
 | 3 | Text and arrows | **Done** 2026-11-12 (results below) |
 | 4 | Files, tabs, session | **Done** 2026-11-12 (results below) |
 | 5 | Themes | **Done** 2026-11-12 (results below) |
-| 6–8 | | Not started |
+| 6 | Export + library | **Done** 2026-11-13 (results below) |
+| 7–8 | | Not started |
 
 ### Phase 2 result, 2026-11-11
 
@@ -510,3 +511,90 @@ Checked:
 81 tests in the workspace. The tool bar still has text labels; icons are
 part of the parity work (phase 8).
 
+### Phase 6 result, 2026-11-13
+
+**Export** (`crates/export`, no UI dependencies; `app/src/exporting.rs`):
+
+- The **Export menu** as the Tauri app has it: Export PNG… (Ctrl+Shift+E),
+  Export selection as PNG…, Export SVG…, Copy image to clipboard
+  (Ctrl+Shift+C), and the three remembered choices in core's
+  `export.json`: transparent background, embed drawing, PNG scale 1–3×.
+  Exports are suggested beside the drawing and run on a thread of their own.
+  "The selection" is the Tauri app's `expandSelection`: labels and what is
+  inside a selected frame come with it.
+- **SVG** is written from `render::prepare`, the same paint operations as
+  the canvas, in `exportToSvg`'s structure:
+  - `svg-source:excalidraw`, `PADDING` 10, the canvas rectangle;
+  - one group per element, `translate … rotate …`;
+  - frames clip their children, arrow labels are masked out of their arrows;
+  - images inline, cropped and flipped;
+  - links kept only for http(s) and mailto.
+- **Fonts in the SVG** are inline subsets, as Excalidraw's are: only the
+  characters used (`fontmerge::subset`, TrueType, licence text left out of
+  the `name` table). Unlike Excalidraw's, they have no kerning: renumbering
+  glyphs drops the layout tables. Chromium shows the exported SVGs with the
+  right fonts.
+- **PNG** is that SVG drawn by resvg 0.50 (tiny-skia, already in the tree
+  through iced), with the bundled fonts only, never the system's, so a PNG
+  is the same on every machine:
+  - Size: `getExportSize`, truncated. Refused above 16384 px a side or
+    120 Mpx.
+  - Images inside a drawing can only be `data:` URLs (the href resolver
+    refuses files).
+  - resvg's font fallback set a whole line in Excalifont when a character
+    was missing (`shape_text` replaces every glyph when the fallback covers
+    them all). It now gets a subset of only the missing characters, under a
+    name of its own, and falls back one character at a time, as a browser
+    does.
+- **The embedded drawing** is byte-compatible with Excalidraw 0.18.1:
+  - zlib-deflated, as a byte string;
+  - `{"version":"1","encoding":"bstring","compressed":true,…}`;
+  - a `tEXt` chunk in a PNG, payload version 2 base64 in an SVG.
+
+  Checked with Excalidraw's own decoding steps in Node (pako,
+  png-chunk-text), non-ASCII text included.
+- **Copy image** goes through arboard, because iced's clipboard is text
+  only. On GNOME Wayland that is X11 through XWayland, which Mutter hands to
+  Wayland apps: checked with `wl-paste` (`cargo test -- --ignored
+  clipboard`).
+- `--export OUT.png|OUT.svg DRAWING` exports without a window (`SCALE=`,
+  `TRANSPARENT=1`, `EMBED=1`, `--theme`).
+
+**Library** (`app/src/library.rs`), as `src/lib/library.ts`:
+
+- **Storage:** core's `library.excalidrawlib`, written as the Tauri app
+  writes it.
+- **First launch:** starts with the ER shapes. A file that cannot be read is
+  never written over; the app says so.
+- **Sets:** the ER set and the Kanagawa ERD Wave, Dragon and Lotus sets are
+  bundled. They are added with `mergeLibraryItems`'s rule (same element ids
+  and `versionNonce` = already there; new items first).
+- **Import:** `.excalidrawlib`, versions 1 and 2. **Export:** the whole
+  library.
+- **Panel:** a panel down the right, one at a time with the theme editor.
+  Each item is a picture, drawn by the exporter on another thread, with its
+  name as a tooltip.
+  - A click puts a copy in the middle of the view: new ids, groups and
+    seeds, with bindings kept. This shares the code paste uses
+    (`Editor::insert`).
+  - × removes an item, after asking.
+  - Add selection adds the selection with its labels and frame contents.
+- Not done: dragging an item onto the canvas, and selecting several items
+  at once.
+
+Checked:
+
+- **Tests:**
+  - export unit tests: size and markers, every element kind, font subsets,
+    the embedded drawing in both formats, a selection with its files, scale
+    and colours by pixel, too large, escaping, frame clipping, label masks;
+  - the app flow test extended with the export choices, the selection
+    rule, the embedded canvas colour, and the library: seed, merge without
+    doubles, insert, add selection, remove, version 1 import, a broken
+    import, and an unreadable file left alone.
+- **By eye:**
+  - PNGs of real drawings, all bundled fonts, CJK fallback, arrow labels;
+  - the exported SVG in headless Chromium;
+  - screenshots of the Export menu and the Library panel.
+
+92 tests in the workspace, one more by hand (the desktop clipboard).

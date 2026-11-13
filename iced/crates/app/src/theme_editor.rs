@@ -115,6 +115,8 @@ impl App {
         if let Edit::Open = edit {
             if self.panel.is_none() {
                 self.panel = Some(Panel::new(self.themes.chosen()));
+                // One panel down the right at a time.
+                self.library.open = false;
             }
             return;
         }

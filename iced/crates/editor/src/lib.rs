@@ -1827,6 +1827,17 @@ impl Editor {
         let Some(Value::Array(items)) = data.get("elements") else {
             return false;
         };
+        let files = match data.get("files") {
+            Some(Value::Object(files)) => Some(files.clone()),
+            _ => None,
+        };
+        self.insert(items, files.as_ref(), at)
+    }
+
+    /// Copies of `items` (Excalidraw elements) added on top, centred on
+    /// `at` and selected: a paste, or a library item put on the canvas.
+    /// New ids, groups and seeds; bindings kept between the copies.
+    pub fn insert(&mut self, items: &[Value], files: Option<&Map<String, Value>>, at: Point) -> bool {
         let raws: Vec<Map<String, Value>> = items
             .iter()
             .filter_map(|v| v.as_object().cloned())
@@ -1843,10 +1854,8 @@ impl Editor {
         let c = geometry::center(b);
         let offset = [at[0] - c[0], at[1] - c[1]];
         self.begin();
-        if let Some(Value::Object(files)) = data.get("files") {
-            for (id, f) in files {
-                self.scene.add_file(id, f.clone());
-            }
+        for (id, f) in files.into_iter().flatten() {
+            self.scene.add_file(id, f.clone());
         }
         let mut new = Vec::new();
         for raw in Self::copies(&raws, offset) {
@@ -1857,6 +1866,17 @@ impl Editor {
         self.commit();
         self.selection = new;
         true
+    }
+
+    /// The selection's elements as they are, labels and framed elements
+    /// included, bottom first: what "Add to library" keeps.
+    pub fn selected_elements(&self) -> Vec<Value> {
+        let ids = self.export_selection();
+        self.scene
+            .visible()
+            .filter(|e| ids.contains(&e.id))
+            .map(|e| Value::Object(e.raw().clone()))
+            .collect()
     }
 }
 

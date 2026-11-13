@@ -189,7 +189,8 @@ pub fn tab_bar(app: &App) -> Element<'_, Message> {
     tabs = tabs.push(button(small("+")).on_press(Message::NewTab).style(chip(look, false)).padding([5, 10]));
     let menu = |label: &str, m: Menu| button(small(label.to_owned())).on_press(Message::ToggleMenu(m)).style(chip(look, app.menu == Some(m))).padding([5, 10]);
     // Everything sits on the bottom edge, where the open tab joins the drawing.
-    let bar = row![menu("File", Menu::File), menu("Export", Menu::Export), menu("Theme", Menu::Theme), Space::new().width(8), tabs].spacing(2).align_y(Alignment::End).height(Length::Fill);
+    let library = button(small("Library")).on_press(Message::Library(crate::library::Msg::Toggle)).style(chip(look, app.library.open)).padding([5, 10]);
+    let bar = row![menu("File", Menu::File), menu("Export", Menu::Export), menu("Theme", Menu::Theme), Space::new().width(8), tabs, Space::new().width(Length::Fill), library].spacing(2).align_y(Alignment::End).height(Length::Fill);
     let bar = container(bar).padding(iced::Padding { top: 0.0, right: 8.0, bottom: 0.0, left: 8.0 }).width(Length::Fill).height(Length::Fill);
     // A line under it, for themes whose panels and canvas are one colour.
     container(column![bar, rule(look)])
@@ -306,6 +307,7 @@ pub fn prompt<'a>(look: Look, prompt: &Prompt) -> Element<'a, Message> {
         Prompt::Error(e) | Prompt::Info(e) => (e.clone(), vec![("OK", Answer::Cancel)]),
         Prompt::DiscardTheme { name, .. } => (format!("\"{name}\" has unsaved changes. Discard them?"), vec![("Discard", Answer::Discard), ("Keep editing", Answer::Cancel)]),
         Prompt::DeleteTheme { name, .. } => (format!("Delete \"{name}\"?"), vec![("Delete", Answer::Confirm), ("Keep", Answer::Cancel)]),
+        Prompt::RemoveLibraryItem { name, .. } => (format!("Remove \"{name}\" from the library?"), vec![("Remove", Answer::Confirm), ("Keep", Answer::Cancel)]),
     };
     let mut row = row![Space::new().width(Length::Fill)].spacing(8);
     for (i, (label, answer)) in buttons.into_iter().enumerate() {
