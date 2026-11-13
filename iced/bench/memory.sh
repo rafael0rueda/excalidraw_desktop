@@ -5,9 +5,11 @@
 #
 #   sh iced/bench/memory.sh [SCENE...]
 #
-# The Tauri app gets a throwaway config directory, so the real session and
-# autosave are not touched. It is refused while Excalidraw Desktop is open:
-# its single-instance plugin would hand the drawing to that window instead.
+# Both apps get a throwaway config directory, so the real sessions and
+# autosave are not touched; for the iced app that also keeps it from handing
+# the drawing to a copy already open. The Tauri app's single-instance plugin
+# goes through D-Bus instead, so the script refuses to run while Excalidraw
+# Desktop is open.
 set -eu
 cd "$(dirname "$0")/.."
 tauri=../src-tauri/target/release/excalidraw-desktop
@@ -28,11 +30,14 @@ if pgrep -x excalidraw-desk >/dev/null; then
 fi
 for s in $scenes; do
   drawing=$(realpath "target/bench/$s.excalidraw")
-  ./target/release/excalidraw-iced "$drawing" >/dev/null 2>&1 &
+  config=$(mktemp -d)
+  XDG_CONFIG_HOME=$config ./target/release/excalidraw-iced "$drawing" >/dev/null 2>&1 &
   pid=$!
   sleep 6
   echo "$s: iced $(pss_tree $pid) MB"
   kill $pid
+  sleep 1
+  rm -rf "$config"
   config=$(mktemp -d)
   XDG_CONFIG_HOME=$config "$tauri" "$drawing" >/dev/null 2>&1 &
   pid=$!

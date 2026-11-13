@@ -1,7 +1,8 @@
 # Iced port — plan
 
 Branch: `iced-port` (from `main` at 75225c2). Written 2026-11-11.
-Status: **plan only, nothing built yet.**
+Status: phases 0–8 done; the phase 8 review found the editor short of
+parity (see the end of this file).
 
 ## Goal
 
@@ -287,7 +288,7 @@ Kept or added:
 | 5 | Themes | **Done** 2026-11-12 (results below) |
 | 6 | Export + library | **Done** 2026-11-13 (results below) |
 | 7 | Packaging | **Done** 2026-11-13 (results below) |
-| 8 | | Not started |
+| 8 | Parity review | **Done** 2026-11-13: not at parity, recommendation keep both and continue (phases 9–11); decision pending |
 
 ### Phase 2 result, 2026-11-11
 
@@ -670,3 +671,118 @@ Checked:
   its window and draws with Vulkan.
 - **Not done here:** installing the RPM on this machine (it needs root) and
   checking that GNOME shows the icon. Per decision 2, nothing is published.
+
+### Phase 8 result, 2026-11-13: parity review
+
+**Verdict: not at parity.** Everything the README lists as what this app
+*adds* to Excalidraw is there, apart from a few shortcuts. The gap is the
+editor itself: in the Tauri app that is Excalidraw 0.18.1, and the Iced
+build has rebuilt only its core. Most of all, there is **no properties
+panel**: a drawn element's colour, fill, stroke, font or opacity cannot be
+changed. Decision 2 says the Iced build does not ship until the feature work
+is done, so it cannot replace the Tauri app yet.
+
+#### Benchmarks, re-run today
+
+Today's release build against Excalidraw 0.18.1 in WebKitGTK, with the
+phase 1 method (`iced/bench/run.sh 10`, `iced/bench/memory.sh`), on the same
+machine:
+
+| Scene | Metric | Iced (phase 1) | Iced (today) | Excalidraw (WebKitGTK) | Today vs Excalidraw |
+|---|---|---|---|---|---|
+| 10k | pan, mean / p95 | 8.1 / 9.6 ms (123 fps) | 8.6 / 11.1 ms (116 fps) | 35.7 / 43 ms (28 fps) | **4.1×** |
+| 10k | zoom, mean / p95 | 11.9 / 13.5 ms (84 fps) | 14.6 / 26.4 ms (69 fps) | 26.4 / 80 ms (38 fps) | **1.8×** |
+| 10k | CPU per frame, all processes | 5.6 ms | 6.5 ms | 34.6 ms | 5.3× |
+| 2k | pan / zoom | 179 / 173 fps | 179 / 138 fps | 59 / 43 fps | |
+| 2k | CPU per frame | 1.3 ms | 2.4 ms | 19.8 ms | 8× |
+| small | CPU per frame | 0.4 ms | 0.5 ms | 3.2 ms | 6× |
+| 10k | memory (PSS, all processes) | 170 MB | 201 MB | 780 MB (Tauri app) | **26%** |
+| 2k | memory | 63 MB | 78 MB | 489 MB (Tauri app) | 16% |
+| small | memory | 45 MB | 45 MB | 266 MB (Tauri app) | 17% |
+| 10k / 2k / small | start to drawing | 235 / 90 / 59 ms | 288 / 91 / 52 ms | 526 / 415 / 505 ms¹ | **2–10×** |
+| | package (rpm) | | 35.8 MB | 17.7 MB, plus WebKitGTK and GTK 3 | |
+| | oldest glibc | | 2.35 (Debian 12, Ubuntu 22.04) | 2.39 (Fedora 44) | |
+
+¹ As in phase 1: WebView creation to "scene loaded", without the Tauri shell.
+
+Since phase 1, zooming at 10k has dropped from 84 to 69 fps. Phase 3
+measured the same drop, and the likely cause is text re-rasterised from the
+merged 42 000-glyph Excalifont. Memory at 10k grew by 31 MB, from the merged
+fonts and the editor's state. Measured against the gate, memory (at most
+half) and start time (faster) still pass, and so does panning at 10k. Zooming
+at 10k no longer does: it is 1.8× better, and the gate asked for 2×. That is
+work for the renderer (W1), not a reason to stop. The
+package is twice the Tauri one, mostly Excalifont with Xiaolai, but it
+needs no web engine.
+
+#### Checklist: the README's "What this adds"
+
+| README item | Iced build |
+|---|---|
+| Tabs, own view per tab, unsaved dot | ✅ Undo history is kept per tab; the Tauri app clears it on a switch |
+| `Ctrl+Tab`, `Ctrl+1`…`Ctrl+9` | ✅ |
+| `Ctrl+T`, `Ctrl+PageDown`/`PageUp` | ❌ Only `Ctrl+N` and `Ctrl+Tab` |
+| Real files, desktop dialogs, atomic writes | ✅ |
+| Open Recent (ten) | ✅ Same file and rules |
+| Double-click in the file manager, several files into tabs, CLI args | ✅ Tested in containers; not yet installed on this desktop |
+| Runs once, a second launch hands over its files | ✅ |
+| Snapshots of every tab, recovery after a crash, reopen after a quit | ✅ |
+| Ten themes, theme editor, user themes as JSON, follow system | ✅ The colour chooser is in-app sliders instead of the desktop's |
+| ER shapes from the first launch; Kanagawa ERD Wave/Dragon/Lotus | ✅ |
+| Shortcuts follow the keyboard layout (AZERTY) | ✅ Logical keys |
+| …and fall back to the key's position on Cyrillic or Greek | ❌ Shortcuts read only the logical key |
+| Native menu bar | ➖ In-app menus (File, Export, Theme), as W4 planned |
+| Bundled fonts, no network, no account | ✅ |
+| Links open in the system browser | ❌ Links are kept in the file and in SVG, but cannot be followed or edited |
+| Embedded web content as a placeholder | ✅ |
+| Export: PNG, selection PNG, SVG, clipboard; the three choices | ✅ Compatible with Excalidraw's embedded format |
+| Library saved between launches, import/export | ✅ Neither dragging an item onto the canvas nor selecting several works yet |
+| Window size and position remembered | ❌ Always opens at the default size |
+
+The Tauri app's known limitations that do not exist here: the grid colour
+and the colour-picker palette can no longer be wrong, because there is no
+grid and no palette yet. The window title is set by iced, but whether it
+updates on GNOME Wayland has not been checked.
+
+#### Checklist: the editor (Excalidraw 0.18.1)
+
+| Area | Iced build has | Missing |
+|---|---|---|
+| Tools | Hand, select, rectangle, diamond, ellipse, arrow, line, draw, text, tool lock | Image, eraser, frame, laser, lasso, elbow arrows. Mermaid is dropped (decision 1) and embedded web pages are out |
+| Element properties | Defaults from the theme | **The whole properties panel:** stroke and background colour, fill style, stroke width and style, sloppiness, edges, arrowheads and arrow type, font family, size and alignment, opacity, copy and paste styles |
+| Editing | Move, resize, rotate, multi-select, groups, z-order (keys only), duplicate, delete, nudge, undo and redo, line point editing, text in shapes, arrow labels and bindings | Align and distribute, flip, lock elements, editing links, context menu |
+| Clipboard | Excalidraw elements in and out; image out | Pasting plain text as a text element, pasting images |
+| Canvas | Pan, wheel and Ctrl+wheel, Ctrl+±, Shift+1 to fit | Zoom buttons and readout, grid and snapping, zen and view modes, search, help, command palette |
+| Toolbar | Text labels | Icons |
+| Rendering | rough.js and perfect-freehand bit for bit, every font, CJK | Thin lines heavier than Excalidraw's (W1: MSAA) |
+
+#### Not yet checked by hand
+
+- IME typing (fcitx5, ibus), dead keys, and the caret on centred labels
+  (phase 3).
+- Switching the desktop between light and dark while the app runs
+  (phase 5).
+- The package installed on this desktop: the icon in GNOME, double-clicking
+  a drawing in Files (phase 7).
+
+From the security section, not done: fuzzing the parser, and `cargo-deny`.
+The size limits, `forbid(unsafe_code)` and `cargo audit` are in place.
+
+#### Recommendation: keep both, and continue
+
+The performance case from the gate still holds (4× smoother panning, a
+quarter to a sixth of the memory, faster starts, an older glibc floor, no
+WebKitGTK). It is still worth finishing. It cannot replace the Tauri app
+yet, because an editor that cannot recolour a shape is not a drawing app.
+Stopping would leave the Tauri app as it is; the `core` extraction already
+helps it either way.
+
+To reach parity, three more phases, then this review again:
+
+| # | Phase | Size | Contents |
+|---|---|---|---|
+| 9 | Properties panel | L | Excalidraw's left panel for the selection and for new elements: colours with its palette and a hex field, fill, stroke, sloppiness, edges, arrowheads, arrow type, font, size, alignment, opacity, layer buttons; copy and paste styles; toolbar icons |
+| 10 | The rest of the editor | L | Image tool and pasting images; eraser; links (edit, and open http, https and mailto in the browser); frames; elbow arrows; context menu; align, distribute, flip, lock; zoom controls; grid and snapping; pasting text |
+| 11 | Desktop parity | M | Shortcuts by physical key, `Ctrl+T` and `Ctrl+PageUp`/`PageDown`; remembered window size and position; dragging library items; the by-hand checks above; fuzzing and `cargo-deny` |
+
+**Decision (replace, keep both, or stop): Rafa's, pending.**

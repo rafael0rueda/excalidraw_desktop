@@ -22,7 +22,12 @@ panel with the ER and Kanagawa ERD sets, `.excalidrawlib` import/export) is
 done.
 Phase 7 (packaging: `iced/packaging/package.sh` builds an .rpm and a .deb in
 a Debian 12 container, glibc floor 2.35, beside the Tauri package) is done.
-Next: phase 8 (parity review), only when asked.
+Phase 8 (parity review) is done: everything the README lists around the
+editor is there apart from a few shortcuts, links and window geometry, but the
+editor is short of Excalidraw's, with no properties panel above all. The
+benchmarks still clear the gate. Recommended: keep both, add phases 9–11
+(properties panel, rest of the editor, desktop parity). Rafa's decision is
+pending.
 
 ## Decisions already made (do not re-litigate)
 
