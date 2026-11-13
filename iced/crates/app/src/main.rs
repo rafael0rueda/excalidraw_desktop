@@ -29,6 +29,7 @@ mod doc;
 mod exporting;
 mod icons;
 mod images;
+mod inserting;
 mod instance;
 mod layers;
 mod library;
@@ -174,6 +175,11 @@ pub enum Message {
     ExportChoice(exporting::Choice),
     Library(library::Msg),
     Props(properties::Msg),
+    /// The image tool: pick a file, then put it in.
+    InsertImage,
+    ImagePicked(Option<PathBuf>),
+    /// An image ready to go in, where, and whether it was pasted.
+    ImageReady(Result<editor::ImageFile, String>, [f64; 2], bool),
 }
 
 /// A question the app is waiting on.
@@ -789,14 +795,14 @@ impl App {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         // While a question is up, it is the only thing that can be answered.
-        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_))) {
+        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_))) {
             return Task::none();
         }
         // The menu closes on anything done in the window (a click outside it
         // only closes it), not on the clocks or the pointer passing over.
         let action = !matches!(
             message,
-            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Input(Input::Move(..))
+            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Input(Input::Move(..))
         );
         if self.menu.is_some() && action {
             self.menu = None;
@@ -858,14 +864,10 @@ impl App {
                 }
             }
             Message::TextDone => self.tab_mut().doc.editor.finish_text(),
-            Message::Paste(text) => {
-                let at = self.pointer;
-                if let Some(text) = text {
-                    if !self.tab_mut().doc.editor.paste(&text, at) {
-                        self.status = Some("Only Excalidraw shapes can be pasted".into());
-                    }
-                }
-            }
+            Message::Paste(text) => return self.paste(text),
+            Message::InsertImage => return self.pick_image(),
+            Message::ImagePicked(path) => return self.image_picked(path),
+            Message::ImageReady(result, at, pasted) => self.image_ready(result, at, pasted),
             Message::SelectTab(i) => self.select_tab(i),
             Message::CloseTab(id) => return self.close_tab(&id),
             Message::NewTab => self.new_tab(),
@@ -1040,7 +1042,8 @@ impl App {
                             return clipboard::write(text);
                         }
                     }
-                    (_, "v") if ctrl => return clipboard::read().map(Message::Paste),
+                    (_, "v") if ctrl => return inserting::read_clipboard(),
+                    (_, "9") if !ctrl => return self.pick_image(),
                     // Ctrl+1…8: that tab; Ctrl+9: the last.
                     (_, d) if ctrl && d.len() == 1 && ("1"..="9").contains(&d) => {
                         let n: usize = d.parse().unwrap_or(1);

@@ -13,6 +13,8 @@
 #![forbid(unsafe_code)]
 
 mod embed;
+mod svg_image;
+pub use svg_image::{svg_rgba, svg_size};
 
 pub use embed::{decode_png, decode_svg};
 use base64::Engine;

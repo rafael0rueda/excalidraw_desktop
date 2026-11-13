@@ -11,6 +11,7 @@
 mod binding;
 pub mod geometry;
 mod history;
+mod insert;
 mod props;
 pub mod text;
 mod transform;
@@ -24,6 +25,7 @@ use scene::edit::{
 use scene::{Element, Kind, Scene};
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
+pub use insert::ImageFile;
 pub use props::{Field, Panel, Prop, FONT_SIZES};
 pub use text::Measure;
 pub use transform::Handle;

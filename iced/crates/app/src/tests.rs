@@ -391,4 +391,10 @@ fn the_properties_panel() {
     app.tab_mut().doc.editor.selection = vec![other.clone()];
     send(&mut app, key("v", ctrl_alt));
     assert_eq!(stroke(&app, &other), "#abc");
+
+    // Plain text pasted: a text per line, selected.
+    send(&mut app, Message::Paste(Some("first\nsecond".into())));
+    let texts: Vec<String> = ed(&app);
+    assert_eq!(texts.len(), 2);
+    assert!(texts.iter().all(|id| app.tab().doc.editor.scene.by_id(id).is_some_and(|e| e.text.is_some())));
 }

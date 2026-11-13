@@ -835,3 +835,34 @@ fn copying_and_pasting_styles() {
     ed.undo();
     assert_eq!(get(&ed, &b).stroke_width, 2.0);
 }
+
+#[test]
+fn inserting_an_image_and_pasting_text() {
+    let mut ed = empty();
+    let file = ImageFile { id: "abc".into(), mime: "image/png".into(), data_url: "data:image/png;base64,AAAA".into(), width: 400.0, height: 200.0 };
+    let id = ed.insert_image(&file, [100.0, 100.0], 150.0).unwrap();
+    let e = get(&ed, &id).clone();
+    assert_eq!((e.x, e.y, e.width, e.height), (100.0 - 150.0, 100.0 - 75.0, 300.0, 150.0), "kept within the height, centred");
+    assert_eq!(e.raw()["strokeColor"], json!("transparent"));
+    assert_eq!(e.raw()["fileId"], json!("abc"));
+    assert_eq!(e.raw()["roundness"], Value::Null);
+    assert_eq!(ed.scene.file("abc").map(|(m, _)| m), Some("image/png"));
+    assert_eq!(ed.selection, vec![id.clone()]);
+    ed.undo();
+    assert!(ed.scene.by_id(&id).is_none());
+
+    // Two lines, a blank between: two texts, the second lower.
+    assert!(ed.paste_text("hello\n\nworld wide", [0.0, 0.0], 200.0));
+    assert_eq!(ed.selection.len(), 2);
+    let a = get(&ed, &ed.selection[0].clone()).clone();
+    let b = get(&ed, &ed.selection[1].clone()).clone();
+    assert_eq!((a.x, a.width), (-25.0, 50.0), "centred on the point");
+    assert!(b.y > a.y + a.height + 10.0, "a blank line leaves a gap");
+    // Longer than the width: wrapped, and no longer auto-sized.
+    let mut ed = empty();
+    ed.paste_text("one two three four five six", [0.0, 0.0], 100.0);
+    let t = get(&ed, &ed.selection[0].clone()).clone();
+    assert!(t.text.as_ref().unwrap().text.contains('\n'));
+    assert_eq!(t.raw()["autoResize"], json!(false));
+    assert!(!ed.paste_text("  \n ", [0.0, 0.0], 100.0), "nothing to paste");
+}

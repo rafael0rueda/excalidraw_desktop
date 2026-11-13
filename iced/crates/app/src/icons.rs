@@ -22,7 +22,6 @@ pub enum Icon {
     // Eraser, Image, Frame and Link: phase 10.
     #[allow(dead_code)]
     Eraser,
-    #[allow(dead_code)]
     Image,
     #[allow(dead_code)]
     Frame,

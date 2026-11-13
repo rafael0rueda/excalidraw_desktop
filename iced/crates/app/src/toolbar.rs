@@ -49,6 +49,8 @@ pub fn toolbar(look: Look, editor: &Editor) -> Element<'_, Message> {
         let shortcut = if number.is_empty() { letter.to_owned() } else { format!("{letter} or {number}") };
         tools = tools.push(tip(look, b, format!("{name} — {shortcut}")));
     }
+    let image = button(keyed(look, Icon::Image, "9")).on_press(Message::InsertImage).padding(3).style(chip(look, false));
+    tools = tools.push(tip(look, image, "Insert image — 9".into()));
     let undo = button(container(icon(Icon::Undo, look.text, 18.0)).center(Length::Fill).width(26).height(24)).on_press_maybe(editor.can_undo().then_some(Message::Undo)).padding(3).style(chip(look, false));
     let redo = button(container(icon(Icon::Redo, look.text, 18.0)).center(Length::Fill).width(26).height(24)).on_press_maybe(editor.can_redo().then_some(Message::Redo)).padding(3).style(chip(look, false));
     tools = tools.push(divider(look)).push(tip(look, undo, "Undo — Ctrl+Z".into())).push(tip(look, redo, "Redo — Ctrl+Shift+Z".into()));

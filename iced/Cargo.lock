@@ -1056,6 +1056,7 @@ dependencies = [
  "rfd",
  "scene",
  "serde_json",
+ "sha1_smol",
  "ttf-parser",
  "wuff",
 ]
@@ -1201,6 +1202,7 @@ version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2660c5e9157bf76d2db1294e4a9feba604ef610819a3b591088d0d8392a3290f"
 dependencies = [
+ "fontconfig-parser",
  "log",
  "slotmap",
  "tinyvec",
@@ -3549,6 +3551,12 @@ dependencies = [
  "quote",
  "syn 3.0.10",
 ]
+
+[[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "shlex"
