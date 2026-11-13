@@ -29,6 +29,8 @@ benchmarks still clear the gate. Recommended: keep both, add phases 9–11
 (properties panel, rest of the editor, desktop parity). Decided 2026-11-13:
 keep both, do phases 9–11.
 Phase 9 (the properties panel, toolbar icons) is done.
+Phase 10 (images, eraser, links, arrange, right-click menu, zoom, grid,
+frames, elbow arrows) is done; phase 11 (desktop parity) is next.
 
 ## Decisions already made (do not re-litigate)
 

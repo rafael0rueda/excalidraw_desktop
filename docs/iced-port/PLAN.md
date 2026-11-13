@@ -290,8 +290,8 @@ Kept or added:
 | 7 | Packaging | **Done** 2026-11-13 (results below) |
 | 8 | Parity review | **Done** 2026-11-13: not at parity, decision: keep both, phases 9–11 |
 | 9 | Properties panel | **Done** 2026-11-13 (results below) |
-| 10 | The rest of the editor | Not started |
-| 11 | Desktop parity | Not started |
+| 10 | The rest of the editor | **Done** 2026-11-13 (results below) |
+| 11 | Desktop parity | In progress |
 
 ### Phase 2 result, 2026-11-11
 
@@ -844,3 +844,98 @@ Checked:
   text (palette open) in Light and Kanagawa Wave.
 
 98 tests in the workspace, one more by hand.
+
+### Phase 10 result, 2026-11-13: the rest of the editor
+
+Each item as Excalidraw 0.18.1 does it, from its source:
+
+- **Images:**
+  - The image tool (9) inserts from the desktop's file picker, in the middle
+    of the view.
+  - Ctrl+V pastes an image from the clipboard (through arboard) when it
+    holds no text.
+  - Images are taken in as `initializeImage` does: the file id is the SHA-1
+    of the file, larger images are shrunk to 1440 px, and anything over
+    4 MB is refused. They are sized to the view
+    (`initializeImageDimensions`).
+  - SVG images now draw on the canvas, through resvg, with nothing read
+    from outside the file. Their text uses the desktop's fonts, with the
+    generic families pointed at fonts that exist.
+- **Plain text pasted** becomes text elements, one per line
+  (`addTextFromPaste`). It is wrapped at half the view's width, between 200
+  and 800.
+- **Eraser** (E or 0), as `handleEraser`:
+  - It is sampled along the pointer's path and takes whole groups, shapes
+    with their labels, and frames with their contents.
+  - What it will erase is drawn at a fifth of its opacity until release.
+  - Alt takes elements back; Escape erases nothing. One undo step.
+- **Links:**
+  - Ctrl+K, the panel or the menu edit the link, cleaned by
+    `normalizeLink`'s rules (script schemes become `about:blank`).
+  - The icon at the top right of a linked element follows the link.
+  - An element link (`?element=` or `?group=`) scrolls to the element.
+  - http, https, mailto and tel go to `xdg-open`; nothing else is opened.
+- **Arranging:**
+  - Align (Ctrl+Shift+arrows, and the panel) and distribute (Alt+H and
+    Alt+V), moving groups as one (`getMaximumGroups`).
+  - Flip (Shift+H and Shift+V). Arrows bound at either end, flipped alone,
+    swap their arrowheads instead.
+  - Lock (Ctrl+Shift+L) and Unlock all. Locked elements cannot be picked,
+    moved or erased.
+- **The right-click menu,** with Excalidraw's entries for the canvas and
+  for the selection, as far as this build has the actions.
+- **Zoom controls:** −, the percentage (click to reset) and + at the bottom
+  left. Steps are 10%; Ctrl+0 resets, Shift+1 fits the drawing and Shift+2
+  the selection.
+- **Grid** (Ctrl+'), kept in the drawing's `appState` as Excalidraw keeps
+  it:
+  - drawn in the theme's colours, so the Tauri app's grid-colour limitation
+    is gone here;
+  - snaps new shapes, moves (the selection's top left), resizes and line
+    points; Ctrl suspends it.
+- **Frames** (F), drawn in `FRAME_STYLE`:
+  - A new frame takes in what lies wholly inside it, whole groups only.
+  - A frame moves, deletes, copies, duplicates and erases with its contents.
+  - Elements dragged onto a frame join it, with the frame highlighted
+    during the drag; dragged off, they leave it.
+  - A frame is picked by its border or its name, and renamed by
+    double-clicking the name.
+  - Unnamed frames are labelled "Frame" on the canvas and in exports
+    (`getFrameLikeTitle`).
+- **Elbow arrows,** the third arrow type:
+  - `elbowArrow.ts` is ported: the dynamic boxes, the grid, A* with
+    Excalidraw's binary heap, and the heading, outline-snap and fixed-point
+    helpers.
+  - Drawn routed around what their ends are over, and bound by
+    `fixedPoint`.
+  - Routed again when a bound shape moves.
+  - No handles; switching to or from the other arrow types keeps only the
+    ends.
+
+Checked:
+
+- **Elbow routes against Excalidraw itself:** `gen-elbow.mjs` records 130
+  routes from Excalidraw's own `updateElbowArrowPoints`:
+  - unbound arrows;
+  - arrows bound to rectangles, ellipses, diamonds and rotated shapes;
+  - arrows being drawn over shapes.
+
+  The port gives the same points on all of them, the largest difference
+  2e-13. Arrows drawn and saved here, routed again by Excalidraw, do not
+  move.
+- **Tests:** editor tests for each feature, and app tests through
+  `App::update` for the link editor and its icon, the right-click menu, the
+  grid, the zoom buttons and frame renaming. 111 in the workspace.
+- **Screenshots:** the panel's align section, the link icon, the grid in
+  Nord, the context menus, a frame with its contents, elbow arrows between
+  three shapes.
+
+Not done:
+
+- Snapping to other shapes (Alt+S, off by default in Excalidraw).
+- Dragging a segment of an elbow arrow (`fixedSegments`): an arrow routed
+  here is routed fresh and loses fixed segments a file gave it.
+- Membership of a frame being resized.
+- Truncating a long frame name to the frame's width.
+- Laser pointer, lasso, search, zen and view modes, help, command palette
+  (not in this phase's list).
