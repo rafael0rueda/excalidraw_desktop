@@ -55,8 +55,10 @@ pub enum Icon {
     Delete,
     Group,
     Ungroup,
-    #[allow(dead_code)]
     Link,
+    /// Aligning elements to the selection's edge or middle.
+    Align(editor::Align),
+    Distribute(editor::Axis),
 }
 
 /// Excalidraw's arrowheads, `None` for no head.
@@ -469,6 +471,48 @@ fn paint(icon: Icon, p: &mut Pen) {
             }
             p.rect((6.0, 6.0), (7.0, 7.0), 1.0, None);
             p.rect((11.0, 11.0), (7.0, 7.0), 1.0, None);
+        }
+        Icon::Align(a) => {
+            use editor::Align;
+            let faint = p.faint();
+            // The line they align to, and two boxes against it.
+            let vertical = matches!(a, Align::Left | Align::CenterX | Align::Right);
+            let line = match a {
+                Align::Left | Align::Top => 4.0,
+                Align::CenterX | Align::CenterY => 12.0,
+                _ => 20.0,
+            };
+            let boxes: [(f32, f32); 2] = [(10.0, 6.0), (14.0, 6.0)];
+            for (i, (long, short)) in boxes.iter().enumerate() {
+                let across = if i == 0 { 5.5 } else { 13.0 };
+                let start = match a {
+                    Align::Left | Align::Top => 6.0,
+                    Align::CenterX | Align::CenterY => 12.0 - long / 2.0,
+                    _ => 18.0 - long,
+                };
+                if vertical {
+                    p.rect((start, across), (*long, *short - 0.5), 1.0, Some(faint));
+                } else {
+                    p.rect((across, start), (*short - 0.5, *long), 1.0, Some(faint));
+                }
+            }
+            if vertical {
+                p.line(&[(line, 3.0), (line, 21.0)]);
+            } else {
+                p.line(&[(3.0, line), (21.0, line)]);
+            }
+        }
+        Icon::Distribute(axis) => {
+            let faint = p.faint();
+            if axis == editor::Axis::X {
+                p.line(&[(3.0, 4.0), (3.0, 20.0)]);
+                p.line(&[(21.0, 4.0), (21.0, 20.0)]);
+                p.rect((8.5, 7.0), (7.0, 10.0), 1.0, Some(faint));
+            } else {
+                p.line(&[(4.0, 3.0), (20.0, 3.0)]);
+                p.line(&[(4.0, 21.0), (20.0, 21.0)]);
+                p.rect((7.0, 8.5), (10.0, 7.0), 1.0, Some(faint));
+            }
         }
         Icon::Link => {
             p.curve((10.5, 13.5), (12.0, 15.0), (14.0, 15.0), (15.5, 13.5));

@@ -298,6 +298,9 @@ pub fn export_menu(app: &App) -> Element<'_, Message> {
 
 /// A question that must be answered before anything else.
 pub fn prompt<'a>(look: Look, prompt: &Prompt) -> Element<'a, Message> {
+    if let Prompt::Link { draft } = prompt {
+        return link_editor(look, draft);
+    }
     let (message, buttons): (String, Vec<(&str, Answer)>) = match prompt {
         Prompt::Unsaved { title, .. } => (
             format!("{title} has unsaved changes. Save before continuing?"),
@@ -308,6 +311,7 @@ pub fn prompt<'a>(look: Look, prompt: &Prompt) -> Element<'a, Message> {
         Prompt::DiscardTheme { name, .. } => (format!("\"{name}\" has unsaved changes. Discard them?"), vec![("Discard", Answer::Discard), ("Keep editing", Answer::Cancel)]),
         Prompt::DeleteTheme { name, .. } => (format!("Delete \"{name}\"?"), vec![("Delete", Answer::Confirm), ("Keep", Answer::Cancel)]),
         Prompt::RemoveLibraryItem { name, .. } => (format!("Remove \"{name}\" from the library?"), vec![("Remove", Answer::Confirm), ("Keep", Answer::Cancel)]),
+        Prompt::Link { .. } => unreachable!("drawn by link_editor"),
     };
     let mut row = row![Space::new().width(Length::Fill)].spacing(8);
     for (i, (label, answer)) in buttons.into_iter().enumerate() {
@@ -326,3 +330,30 @@ pub fn prompt<'a>(look: Look, prompt: &Prompt) -> Element<'a, Message> {
         .style(move |_| container::Style { background: Some(Color { a: 0.6, ..look.canvas }.into()), ..container::Style::default() })
         .into()
 }
+
+/// Ctrl+K's editor: the link, Save (Enter), Remove, Cancel (Escape).
+fn link_editor<'a>(look: Look, draft: &str) -> Element<'a, Message> {
+    let field = text_input("https://…", draft)
+        .id(LINK_FIELD)
+        .on_input(Message::LinkDraft)
+        .on_submit(Message::Answer(Answer::Confirm))
+        .size(14)
+        .padding([6, 8])
+        .style(input(look));
+    let buttons = row![
+        Space::new().width(Length::Fill),
+        button(small("Remove")).on_press(Message::Answer(Answer::Discard)).padding([6, 12]).style(danger(look)),
+        button(small("Cancel")).on_press(Message::Answer(Answer::Cancel)).padding([6, 12]).style(secondary(look)),
+        button(small("Save")).on_press(Message::Answer(Answer::Confirm)).padding([6, 12]).style(primary(look)),
+    ]
+    .spacing(8);
+    let hint = small("Web and mail links open in your browser or mail app; a link to an element of this drawing scrolls to it.").size(12).color(look.muted);
+    let card = container(column![text("Link").size(15), field, hint, buttons].spacing(12).width(440)).padding(20).style(island(look));
+    container(card)
+        .center(Length::Fill)
+        .style(move |_| container::Style { background: Some(Color { a: 0.6, ..look.canvas }.into()), ..container::Style::default() })
+        .into()
+}
+
+/// The link editor's field, focused when it opens.
+pub const LINK_FIELD: &str = "link-field";

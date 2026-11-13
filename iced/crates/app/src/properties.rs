@@ -44,6 +44,9 @@ pub enum Msg {
     Delete,
     Group,
     Ungroup,
+    Link,
+    Align(editor::Align),
+    Distribute(editor::Axis),
 }
 
 fn msg(m: Msg) -> Message {
@@ -173,6 +176,9 @@ impl App {
             Msg::Delete => editor.delete_selected(),
             Msg::Group => editor.group(),
             Msg::Ungroup => editor.ungroup(),
+            Msg::Link => {}
+            Msg::Align(a) => editor.align(a),
+            Msg::Distribute(axis) => editor.distribute(axis),
         }
     }
 }
@@ -447,6 +453,35 @@ pub fn view(app: &App) -> Option<Element<'_, Message>> {
                 (Icon::BringToFront, false, Msg::Layer(Layer::ToFront), "Bring to front — Ctrl+Shift+]"),
             ]),
         ));
+        if editor.can_align() {
+            use editor::{Align, Axis};
+            let mut rows = column![buttons(vec![
+                (Icon::Align(Align::Left), false, Msg::Align(Align::Left), "Align left — Ctrl+Shift+Left"),
+                (Icon::Align(Align::CenterX), false, Msg::Align(Align::CenterX), "Centre horizontally"),
+                (Icon::Align(Align::Right), false, Msg::Align(Align::Right), "Align right — Ctrl+Shift+Right"),
+            ])]
+            .spacing(2);
+            let mut second = vec![
+                (Icon::Align(Align::Top), false, Msg::Align(Align::Top), "Align top — Ctrl+Shift+Up"),
+                (Icon::Align(Align::CenterY), false, Msg::Align(Align::CenterY), "Centre vertically"),
+                (Icon::Align(Align::Bottom), false, Msg::Align(Align::Bottom), "Align bottom — Ctrl+Shift+Down"),
+            ];
+            // Distributing needs three.
+            if editor.selection.len() > 2 {
+                rows = column![row![
+                    buttons(vec![
+                        (Icon::Align(Align::Left), false, Msg::Align(Align::Left), "Align left — Ctrl+Shift+Left"),
+                        (Icon::Align(Align::CenterX), false, Msg::Align(Align::CenterX), "Centre horizontally"),
+                        (Icon::Align(Align::Right), false, Msg::Align(Align::Right), "Align right — Ctrl+Shift+Right"),
+                    ]),
+                    choice(look, Icon::Distribute(Axis::X), false, Msg::Distribute(Axis::X), "Distribute horizontally — Alt+H"),
+                ]
+                .spacing(2)]
+                .spacing(2);
+                second.push((Icon::Distribute(Axis::Y), false, Msg::Distribute(Axis::Y), "Distribute vertically — Alt+V"));
+            }
+            col = col.push(section(look, "Align", rows.push(buttons(second))));
+        }
         let selected = editor.selection.len();
         let grouped = editor.selection.iter().any(|id| editor.scene.by_id(id).is_some_and(|e| !e.group_ids.is_empty()));
         let mut actions = vec![(Icon::Duplicate, false, Msg::Duplicate, "Duplicate — Ctrl+D"), (Icon::Delete, false, Msg::Delete, "Delete")];
@@ -455,6 +490,9 @@ pub fn view(app: &App) -> Option<Element<'_, Message>> {
         }
         if grouped {
             actions.push((Icon::Ungroup, false, Msg::Ungroup, "Ungroup — Ctrl+Shift+G"));
+        }
+        if editor.link_target().is_some() {
+            actions.push((Icon::Link, false, Msg::Link, "Link — Ctrl+K"));
         }
         col = col.push(section(look, "Actions", buttons(actions)));
     }

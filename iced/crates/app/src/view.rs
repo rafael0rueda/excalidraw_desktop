@@ -192,6 +192,35 @@ impl<Message> SceneView<'_, Message> {
             });
             frame.stroke(&outline(&editor::geometry::corners(e).map(to)), wide);
         }
+        // Link icons, top right of linked elements not selected
+        // (`renderLinkIcon`), in Excalidraw's blue on a white tile.
+        let blue = Color::from_rgb8(0x19, 0x71, 0xc2);
+        let size = editor::LINK_SIZE as f32;
+        for e in ed.linked().filter(|e| !ed.selection.contains(&e.id)) {
+            let [x, y, _, _] = editor::link_handle(e, f64::from(self.view.zoom));
+            let at = to([x, y]);
+            if at.x < -size || at.y < -size {
+                continue;
+            }
+            let tile = Path::rounded_rectangle(at, Size::new(size, size), 3.0.into());
+            frame.fill(&tile, Color { a: 0.85, ..Color::WHITE });
+            let k = size / 24.0;
+            let p = |x: f32, y: f32| Point::new(at.x + x * k, at.y + y * k);
+            let glyph = Path::new(|b| {
+                // feather's external-link: a box open at the top right, an arrow out.
+                b.move_to(p(18.0, 13.0));
+                b.line_to(p(18.0, 21.0));
+                b.line_to(p(3.0, 21.0));
+                b.line_to(p(3.0, 6.0));
+                b.line_to(p(11.0, 6.0));
+                b.move_to(p(15.0, 3.0));
+                b.line_to(p(21.0, 3.0));
+                b.line_to(p(21.0, 9.0));
+                b.move_to(p(10.0, 14.0));
+                b.line_to(p(21.0, 3.0));
+            });
+            frame.stroke(&glyph, Stroke::default().with_width(1.5).with_color(blue));
+        }
         if let Some(m) = ed.marquee {
             let (a, b) = (to([m[0], m[1]]), to([m[2], m[3]]));
             let rect = Path::rectangle(a, Size::new(b.x - a.x, b.y - a.y));

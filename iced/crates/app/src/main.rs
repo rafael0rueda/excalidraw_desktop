@@ -33,6 +33,7 @@ mod inserting;
 mod instance;
 mod layers;
 mod library;
+mod links;
 mod measure;
 mod paint;
 mod properties;
@@ -175,6 +176,9 @@ pub enum Message {
     ExportChoice(exporting::Choice),
     Library(library::Msg),
     Props(properties::Msg),
+    /// Ctrl+K, and the link editor's field as typed.
+    EditLink,
+    LinkDraft(String),
     /// The image tool: pick a file, then put it in.
     InsertImage,
     ImagePicked(Option<PathBuf>),
@@ -193,6 +197,8 @@ pub enum Prompt {
     DiscardTheme { name: String, then: theme_editor::Edit },
     DeleteTheme { name: String },
     RemoveLibraryItem { id: String, name: String },
+    /// Ctrl+K: the selected element's link, as typed so far.
+    Link { draft: String },
 }
 
 /// A quit in progress: which tabs have been asked about, and which of them
@@ -787,6 +793,15 @@ impl App {
                 }
                 Task::none()
             }
+            Some(Prompt::Link { draft }) => {
+                let editor = &mut self.tab_mut().doc.editor;
+                match answer {
+                    Answer::Confirm => editor.set_link(&draft),
+                    Answer::Discard => editor.set_link(""),
+                    Answer::Save | Answer::Cancel => {}
+                }
+                Task::none()
+            }
             Some(Prompt::Error(_) | Prompt::Info(_)) | None => Task::none(),
         }
     }
@@ -798,7 +813,7 @@ impl App {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         // While a question is up, it is the only thing that can be answered.
-        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_))) {
+        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::LinkDraft(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_))) {
             return Task::none();
         }
         // The menu closes on anything done in the window (a click outside it
@@ -815,6 +830,13 @@ impl App {
         }
         match message {
             Message::Input(Input::View(view)) => self.set_view(view),
+            Message::Input(Input::Down(p, m)) if self.tab().doc.editor.tool == Tool::Selection && !m.shift && !m.ctrl && self.tab().doc.editor.link_at(p).is_some() => {
+                // A link's icon: followed, not clicked through.
+                self.popup = None;
+                if let Some(link) = self.tab().doc.editor.link_at(p) {
+                    self.follow_link(&link);
+                }
+            }
             Message::Input(input) => {
                 let pointer = &mut self.pointer;
                 let editor = &mut self.tabs[self.active].doc.editor;
@@ -843,6 +865,7 @@ impl App {
                 let editor = &mut self.tab_mut().doc.editor;
                 editor.tool_locked = !editor.tool_locked;
             }
+            Message::Props(properties::Msg::Link) => return self.edit_link(),
             Message::Props(m) => {
                 let hex = matches!(m, properties::Msg::Hex(_));
                 self.props(m);
@@ -869,6 +892,12 @@ impl App {
             Message::TextDone => self.tab_mut().doc.editor.finish_text(),
             Message::Paste(text) => return self.paste(text),
             Message::InsertImage => return self.pick_image(),
+            Message::EditLink => return self.edit_link(),
+            Message::LinkDraft(d) => {
+                if let Some(Prompt::Link { draft }) = &mut self.prompt {
+                    *draft = d;
+                }
+            }
             Message::ImagePicked(path) => return self.image_picked(path),
             Message::ImageReady(result, at, pasted) => self.image_ready(result, at, pasted),
             Message::SelectTab(i) => self.select_tab(i),
@@ -1047,6 +1076,7 @@ impl App {
                     }
                     (_, "v") if ctrl => return inserting::read_clipboard(),
                     (_, "9") if !ctrl => return self.pick_image(),
+                    (_, "k") if ctrl => return self.edit_link(),
                     // Ctrl+1…8: that tab; Ctrl+9: the last.
                     (_, d) if ctrl && d.len() == 1 && ("1"..="9").contains(&d) => {
                         let n: usize = d.parse().unwrap_or(1);

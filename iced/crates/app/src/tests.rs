@@ -398,3 +398,40 @@ fn the_properties_panel() {
     assert_eq!(texts.len(), 2);
     assert!(texts.iter().all(|id| app.tab().doc.editor.scene.by_id(id).is_some_and(|e| e.text.is_some())));
 }
+
+#[test]
+fn links_through_the_app() {
+    let mut app = App::boot(Args { screenshot: Some("/dev/null".into()), chrome: true, ..Args::default() }).0;
+    draw_rectangle(&mut app, [0.0, 0.0]);
+    let id = app.tab().doc.editor.selection[0].clone();
+    send(&mut app, Message::EditLink);
+    assert!(matches!(app.prompt, Some(Prompt::Link { .. })));
+    send(&mut app, Message::LinkDraft(format!("https://excalidraw.com/?element={id}")));
+    send(&mut app, Message::Answer(Answer::Confirm));
+    assert!(app.prompt.is_none());
+    assert!(app.tab().doc.editor.scene.by_id(&id).unwrap().link.as_deref().unwrap().ends_with(&id));
+
+    // Its icon, clicked with the element not selected, brings it into view
+    // and does not start a gesture.
+    app.tab_mut().doc.editor.selection.clear();
+    let e = app.tab().doc.editor.scene.by_id(&id).unwrap().clone();
+    let [x, y, w, h] = editor::link_handle(&e, f64::from(app.tab().view.zoom));
+    app.tab_mut().view = View { pan: iced::Vector::new(5000.0, 5000.0), zoom: 1.0 };
+    send(&mut app, Message::Input(Input::Down([x + w / 2.0, y + h / 2.0], NONE)));
+    send(&mut app, Message::Input(Input::Up([x + w / 2.0, y + h / 2.0], NONE)));
+    assert_ne!(app.tab().view.pan.x, 5000.0, "scrolled to it");
+    assert!(app.tab().doc.editor.selection.is_empty());
+
+    // A script link is cleaned and never opened.
+    app.tab_mut().doc.editor.selection = vec![id.clone()];
+    send(&mut app, Message::EditLink);
+    send(&mut app, Message::LinkDraft("javascript:alert(1)".into()));
+    send(&mut app, Message::Answer(Answer::Confirm));
+    assert_eq!(app.tab().doc.editor.scene.by_id(&id).unwrap().link.as_deref(), Some("about:blank"));
+    app.follow_link("about:blank");
+    assert!(app.status.as_deref().is_some_and(|s| s.starts_with("Only web and mail links")));
+    // Remove.
+    send(&mut app, Message::EditLink);
+    send(&mut app, Message::Answer(Answer::Discard));
+    assert_eq!(app.tab().doc.editor.scene.by_id(&id).unwrap().link, None);
+}

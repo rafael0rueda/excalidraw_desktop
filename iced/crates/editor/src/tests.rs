@@ -899,3 +899,79 @@ fn the_eraser_marks_what_it_passes_and_deletes_on_release() {
     assert!(ed.erasing.is_empty());
     assert!(!get(&ed, &c).is_deleted);
 }
+
+#[test]
+fn align_distribute_flip_and_lock() {
+    let mut ed = empty();
+    let a = rect(&mut ed, 0.0, 0.0, 50.0, 50.0);
+    let b = rect(&mut ed, 100.0, 40.0, 30.0, 30.0);
+    let c = rect(&mut ed, 300.0, 10.0, 50.0, 20.0);
+    ed.selection = vec![a.clone(), b.clone(), c.clone()];
+    ed.key(Key::Up, CTRL_SHIFT);
+    assert_eq!([get(&ed, &a).y, get(&ed, &b).y, get(&ed, &c).y], [0.0, 0.0, 0.0], "aligned to the top");
+    ed.align(Align::CenterY);
+    assert_eq!(get(&ed, &b).y, 25.0 - 15.0);
+    // Widths 50 + 30 + 50 across 0..350: gaps of 110.
+    ed.key(Key::Char('h'), Modifiers { alt: true, ..NONE });
+    assert_eq!(get(&ed, &b).x, 160.0);
+    assert_eq!((get(&ed, &a).x, get(&ed, &c).x), (0.0, 300.0), "the outer ones stay");
+    ed.undo();
+    assert_eq!(get(&ed, &b).x, 100.0, "one undo step");
+
+    // Flip: mirrored about the selection's middle, turns reversed.
+    ed.selection = vec![a.clone(), c.clone()];
+    ed.key(Key::Char('h'), SHIFT);
+    assert_eq!((get(&ed, &a).x, get(&ed, &c).x), (300.0, 0.0));
+    ed.tool = Tool::Line;
+    drag(&mut ed, [0.0, 200.0], [100.0, 250.0], NONE);
+    let l = ed.selection[0].clone();
+    ed.flip(Axis::X);
+    let e = get(&ed, &l);
+    assert_eq!(e.linear.as_ref().unwrap().points, vec![[0.0, 0.0], [-100.0, 50.0]]);
+    assert_eq!(e.x, 100.0, "the same place, mirrored");
+
+    // Lock: cannot be picked or moved; unlock all brings it back selected.
+    ed.selection = vec![a.clone()];
+    ed.key(Key::Char('l'), CTRL_SHIFT);
+    assert_eq!(get(&ed, &a).raw()["locked"], json!(true));
+    ed.selection.clear();
+    assert!(ed.element_at([310.0, 10.0]).is_none_or(|e| e.id != a));
+    ed.select_all();
+    assert!(!ed.selection.contains(&a));
+    ed.selection.clear();
+    ed.unlock_all();
+    assert_eq!(ed.selection, vec![a.clone()]);
+    assert_eq!(get(&ed, &a).raw()["locked"], json!(false));
+}
+
+#[test]
+fn links_are_set_cleaned_and_found_by_their_icon() {
+    assert_eq!(normalize_link("  https://example.com/a \"b\" "), "https://example.com/a %22b%22");
+    assert_eq!(normalize_link("JavaScript:alert(1)"), "about:blank");
+    assert_eq!(normalize_link(" java\tscript:alert(1)"), "about:blank");
+    assert_eq!(normalize_link("mailto:someone@example.com"), "mailto:someone@example.com");
+
+    let mut ed = empty();
+    let r = rect(&mut ed, 0.0, 0.0, 100.0, 50.0);
+    assert_eq!(ed.link_target(), Some((r.clone(), String::new())));
+    ed.set_link("https://example.com");
+    assert_eq!(get(&ed, &r).raw()["link"], json!("https://example.com"));
+    // The icon sits above the top right corner; only when not selected.
+    let [x, y, w, h] = link_handle(get(&ed, &r), 1.0);
+    let icon = [x + w / 2.0, y + h / 2.0];
+    assert!(icon[0] > 95.0 && icon[1] < 0.0, "{icon:?}");
+    assert_eq!(ed.link_at(icon), None, "selected: no link to follow");
+    ed.selection.clear();
+    assert_eq!(ed.link_at(icon).as_deref(), Some("https://example.com"));
+    assert_eq!(ed.link_at([50.0, 25.0]), None);
+    ed.selection = vec![r.clone()];
+    ed.set_link("   ");
+    assert_eq!(get(&ed, &r).raw()["link"], Value::Null, "empty removes it");
+    ed.undo();
+    assert_eq!(get(&ed, &r).link.as_deref(), Some("https://example.com"));
+
+    // Element links point inside the drawing.
+    let other = rect(&mut ed, 300.0, 0.0, 10.0, 10.0);
+    assert_eq!(ed.link_targets(&format!("https://excalidraw.com/?element={other}")), vec![other.clone()]);
+    assert!(ed.link_targets("https://example.com/?q=1").is_empty());
+}

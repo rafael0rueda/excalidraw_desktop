@@ -8,11 +8,13 @@
 
 #![forbid(unsafe_code)]
 
+mod arrange;
 mod binding;
 mod erase;
 pub mod geometry;
 mod history;
 mod insert;
+mod links;
 mod props;
 pub mod text;
 mod transform;
@@ -26,7 +28,9 @@ use scene::edit::{
 use scene::{Element, Kind, Scene};
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
+pub use arrange::{Align, Axis};
 pub use insert::ImageFile;
+pub use links::{link_handle, normalize_link, LINK_SIZE};
 pub use props::{Field, Panel, Prop, FONT_SIZES};
 pub use text::Measure;
 pub use transform::Handle;
@@ -354,7 +358,7 @@ impl Editor {
         self.selection = self
             .scene
             .visible()
-            .filter(|e| e.kind != Kind::Unknown)
+            .filter(|e| e.kind != Kind::Unknown && !arrange::is_locked(e))
             .map(|e| e.id.clone())
             .collect();
     }
@@ -366,7 +370,7 @@ impl Editor {
         let hit = self
             .scene
             .visible()
-            .filter(|e| geometry::hit(e, p, threshold))
+            .filter(|e| !arrange::is_locked(e) && geometry::hit(e, p, threshold))
             .last()?;
         match hit.text.as_ref().and_then(|t| t.container_id.as_deref()) {
             Some(container) => self.visible(container).or(Some(hit)),
@@ -565,6 +569,7 @@ impl Editor {
         let origins = ids
             .iter()
             .filter_map(|id| self.scene.by_id(id))
+            .filter(|e| !arrange::is_locked(e))
             .map(|e| (e.id.clone(), e.x, e.y))
             .collect();
         self.begin();
@@ -592,7 +597,7 @@ impl Editor {
                 let inside: Vec<String> = self
                     .scene
                     .visible()
-                    .filter(|e| e.kind != Kind::Unknown)
+                    .filter(|e| e.kind != Kind::Unknown && !arrange::is_locked(e))
                     .filter(|e| {
                         let eb = geometry::bounds(e);
                         eb[0] >= b[0] && eb[1] >= b[1] && eb[2] <= b[2] && eb[3] <= b[3]
@@ -874,6 +879,15 @@ impl Editor {
                 self.selection.clear();
                 self.tool = Tool::Selection;
             }
+            (Key::Left, true, true) => self.align(Align::Left),
+            (Key::Right, true, true) => self.align(Align::Right),
+            (Key::Up, true, true) => self.align(Align::Top),
+            (Key::Down, true, true) => self.align(Align::Bottom),
+            (Key::Char('l'), true, true) => self.toggle_lock(),
+            (Key::Char('h'), false, true) => self.flip(Axis::X),
+            (Key::Char('v'), false, true) => self.flip(Axis::Y),
+            (Key::Char('h'), false, false) if m.alt => self.distribute(Axis::X),
+            (Key::Char('v'), false, false) if m.alt => self.distribute(Axis::Y),
             (Key::Left | Key::Right | Key::Up | Key::Down, _, shift) => {
                 let d = if shift { SHIFT_NUDGE } else { NUDGE };
                 let (dx, dy) = match key {
