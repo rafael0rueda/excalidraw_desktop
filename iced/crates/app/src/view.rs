@@ -45,6 +45,13 @@ impl View {
         Self { pan, zoom }
     }
 
+    /// Zooms to `zoom` (`getNormalizedZoom`: six decimals, 10% to 3000%),
+    /// keeping the screen point `anchor` still.
+    pub fn zoom_to(self, zoom: f32, anchor: Point) -> Self {
+        let zoom = ((zoom * 1e6).round() / 1e6).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
+        self.zoomed(zoom / self.zoom, anchor)
+    }
+
     /// The zoom the geometry is built at: the power of two nearest `zoom`.
     pub fn build_zoom(self) -> f32 {
         2f32.powi(self.zoom.log2().round() as i32)

@@ -496,6 +496,6 @@ pub fn view(app: &App) -> Option<Element<'_, Message>> {
         }
         col = col.push(section(look, "Actions", buttons(actions)));
     }
-    let card = container(scrollable(container(col).padding(10)).spacing(2)).width(WIDTH).max_height(app.size.height - 70.0).style(island(look));
+    let card = container(scrollable(container(col).padding(10)).spacing(2)).width(WIDTH).max_height(app.size.height - 120.0).style(island(look));
     Some(container(opaque(card)).padding(iced::Padding { top: 60.0, left: 12.0, right: 0.0, bottom: 12.0 }).into())
 }

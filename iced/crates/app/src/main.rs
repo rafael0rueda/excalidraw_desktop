@@ -47,6 +47,7 @@ mod theme;
 mod theme_editor;
 mod toolbar;
 mod view;
+mod zoom;
 
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 
@@ -179,6 +180,8 @@ pub enum Message {
     Props(properties::Msg),
     /// An entry of the right-click menu.
     Context(context_menu::Action),
+    /// The zoom buttons, and their keys.
+    Zoom(zoom::Zoom),
     /// Ctrl+K, and the link editor's field as typed.
     EditLink,
     LinkDraft(String),
@@ -913,6 +916,7 @@ impl App {
             Message::InsertImage => return self.pick_image(),
             Message::EditLink => return self.edit_link(),
             Message::Context(action) => return self.context_action(action),
+            Message::Zoom(z) => self.zoom(z),
             Message::LinkDraft(d) => {
                 if let Some(Prompt::Link { draft }) = &mut self.prompt {
                     *draft = d;
@@ -1052,7 +1056,6 @@ impl App {
                     Key::Character(c) => c.to_lowercase(),
                     _ => String::new(),
                 };
-                let centre = Point::new(self.size.width / 2.0, self.size.height / 2.0);
                 match (key.as_ref(), lower.as_str()) {
                     (Key::Named(Named::Space), _) => self.space = true,
                     (Key::Named(Named::Tab), _) if ctrl => {
@@ -1105,12 +1108,12 @@ impl App {
                         self.select_tab(i.min(self.tabs.len() - 1));
                     }
                     // Shift+1: the whole drawing in view, as in Excalidraw.
-                    (_, "!" | "1") if shift => {
-                        let view = fit(self.tab().doc.layers.bounds(), self.size);
-                        self.set_view(view);
-                    }
-                    (_, "=" | "+") if ctrl => self.set_view(self.tab().view.zoomed(1.25, centre)),
-                    (_, "-") if ctrl => self.set_view(self.tab().view.zoomed(0.8, centre)),
+                    (_, "!" | "1") if shift => self.zoom(zoom::Zoom::Fit),
+                    // Shift+2: the selection in view.
+                    (_, "@" | "2") if shift && !ctrl => self.zoom(zoom::Zoom::Selection),
+                    (_, "=" | "+") if ctrl => self.zoom(zoom::Zoom::In),
+                    (_, "-" | "_") if ctrl => self.zoom(zoom::Zoom::Out),
+                    (_, "0") if ctrl => self.zoom(zoom::Zoom::Reset),
                     _ => {
                         if let Some(k) = editor_key(&key) {
                             let m = editor::Modifiers { shift, alt: modifiers.alt(), ctrl };
@@ -1159,6 +1162,7 @@ impl App {
         if let Some(props) = properties::view(self) {
             layers = layers.push(props);
         }
+        layers = layers.push(zoom::view(self));
         if let Some(menu) = context_menu::view(self) {
             layers = layers.push(menu);
         }

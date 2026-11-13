@@ -466,3 +466,20 @@ fn the_right_click_menu_and_the_grid() {
     send(&mut app, Message::Context(Action::ToggleGrid));
     assert_eq!(app.tab().doc.editor.grid_size(), Some(20.0));
 }
+
+#[test]
+fn zoom_buttons_step_by_a_tenth() {
+    let mut app = App::boot(Args { screenshot: Some("/dev/null".into()), chrome: true, ..Args::default() }).0;
+    send(&mut app, Message::Zoom(zoom::Zoom::Reset));
+    assert_eq!(app.tab().view.zoom, 1.0);
+    send(&mut app, Message::Zoom(zoom::Zoom::In));
+    send(&mut app, Message::Zoom(zoom::Zoom::In));
+    assert_eq!(app.tab().view.zoom, 1.2);
+    assert_eq!(app.tab().doc.editor.zoom, f64::from(1.2f32), "the editor's hit distances follow");
+    for _ in 0..30 {
+        send(&mut app, Message::Zoom(zoom::Zoom::Out));
+    }
+    assert_eq!(app.tab().view.zoom, 0.1, "10% at least");
+    send(&mut app, Message::Zoom(zoom::Zoom::Reset));
+    assert_eq!(app.tab().view.zoom, 1.0);
+}
