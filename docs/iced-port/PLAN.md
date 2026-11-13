@@ -289,7 +289,7 @@ Kept or added:
 | 6 | Export + library | **Done** 2026-11-13 (results below) |
 | 7 | Packaging | **Done** 2026-11-13 (results below) |
 | 8 | Parity review | **Done** 2026-11-13: not at parity, decision: keep both, phases 9–11 |
-| 9 | Properties panel | In progress |
+| 9 | Properties panel | **Done** 2026-11-13 (results below) |
 | 10 | The rest of the editor | Not started |
 | 11 | Desktop parity | Not started |
 
@@ -789,3 +789,58 @@ To reach parity, three more phases, then this review again:
 | 11 | Desktop parity | M | Shortcuts by physical key, `Ctrl+T` and `Ctrl+PageUp`/`PageDown`; remembered window size and position; dragging library items; the by-hand checks above; fuzzing and `cargo-deny` |
 
 **Decision, 2026-11-13 (Rafa): keep both and go with phases 9–11.**
+
+### Phase 9 result, 2026-11-13: the properties panel
+
+**Editor** (`editor/src/props.rs`, no UI), following Excalidraw 0.18.1:
+
+- **Which sections show** for the tool and the selection: the predicates
+  of `SelectedShapeActions` (`hasBackground`, `hasStrokeWidth`,
+  `hasStrokeStyle`, `canChangeRoundness`, arrows, text, labels in shapes).
+- **The value each shows** is `getFormValue`'s: the text being typed, else
+  what the selection agrees on (nothing picked when it disagrees; the
+  current colour for colours), else what new elements get.
+- **What a change does** is `actionProperties`'s:
+  - It applies to the selection, with labels for colour, opacity and text
+    properties, and becomes the `currentItem*` value for new elements.
+  - A new sloppiness also gets a new seed.
+  - Edges round adaptively (rectangles) or proportionally (the rest).
+  - Arrow type (sharp or curved) and the twelve arrowheads, crow's feet
+    included. New arrows take the arrow type.
+  - Font family (with its line height), size, alignment and vertical
+    alignment lay the text out again (`redrawTextBoundingBox`): a label in
+    its shape, which grows if it must, and its arrows follow; free text
+    keeps its place, centred on a size change
+    (`offsetElementAfterFontResize`).
+  - Each change is one undo step; while text is typed, it joins the typing.
+- Ctrl+Shift+< and > (a tenth smaller or larger), Ctrl+Alt+C and V (copy
+  and paste styles, `actionStyles`'s rules for corners, text and
+  arrowheads).
+
+**App** (`app/src/properties.rs`, `app/src/icons.rs`):
+
+- A panel on the left, over the drawing, scrolling when taller than the
+  window. Colours: the five quick picks, and a popup with Excalidraw's
+  palette (fifteen colours at the shade in use, the five shades of the
+  current one) and a hex field. Then fill, stroke width, stroke style,
+  sloppiness, edges, arrow type, arrowheads (a popup each end), font
+  (three quick picks shown in their own face, and a list of all of them),
+  size S/M/L/XL, alignment, vertical alignment, opacity, the layer buttons,
+  and duplicate, delete, group, ungroup.
+- **Icons** for the panel and the tool bar, drawn with iced's canvas
+  (iced's SVG support would add a second, older resvg), with the number key
+  in the corner and tooltips with the shortcuts, as Excalidraw's.
+- Escape closes a popup first; a click on the drawing closes it.
+- `--script` takes `prop NAME VALUE` and `popup NAME`, for screenshots.
+
+Checked:
+
+- Tests: five editor tests (what shows for each tool and a mixed
+  selection, undo per change, new elements taking the choices, arrow type
+  and arrowheads, font changes on free text and labels, styles copied and
+  pasted) and an app test through `App::update` (the palette's hex field,
+  Escape, layers, duplicate, delete, Ctrl+Alt+C/V).
+- By eye: screenshots of the panel for shapes, arrows (arrowhead popup),
+  text (palette open) in Light and Kanagawa Wave.
+
+98 tests in the workspace, one more by hand.

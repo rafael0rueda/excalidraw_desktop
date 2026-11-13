@@ -163,7 +163,7 @@ impl Editor {
         if selected.is_empty() {
             return none;
         }
-        common(selected.into_iter().filter(|e| relevant(e)).map(|e| get(e))).or(mixed)
+        common(selected.into_iter().filter(|e| relevant(e)).map(get)).or(mixed)
     }
 
     /// A text element's own value, or its label's for a shape.

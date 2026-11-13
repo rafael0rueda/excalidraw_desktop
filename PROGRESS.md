@@ -28,6 +28,7 @@ editor is short of Excalidraw's, with no properties panel above all. The
 benchmarks still clear the gate. Recommended: keep both, add phases 9–11
 (properties panel, rest of the editor, desktop parity). Decided 2026-11-13:
 keep both, do phases 9–11.
+Phase 9 (the properties panel, toolbar icons) is done.
 
 ## Decisions already made (do not re-litigate)
 

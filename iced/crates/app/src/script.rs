@@ -11,10 +11,16 @@
 //!   text X Y WORDS…            type new text at X Y (`\n` for a new line)
 //!   dbl X Y WORDS…             double-click there, type, finish
 //!   type X Y WORDS…            double-click there and type, still typing
+//!   prop NAME VALUE            a properties panel change: stroke, background
+//!                              (colours), fill, width, style, rough, round,
+//!                              arrow-round, start, end (an arrowhead or none),
+//!                              font, size, align, valign, opacity
+//!   popup NAME                 the panel's popup open in the screenshot:
+//!                              stroke, background, start, end, fonts
 //!
 //! Lines starting with `#` are comments.
 
-use editor::{Editor, Key, Modifiers, Tool};
+use editor::{Editor, Key, Modifiers, Prop, Tool};
 
 pub fn run(editor: &mut Editor, text: &str) -> Result<(), String> {
     for (n, line) in text.lines().enumerate().map(|(n, l)| (n + 1, l.trim())) {
@@ -35,6 +41,8 @@ pub fn run(editor: &mut Editor, text: &str) -> Result<(), String> {
                 .ok_or_else(|| format!("line {n}: expected a number in {line:?}"))
         };
         match words[0] {
+            // The app's, not the editor's.
+            "popup" => {}
             "tool" => {
                 editor.tool = match words.get(1).copied() {
                     Some("rectangle") => Tool::Rectangle,
@@ -46,6 +54,29 @@ pub fn run(editor: &mut Editor, text: &str) -> Result<(), String> {
                     Some("selection") => Tool::Selection,
                     other => return Err(format!("line {n}: unknown tool {other:?}")),
                 }
+            }
+            "prop" => {
+                let value = words.get(2).copied().unwrap_or("");
+                let f = || num(2);
+                let head = || (value != "none").then(|| value.to_owned());
+                editor.set_prop(match words.get(1).copied() {
+                    Some("stroke") => Prop::StrokeColor(value.into()),
+                    Some("background") => Prop::BackgroundColor(value.into()),
+                    Some("fill") => Prop::FillStyle(value.into()),
+                    Some("width") => Prop::StrokeWidth(f()?),
+                    Some("style") => Prop::StrokeStyle(value.into()),
+                    Some("rough") => Prop::Roughness(f()?),
+                    Some("round") => Prop::Round(value == "true"),
+                    Some("arrow-round") => Prop::ArrowRound(value == "true"),
+                    Some("start") => Prop::StartArrowhead(head()),
+                    Some("end") => Prop::EndArrowhead(head()),
+                    Some("font") => Prop::FontFamily(f()?),
+                    Some("size") => Prop::FontSize(f()?),
+                    Some("align") => Prop::TextAlign(value.into()),
+                    Some("valign") => Prop::VerticalAlign(value.into()),
+                    Some("opacity") => Prop::Opacity(f()?),
+                    other => return Err(format!("line {n}: unknown property {other:?}")),
+                });
             }
             "drag" => {
                 let (a, b) = ([num(1)?, num(2)?], [num(3)?, num(4)?]);

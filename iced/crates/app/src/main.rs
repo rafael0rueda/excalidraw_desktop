@@ -27,12 +27,14 @@ mod bench;
 mod chrome;
 mod doc;
 mod exporting;
+mod icons;
 mod images;
 mod instance;
 mod layers;
 mod library;
 mod measure;
 mod paint;
+mod properties;
 mod script;
 mod session;
 mod tabs;
@@ -171,6 +173,7 @@ pub enum Message {
     CopyImage,
     ExportChoice(exporting::Choice),
     Library(library::Msg),
+    Props(properties::Msg),
 }
 
 /// A question the app is waiting on.
@@ -237,6 +240,10 @@ pub struct App {
     status: Option<String>,
     export_prefs: excalidraw_desktop_core::settings::ExportPreferences,
     library: library::Library,
+    /// The properties panel's open popup (a palette, the arrowheads, the
+    /// fonts), and its hex field as typed.
+    popup: Option<properties::Popup>,
+    hex: String,
 }
 
 /// The text box's widget id, to focus it when typing starts.
@@ -298,6 +305,8 @@ impl App {
             status: None,
             export_prefs: Default::default(),
             library: library::Library::load(false).0,
+            popup: None,
+            hex: String::new(),
         };
         if app.dev {
             app.boot_dev(&args);
@@ -334,6 +343,20 @@ impl App {
                     d.layers.apply(&d.editor.scene, changes);
                 }
                 Err(e) => eprintln!("--script {file}: {e}"),
+            }
+            // `popup stroke|background|start|end|fonts`: open in the screenshot.
+            let text = std::fs::read_to_string(file).unwrap_or_default();
+            if let Some(last) = text.lines().rev().find_map(|l| l.trim().strip_prefix("popup ")) {
+                use properties::Popup;
+                self.popup = match last.trim() {
+                    "stroke" => Some(Popup::Stroke),
+                    "background" => Some(Popup::Background),
+                    "start" => Some(Popup::StartHead),
+                    "end" => Some(Popup::EndHead),
+                    "fonts" => Some(Popup::Fonts),
+                    _ => None,
+                };
+                self.hex = "e03131".into();
             }
         }
         self.load_time = self.launched.elapsed();
@@ -786,6 +809,9 @@ impl App {
             Message::Input(input) => {
                 let pointer = &mut self.pointer;
                 let editor = &mut self.tabs[self.active].doc.editor;
+                if matches!(input, Input::Down(..)) {
+                    self.popup = None;
+                }
                 match input {
                     Input::Down(p, m) => editor.pointer_down(p, m),
                     Input::Move(p, m) => {
@@ -807,6 +833,15 @@ impl App {
             Message::ToggleLock => {
                 let editor = &mut self.tab_mut().doc.editor;
                 editor.tool_locked = !editor.tool_locked;
+            }
+            Message::Props(m) => {
+                let hex = matches!(m, properties::Msg::Hex(_));
+                self.props(m);
+                // Typing goes on in the text after a click on the panel
+                // (but not while the hex field is being typed in).
+                if !hex && self.tab().doc.editor.editing.is_some() {
+                    return iced::widget::operation::focus(TEXT_BOX);
+                }
             }
             Message::Undo => self.tab_mut().doc.editor.undo(),
             Message::Redo => self.tab_mut().doc.editor.redo(),
@@ -945,7 +980,7 @@ impl App {
                     return Task::none();
                 }
                 if key == Key::Named(Named::Escape) {
-                    if self.menu.take().is_some() {
+                    if self.menu.take().is_some() || self.popup.take().is_some() {
                         return Task::none();
                     }
                     if self.panel.is_some() {
@@ -972,6 +1007,15 @@ impl App {
                         self.select_tab(next);
                     }
                     (_, "s") if ctrl && shift => return self.handle(Message::SaveAs),
+                    // Copy and paste styles; a tenth larger or smaller text.
+                    (_, "c") if ctrl && modifiers.alt() => {
+                        if self.tab_mut().doc.editor.copy_styles() {
+                            self.status = Some("Copied styles".into());
+                        }
+                    }
+                    (_, "v") if ctrl && modifiers.alt() => self.tab_mut().doc.editor.paste_styles(),
+                    (_, "<" | ",") if ctrl && shift => self.tab_mut().doc.editor.step_font_size(false),
+                    (_, ">" | ".") if ctrl && shift => self.tab_mut().doc.editor.step_font_size(true),
                     (_, "e") if ctrl && shift => return self.export_start(exporting::Kind::Png),
                     (_, "c") if ctrl && shift => return self.copy_image(),
                     (_, "s") if ctrl => return self.handle(Message::Save),
@@ -1054,6 +1098,9 @@ impl App {
         let beside = if self.panel.is_some() || self.library.open { theme_editor::WIDTH } else { 0.0 };
         let top = column![toolbar::toolbar(look, &d.editor), container(status).padding(iced::Padding { top: 0.0, right: 8.0, bottom: 8.0, left: 8.0 })].width(Length::Fill);
         layers = layers.push(container(top).padding(iced::Padding { right: beside, ..iced::Padding::ZERO }));
+        if let Some(props) = properties::view(self) {
+            layers = layers.push(props);
+        }
         if let Some(panel) = &self.panel {
             // Takes the pointer over it; the drawing beside it stays live.
             layers = layers.push(theme_editor::view(self, panel));

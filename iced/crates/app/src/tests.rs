@@ -322,3 +322,73 @@ fn files_tabs_autosave_recovery_and_quit() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// The properties panel through `App::update`, in a development run (no
+/// config directory).
+#[test]
+fn the_properties_panel() {
+    use properties::{Layer, Msg, Popup};
+    let mut app = App::boot(Args { screenshot: Some("/dev/null".into()), chrome: true, ..Args::default() }).0;
+    assert!(properties::view(&app).is_none(), "nothing to show yet");
+    draw_rectangle(&mut app, [0.0, 0.0]);
+    draw_rectangle(&mut app, [200.0, 0.0]);
+    let ed = |app: &App| app.tab().doc.editor.selection.clone();
+    let last = ed(&app)[0].clone();
+    assert!(properties::view(&app).is_some(), "a selection shows it");
+
+    send(&mut app, Message::Props(Msg::Set(editor::Prop::StrokeColor("#2f9e44".into()))));
+    let stroke = |app: &App, id: &str| app.tab().doc.editor.scene.by_id(id).unwrap().stroke_color.clone();
+    assert_eq!(stroke(&app, &last), "#2f9e44");
+
+    // The palette: opened with the colour in its hex field, typed into.
+    send(&mut app, Message::Props(Msg::Popup(Popup::Stroke)));
+    assert_eq!((app.popup, app.hex.as_str()), (Some(Popup::Stroke), "2f9e44"));
+    send(&mut app, Message::Props(Msg::Hex("#ab".into())));
+    assert_eq!(stroke(&app, &last), "#2f9e44", "half a colour changes nothing");
+    send(&mut app, Message::Props(Msg::Hex("#abc".into())));
+    assert_eq!(stroke(&app, &last), "#abc");
+    assert_eq!(app.hex, "abc");
+    // Escape closes the popup before anything else.
+    let esc = Message::Key(keyboard::Event::KeyPressed {
+        key: Key::Named(Named::Escape),
+        modified_key: Key::Named(Named::Escape),
+        physical_key: keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified),
+        location: keyboard::Location::Standard,
+        modifiers: keyboard::Modifiers::empty(),
+        text: None,
+        repeat: false,
+    });
+    send(&mut app, esc.clone());
+    assert_eq!(app.popup, None);
+    assert_eq!(ed(&app), vec![last.clone()], "the selection stays");
+
+    // Layers and actions.
+    send(&mut app, Message::Props(Msg::Layer(Layer::ToBack)));
+    assert_eq!(app.tab().doc.editor.scene.order()[0], last);
+    send(&mut app, Message::Props(Msg::Duplicate));
+    let copy = ed(&app)[0].clone();
+    assert_ne!(copy, last);
+    send(&mut app, Message::Props(Msg::Delete));
+    assert!(app.tab().doc.editor.scene.by_id(&copy).is_none_or(|e| e.is_deleted));
+
+    // Ctrl+Alt+C on one, Ctrl+Alt+V on the other.
+    let key = |c: &str, modifiers| {
+        Message::Key(keyboard::Event::KeyPressed {
+            key: Key::Character(c.into()),
+            modified_key: Key::Character(c.into()),
+            physical_key: keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    };
+    let ctrl_alt = keyboard::Modifiers::CTRL | keyboard::Modifiers::ALT;
+    app.tab_mut().doc.editor.selection = vec![last.clone()];
+    send(&mut app, key("c", ctrl_alt));
+    assert_eq!(app.status.as_deref(), Some("Copied styles"));
+    let other = app.tab().doc.editor.scene.visible().map(|e| e.id.clone()).find(|id| *id != last).unwrap();
+    app.tab_mut().doc.editor.selection = vec![other.clone()];
+    send(&mut app, key("v", ctrl_alt));
+    assert_eq!(stroke(&app, &other), "#abc");
+}
