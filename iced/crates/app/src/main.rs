@@ -40,6 +40,7 @@ mod paint;
 mod properties;
 mod script;
 mod session;
+mod shortcuts;
 mod tabs;
 #[cfg(test)]
 mod tests;
@@ -272,7 +273,7 @@ pub struct App {
 const TEXT_BOX: &str = "text-box";
 
 /// The editor's own key, for a key press, if it has one.
-fn editor_key(key: &Key) -> Option<editor::Key> {
+fn editor_key(key: &Key, shortcut: &str) -> Option<editor::Key> {
     Some(match key.as_ref() {
         Key::Named(Named::Delete) => editor::Key::Delete,
         Key::Named(Named::Backspace) => editor::Key::Backspace,
@@ -282,7 +283,8 @@ fn editor_key(key: &Key) -> Option<editor::Key> {
         Key::Named(Named::ArrowUp) => editor::Key::Up,
         Key::Named(Named::ArrowDown) => editor::Key::Down,
         Key::Named(Named::Enter) => editor::Key::Enter,
-        Key::Character(c) => editor::Key::Char(c.chars().next()?.to_ascii_lowercase()),
+        // Tool letters too fall back to the key's position.
+        Key::Character(c) => editor::Key::Char(shortcut.chars().next().or_else(|| c.chars().next())?.to_ascii_lowercase()),
         _ => return None,
     })
 }
@@ -1045,7 +1047,7 @@ impl App {
     fn key(&mut self, event: keyboard::Event) -> Task<Message> {
         match event {
             keyboard::Event::KeyReleased { key: Key::Named(Named::Space), .. } => self.space = false,
-            keyboard::Event::KeyPressed { key, modifiers, .. } => {
+            keyboard::Event::KeyPressed { key, modifiers, physical_key, .. } => {
                 if self.prompt.is_some() {
                     // Escape is Cancel, never Discard (review 2026-11-04, ST-1).
                     if key == Key::Named(Named::Escape) && !matches!(self.prompt, Some(Prompt::Recover { .. })) {
@@ -1068,10 +1070,9 @@ impl App {
                 }
                 let ctrl = modifiers.command();
                 let shift = modifiers.shift();
-                let lower = match key.as_ref() {
-                    Key::Character(c) => c.to_lowercase(),
-                    _ => String::new(),
-                };
+                // Letters as the layout types them, or by position where it
+                // types no Latin ones; digits by position.
+                let lower = shortcuts::shortcut_key(&key, &physical_key);
                 match (key.as_ref(), lower.as_str()) {
                     (Key::Named(Named::Space), _) => self.space = true,
                     (Key::Named(Named::Tab), _) if ctrl => {
@@ -1079,6 +1080,12 @@ impl App {
                         let next = if shift { (self.active + n - 1) % n } else { (self.active + 1) % n };
                         self.select_tab(next);
                     }
+                    (_, "PageDown" | "PageUp") if ctrl => {
+                        let n = self.tabs.len();
+                        let next = if lower == "PageUp" { (self.active + n - 1) % n } else { (self.active + 1) % n };
+                        self.select_tab(next);
+                    }
+                    (_, "t") if ctrl && !shift => self.new_tab(),
                     (_, "s") if ctrl && shift => return self.handle(Message::SaveAs),
                     // Copy and paste styles; a tenth larger or smaller text.
                     (_, "c") if ctrl && modifiers.alt() => {
@@ -1131,7 +1138,7 @@ impl App {
                     (_, "-" | "_") if ctrl => self.zoom(zoom::Zoom::Out),
                     (_, "0") if ctrl => self.zoom(zoom::Zoom::Reset),
                     _ => {
-                        if let Some(k) = editor_key(&key) {
+                        if let Some(k) = editor_key(&key, &lower) {
                             let m = editor::Modifiers { shift, alt: modifiers.alt(), ctrl };
                             self.tab_mut().doc.editor.key(k, m);
                         }

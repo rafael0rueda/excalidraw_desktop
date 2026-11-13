@@ -499,3 +499,36 @@ fn a_frame_is_renamed_from_its_name() {
     send(&mut app, Message::Answer(Answer::Confirm));
     assert_eq!(app.tab().doc.editor.frame_title(&id), "Checkout");
 }
+
+#[test]
+fn shortcuts_work_on_any_layout() {
+    use keyboard::key::{Code, Physical};
+    let mut app = App::boot(Args { screenshot: Some("/dev/null".into()), chrome: true, ..Args::default() }).0;
+    let press = |key: Key, code: Code, modifiers| {
+        Message::Key(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: Physical::Code(code),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    };
+    let ctrl = keyboard::Modifiers::CTRL;
+    draw_rectangle(&mut app, [0.0, 0.0]);
+    assert_eq!(app.tab().doc.editor.scene.visible().count(), 1);
+    // Russian: Ctrl and the key at Z's place (я) is undo.
+    send(&mut app, press(Key::Character("я".into()), Code::KeyZ, ctrl));
+    assert_eq!(app.tab().doc.editor.scene.visible().count(), 0);
+    // Ctrl+T opens a tab; Ctrl+PageUp and PageDown move between them.
+    send(&mut app, press(Key::Character("t".into()), Code::KeyT, ctrl));
+    assert_eq!((app.tabs.len(), app.active), (2, 1));
+    send(&mut app, press(Key::Named(Named::PageUp), Code::PageUp, ctrl));
+    assert_eq!(app.active, 0);
+    send(&mut app, press(Key::Named(Named::PageDown), Code::PageDown, ctrl));
+    assert_eq!(app.active, 1);
+    // Greek: the key at R's place (ρ) picks the rectangle tool.
+    send(&mut app, press(Key::Character("ρ".into()), Code::KeyR, keyboard::Modifiers::empty()));
+    assert_eq!(app.tab().doc.editor.tool, Tool::Rectangle);
+}
