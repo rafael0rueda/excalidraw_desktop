@@ -250,6 +250,27 @@ fn files_tabs_autosave_recovery_and_quit() {
     let Some(Prompt::Info(text)) = &app.prompt else { panic!("expected what Reload found") };
     assert!(text.starts_with("Loaded 0 user themes from "), "{text}");
     assert!(text.contains("broken.json: ") && text.contains("so it has to be named nord.json"), "{text}");
+    send(&mut app, Message::Answer(Answer::Cancel));
+
+    // Export: the choices are remembered in export.json, as Tauri's are.
+    use exporting::{Choice, Kind};
+    send(&mut app, Message::ExportChoice(Choice::Embed));
+    send(&mut app, Message::ExportChoice(Choice::Scale(1)));
+    let prefs = excalidraw_desktop_core::settings::load_export_preferences();
+    assert!(prefs.embed_scene && prefs.scale == 1 && !prefs.transparent);
+    // The selection, with nothing selected, is a question answered first.
+    app.tab_mut().doc.editor.selection.clear();
+    send(&mut app, Message::Export(Kind::PngSelection));
+    assert!(matches!(&app.prompt, Some(Prompt::Error(e)) if e.contains("Select something")));
+    send(&mut app, Message::Answer(Answer::Cancel));
+    // The image carries the drawing, on the theme's canvas.
+    send(&mut app, Message::SelectTheme("dracula".into()));
+    let png = app.job(false).unwrap().bytes(Kind::Png).unwrap();
+    let inside = scene::Scene::parse(&export::decode_png(&png).expect("embedded")).unwrap();
+    assert_eq!(inside.view_background_color(), Some("#282a36"));
+    assert_eq!(inside.visible().count(), app.tab().doc.editor.scene.visible().count());
+    let svg = String::from_utf8(app.job(false).unwrap().bytes(Kind::Svg).unwrap()).unwrap();
+    assert!(svg.contains(r##"fill="#282a36"/>"##) && export::decode_svg(&svg).is_some());
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

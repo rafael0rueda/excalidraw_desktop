@@ -371,6 +371,28 @@ impl Editor {
             .map(str::to_owned)
     }
 
+    /// What "export the selection" covers (the Tauri app's `expandSelection`):
+    /// the selection, what is inside a selected frame, and the labels of
+    /// both.
+    pub fn export_selection(&self) -> HashSet<String> {
+        let mut ids: HashSet<String> = self.selected().iter().map(|e| e.id.clone()).collect();
+        let framed: Vec<String> = self
+            .scene
+            .visible()
+            .filter(|e| e.frame_id.as_ref().is_some_and(|f| ids.contains(f)))
+            .map(|e| e.id.clone())
+            .collect();
+        ids.extend(framed);
+        let labels: Vec<String> = self
+            .scene
+            .visible()
+            .filter(|e| e.text.as_ref().and_then(|t| t.container_id.as_ref()).is_some_and(|c| ids.contains(c)))
+            .map(|e| e.id.clone())
+            .collect();
+        ids.extend(labels);
+        ids
+    }
+
     /// `ids` and the labels of any of them that have one.
     fn with_labels(&self, ids: Vec<String>) -> Vec<String> {
         let mut out = ids.clone();

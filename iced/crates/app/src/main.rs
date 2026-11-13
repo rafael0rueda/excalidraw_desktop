@@ -18,12 +18,15 @@
 //! `--theme ID` draws in that theme (the light one otherwise, with the
 //! drawing's own canvas colour, as Excalidraw shows it).
 //! `--script FILE` replays editor actions first (see script.rs).
+//! `--export OUT.png|OUT.svg DRAWING` exports without a window (`SCALE=`,
+//! `TRANSPARENT=1`, `EMBED=1`; `--theme` for its canvas colour).
 //! `NO_MSAA=1` turns antialiasing off, to separate what MSAA does to thin
 //! lines (it thickens them; see PLAN.md) from what the geometry is.
 
 mod bench;
 mod chrome;
 mod doc;
+mod exporting;
 mod images;
 mod instance;
 mod layers;
@@ -74,6 +77,8 @@ struct Args {
     theme: Option<String>,
     /// The desktop prefers dark, as it said before the window opened.
     system_dark: bool,
+    /// `--export OUT`: export the drawing and exit, no window.
+    export: Option<String>,
 }
 
 impl Args {
@@ -102,6 +107,7 @@ fn args() -> Args {
             "--script" => args.script = value(),
             "--chrome" => args.chrome = true,
             "--theme" => args.theme = value(),
+            "--export" => args.export = value(),
             flag if flag.starts_with('-') => {}
             _ => {
                 let p = PathBuf::from(&a);
@@ -154,6 +160,12 @@ pub enum Message {
     ReloadThemes,
     /// The desktop switched between light and dark.
     SystemDark(bool),
+    Export(exporting::Kind),
+    ExportTo(exporting::Kind, Option<PathBuf>),
+    /// An export or copy finished: what to say, or what went wrong.
+    Exported(Result<String, String>),
+    CopyImage,
+    ExportChoice(exporting::Choice),
 }
 
 /// A question the app is waiting on.
@@ -217,6 +229,7 @@ pub struct App {
     /// The last pointer position, in the scene: where pastes land.
     pointer: [f64; 2],
     status: Option<String>,
+    export_prefs: excalidraw_desktop_core::settings::ExportPreferences,
 }
 
 /// The text box's widget id, to focus it when typing starts.
@@ -276,11 +289,13 @@ impl App {
             space: false,
             pointer: [0.0, 0.0],
             status: None,
+            export_prefs: Default::default(),
         };
         if app.dev {
             app.boot_dev(&args);
         } else {
             app.boot_session(&args);
+            app.load_export_preferences();
         }
         let task = app.sync();
         (app, task)
@@ -727,14 +742,14 @@ impl App {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         // While a question is up, it is the only thing that can be answered.
-        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_)) {
+        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::Key(_) | Message::Resized(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_)) {
             return Task::none();
         }
         // The menu closes on anything done in the window (a click outside it
         // only closes it), not on the clocks or the pointer passing over.
         let action = !matches!(
             message,
-            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_) | Message::Input(Input::Move(..))
+            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Input(Input::Move(..))
         );
         if self.menu.is_some() && action {
             self.menu = None;
@@ -828,6 +843,11 @@ impl App {
             Message::Theme(e) => self.theme_edit(e, false),
             Message::ReloadThemes => self.reload_themes(),
             Message::SystemDark(dark) => self.themes.system_dark = dark,
+            Message::Export(kind) => return self.export_start(kind),
+            Message::ExportTo(kind, path) => return self.export_to(kind, path),
+            Message::Exported(result) => self.exported(result),
+            Message::CopyImage => return self.copy_image(),
+            Message::ExportChoice(c) => self.export_choice(c),
             Message::Quit => return self.quit(),
             Message::Answer(a) => return self.answer(a),
             Message::Autosave(now) => {
@@ -923,6 +943,8 @@ impl App {
                         self.select_tab(next);
                     }
                     (_, "s") if ctrl && shift => return self.handle(Message::SaveAs),
+                    (_, "e") if ctrl && shift => return self.export_start(exporting::Kind::Png),
+                    (_, "c") if ctrl && shift => return self.copy_image(),
                     (_, "s") if ctrl => return self.handle(Message::Save),
                     (_, "o") if ctrl => return Self::pick_open(),
                     (_, "n") if ctrl => self.new_tab(),
@@ -1011,6 +1033,7 @@ impl App {
         match self.menu {
             Some(Menu::File) => window = window.push(chrome::file_menu(self)),
             Some(Menu::Theme) => window = window.push(chrome::theme_menu(self)),
+            Some(Menu::Export) => window = window.push(chrome::export_menu(self)),
             None => {}
         }
         if let Some(prompt) = &self.prompt {
@@ -1111,6 +1134,13 @@ fn load_fonts() {
 
 fn main() -> iced::Result {
     let mut args = args();
+    if let Some(out) = &args.export {
+        if let Err(e) = exporting::export_cli(out, args.paths.first().map(PathBuf::as_path), args.theme.as_deref()) {
+            eprintln!("excalidraw-iced: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     // Held until the app exits: the kernel lets go of it if the app dies.
     let mut _lock = None;
     if !args.dev() {

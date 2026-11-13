@@ -489,22 +489,40 @@ impl Export<'_> {
         }
         let mut db = resvg::usvg::fontdb::Database::new();
         let mut loaded = HashSet::new();
+        // Characters a text's own font lacks, which a browser (and the
+        // canvas) would take from Excalifont, the one with CJK glyphs.
+        let mut missing = BTreeSet::new();
+        let spare = (self.font)(FALLBACK_FAMILY);
+        let spare_face = spare.and_then(|f| ttf_parser::Face::parse(f.data, 0).ok());
         for e in self.elements() {
-            let family = match (&e.text, e.kind) {
-                (Some(t), _) => t.font_family,
-                (None, Kind::Frame | Kind::MagicFrame) => 2.0,
+            let (family, text) = match (&e.text, e.kind) {
+                (Some(t), _) => (t.font_family, t.text.as_str()),
+                (None, Kind::Frame | Kind::MagicFrame) => (2.0, e.frame_name.as_deref().unwrap_or("")),
                 _ => continue,
             };
-            if let Some(font) = (self.font)(family) {
-                if loaded.insert(font.family) {
-                    db.load_font_source(resvg::usvg::fontdb::Source::Binary(Arc::new(font.data)));
-                }
+            let Some(font) = (self.font)(family) else { continue };
+            if loaded.insert(font.family) {
+                db.load_font_source(resvg::usvg::fontdb::Source::Binary(Arc::new(font.data)));
+            }
+            if let (Ok(face), Some(spare)) = (ttf_parser::Face::parse(font.data, 0), &spare_face) {
+                missing.extend(text.chars().filter(|c| !c.is_whitespace() && face.glyph_index(*c).is_none() && spare.glyph_index(*c).is_some()));
+            }
+        }
+        // resvg's own fallback sets a whole line in the fallback font when
+        // that font has every character of it, as Excalifont has the Latin
+        // ones: given a font of only the missing characters, under a name of
+        // its own, it falls back one character at a time instead.
+        let mut fallback = None;
+        if let (false, Some(spare)) = (missing.is_empty(), spare) {
+            if let Ok(data) = fontmerge::subset_named(spare.data, missing.iter().copied(), Some("Excalidraw Fallback")) {
+                fallback = db.load_font_source(resvg::usvg::fontdb::Source::Binary(Arc::new(data))).first().copied();
             }
         }
         let mut options = resvg::usvg::Options {
             fontdb: Arc::new(db),
             ..resvg::usvg::Options::default()
         };
+        options.font_resolver.select_fallback = Box::new(move |_, used, _| fallback.filter(|id| !used.contains(id)));
         // Images come inline or not at all: an image inside a drawing must
         // not reach for a file on this machine.
         options.image_href_resolver.resolve_string = Box::new(|_, _| None);
@@ -538,6 +556,8 @@ impl Export<'_> {
 }
 
 const FRAME_RADIUS: f64 = 8.0;
+/// Excalifont: where a character no other font has is looked for.
+const FALLBACK_FAMILY: f64 = 5.0;
 const FRAME_NAME_SIZE: f64 = 14.0;
 
 /// The `.excalidraw` JSON of what `only` picks out of `scene` (all of it if

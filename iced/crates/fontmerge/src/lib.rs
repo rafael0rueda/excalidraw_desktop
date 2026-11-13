@@ -376,6 +376,32 @@ fn short_names(table: &[u8]) -> Vec<u8> {
 /// renumbered, so the layout tables (kerning, ligatures), which name glyphs
 /// by number, are left out; outlines, advances and metrics are kept.
 pub fn subset(font: &[u8], chars: impl IntoIterator<Item = char>) -> Result<Vec<u8>, Error> {
+    subset_named(font, chars, None)
+}
+
+/// A `name` table naming the font `family`, Windows Unicode English only.
+fn names_for(family: &str) -> Vec<u8> {
+    let postscript: String = family.chars().filter(char::is_ascii_alphanumeric).collect();
+    let records = [(1u16, family.to_owned()), (2, "Regular".to_owned()), (4, family.to_owned()), (6, postscript)];
+    let mut out = Vec::new();
+    out.extend(0u16.to_be_bytes());
+    out.extend((records.len() as u16).to_be_bytes());
+    out.extend((6 + 12 * records.len() as u16).to_be_bytes());
+    let mut data: Vec<u8> = Vec::new();
+    for (id, text) in &records {
+        let bytes: Vec<u8> = text.encode_utf16().flat_map(u16::to_be_bytes).collect();
+        for v in [3u16, 1, 0x409, *id, bytes.len() as u16, data.len() as u16] {
+            out.extend(v.to_be_bytes());
+        }
+        data.extend(bytes);
+    }
+    out.extend(data);
+    out
+}
+
+/// `subset`, renamed to `family` if given: a font that can only ever be
+/// asked for by that name.
+pub fn subset_named(font: &[u8], chars: impl IntoIterator<Item = char>, family: Option<&str>) -> Result<Vec<u8>, Error> {
     let s = Source::parse(0, font)?;
     let mut chars_kept = BTreeMap::new();
     let mut keep = vec![0u16];
@@ -444,8 +470,10 @@ pub fn subset(font: &[u8], chars: impl IntoIterator<Item = char>) -> Result<Vec<
         (*b"hmtx", hmtx),
         (*b"cmap", cmap(&cmap_of)),
     ];
-    if let Some(t) = s.table(b"name") {
-        tables.push((*b"name", short_names(t)));
+    match (family, s.table(b"name")) {
+        (Some(family), _) => tables.push((*b"name", names_for(family))),
+        (None, Some(t)) => tables.push((*b"name", short_names(t))),
+        (None, None) => {}
     }
     for tag in [b"OS/2", b"gasp", b"cvt ", b"fpgm", b"prep"] {
         if let Some(t) = s.table(tag) {

@@ -32,17 +32,7 @@ fn path_of(segs: &[Seg], map: &impl Fn([f64; 2]) -> Point) -> Path {
 /// Excalidraw's font families, by the id a text element stores, named as
 /// the bundled fonts name themselves (`build.rs`).
 pub fn font(family: f64) -> Font {
-    let dir = match family as i64 {
-        1 => "Virgil",
-        // Helvetica is a local font in Excalidraw; on Linux the browser
-        // resolves it to Liberation Sans or a lookalike.
-        2 | 9 => "Liberation",
-        3 => "Cascadia",
-        6 => "Nunito",
-        7 => "Lilita",
-        8 => "ComicShanns",
-        _ => "Excalifont",
-    };
+    let dir = font_dir(family);
     match crate::FAMILY_NAMES.iter().find(|(d, _, _)| *d == dir) {
         // The file's own weight too: Nunito's Latin file is the Medium
         // instance of a family named "Nunito ExtraLight", and asking for
@@ -53,6 +43,29 @@ pub fn font(family: f64) -> Font {
         },
         None => Font::DEFAULT,
     }
+}
+
+/// The bundled font (`build.rs`'s directory name) a family id is drawn in.
+fn font_dir(family: f64) -> &'static str {
+    match family as i64 {
+        1 => "Virgil",
+        // Helvetica is a local font in Excalidraw; on Linux the browser
+        // resolves it to Liberation Sans or a lookalike.
+        2 | 9 => "Liberation",
+        3 => "Cascadia",
+        6 => "Nunito",
+        7 => "Lilita",
+        8 => "ComicShanns",
+        _ => "Excalifont",
+    }
+}
+
+/// The same font for the exporter: its name and its bytes.
+pub fn export_font(family: f64) -> Option<export::Font> {
+    let dir = font_dir(family);
+    let (_, name, _) = crate::FAMILY_NAMES.iter().find(|(d, _, _)| *d == dir)?;
+    let (_, data) = crate::FONTS.iter().find(|(n, _)| n == name)?;
+    Some(export::Font { family: name, data })
 }
 
 fn font_weight(w: u16) -> iced::font::Weight {

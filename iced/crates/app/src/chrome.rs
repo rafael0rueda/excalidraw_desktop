@@ -13,6 +13,7 @@ pub const TAB_BAR: f32 = 36.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Menu {
     File,
+    Export,
     Theme,
 }
 
@@ -188,7 +189,7 @@ pub fn tab_bar(app: &App) -> Element<'_, Message> {
     tabs = tabs.push(button(small("+")).on_press(Message::NewTab).style(chip(look, false)).padding([5, 10]));
     let menu = |label: &str, m: Menu| button(small(label.to_owned())).on_press(Message::ToggleMenu(m)).style(chip(look, app.menu == Some(m))).padding([5, 10]);
     // Everything sits on the bottom edge, where the open tab joins the drawing.
-    let bar = row![menu("File", Menu::File), menu("Theme", Menu::Theme), Space::new().width(8), tabs].spacing(2).align_y(Alignment::End).height(Length::Fill);
+    let bar = row![menu("File", Menu::File), menu("Export", Menu::Export), menu("Theme", Menu::Theme), Space::new().width(8), tabs].spacing(2).align_y(Alignment::End).height(Length::Fill);
     let bar = container(bar).padding(iced::Padding { top: 0.0, right: 8.0, bottom: 0.0, left: 8.0 }).width(Length::Fill).height(Length::Fill);
     // A line under it, for themes whose panels and canvas are one colour.
     container(column![bar, rule(look)])
@@ -265,6 +266,30 @@ pub fn theme_menu(app: &App) -> Element<'_, Message> {
         items = items.push(item(look, &format!("{}{custom}", t.name), check(*selection == t.id), Message::SelectTheme(t.id.clone())));
     }
     items = items.push(rule(look)).push(item(look, "Customise themes…", "Ctrl+,", Message::Theme(crate::theme_editor::Edit::Open))).push(item(look, "Reload user themes", "", Message::ReloadThemes));
+    dropdown(look, 112.0, items)
+}
+
+/// Export: PNG, the selection as PNG, SVG, the clipboard; the remembered
+/// choices, ticked.
+pub fn export_menu(app: &App) -> Element<'_, Message> {
+    use crate::exporting::{Choice, Kind};
+    let look = app.look();
+    let p = &app.export_prefs;
+    let check = |on: bool| if on { "✓" } else { "" };
+    let mut items = column![
+        item(look, "Export PNG…", "Ctrl+Shift+E", Message::Export(Kind::Png)),
+        item(look, "Export selection as PNG…", "", Message::Export(Kind::PngSelection)),
+        item(look, "Export SVG…", "", Message::Export(Kind::Svg)),
+        rule(look),
+        item(look, "Copy image to clipboard", "Ctrl+Shift+C", Message::CopyImage),
+        rule(look),
+        item(look, "Transparent background", check(p.transparent), Message::ExportChoice(Choice::Transparent)),
+        item(look, "Embed drawing in exported files", check(p.embed_scene), Message::ExportChoice(Choice::Embed)),
+        heading(look, "PNG scale"),
+    ];
+    for s in 1..=3u8 {
+        items = items.push(item(look, &format!("{s}×"), check(p.scale == s), Message::ExportChoice(Choice::Scale(s))));
+    }
     dropdown(look, 52.0, items)
 }
 
