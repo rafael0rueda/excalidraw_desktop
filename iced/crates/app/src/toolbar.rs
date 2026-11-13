@@ -51,6 +51,8 @@ pub fn toolbar(look: Look, editor: &Editor) -> Element<'_, Message> {
     }
     let image = button(keyed(look, Icon::Image, "9")).on_press(Message::InsertImage).padding(3).style(chip(look, false));
     tools = tools.push(tip(look, image, "Insert image — 9".into()));
+    let frame = button(keyed(look, Icon::Frame, "F")).on_press(Message::Tool(Tool::Frame)).padding(3).style(chip(look, editor.tool == Tool::Frame));
+    tools = tools.push(tip(look, frame, "Frame tool — F".into()));
     let eraser = button(keyed(look, Icon::Eraser, "0")).on_press(Message::Tool(Tool::Eraser)).padding(3).style(chip(look, editor.tool == Tool::Eraser));
     tools = tools.push(tip(look, eraser, "Eraser — E or 0".into()));
     let undo = button(container(icon(Icon::Undo, look.text, 18.0)).center(Length::Fill).width(26).height(24)).on_press_maybe(editor.can_undo().then_some(Message::Undo)).padding(3).style(chip(look, false));

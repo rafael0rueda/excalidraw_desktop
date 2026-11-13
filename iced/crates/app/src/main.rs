@@ -205,6 +205,8 @@ pub enum Prompt {
     RemoveLibraryItem { id: String, name: String },
     /// Ctrl+K: the selected element's link, as typed so far.
     Link { draft: String },
+    /// A frame's name, being edited.
+    FrameName { id: String, draft: String },
 }
 
 /// A quit in progress: which tabs have been asked about, and which of them
@@ -819,6 +821,12 @@ impl App {
                 }
                 Task::none()
             }
+            Some(Prompt::FrameName { id, draft }) => {
+                if answer == Answer::Confirm {
+                    self.tab_mut().doc.editor.rename_frame(&id, &draft);
+                }
+                Task::none()
+            }
             Some(Prompt::Error(_) | Prompt::Info(_)) | None => Task::none(),
         }
     }
@@ -852,6 +860,14 @@ impl App {
                 self.popup = None;
                 if let Some(link) = self.tab().doc.editor.link_at(p) {
                     self.follow_link(&link);
+                }
+            }
+            Message::Input(Input::DoubleClick(p)) if self.tab().doc.editor.tool == Tool::Selection && self.tab().doc.editor.frame_name_at(p).is_some() => {
+                // A frame's name: renamed in a small dialog.
+                if let Some(id) = self.tab().doc.editor.frame_name_at(p) {
+                    let draft = self.tab().doc.editor.frame_title(&id);
+                    self.prompt = Some(Prompt::FrameName { id, draft });
+                    return iced::widget::operation::focus(chrome::LINK_FIELD);
                 }
             }
             Message::Input(Input::Context(p, screen)) => self.open_context(p, screen),
@@ -918,7 +934,7 @@ impl App {
             Message::Context(action) => return self.context_action(action),
             Message::Zoom(z) => self.zoom(z),
             Message::LinkDraft(d) => {
-                if let Some(Prompt::Link { draft }) = &mut self.prompt {
+                if let Some(Prompt::Link { draft } | Prompt::FrameName { draft, .. }) = &mut self.prompt {
                     *draft = d;
                 }
             }

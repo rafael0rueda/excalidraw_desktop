@@ -483,3 +483,19 @@ fn zoom_buttons_step_by_a_tenth() {
     send(&mut app, Message::Zoom(zoom::Zoom::Reset));
     assert_eq!(app.tab().view.zoom, 1.0);
 }
+
+#[test]
+fn a_frame_is_renamed_from_its_name() {
+    let mut app = App::boot(Args { screenshot: Some("/dev/null".into()), chrome: true, ..Args::default() }).0;
+    send(&mut app, Message::Tool(Tool::Frame));
+    send(&mut app, Message::Input(Input::Down([0.0, 0.0], NONE)));
+    send(&mut app, Message::Input(Input::Move([150.0, 100.0], NONE)));
+    send(&mut app, Message::Input(Input::Up([150.0, 100.0], NONE)));
+    let id = app.tab().doc.editor.selection[0].clone();
+    let zoom = app.tab().doc.editor.zoom;
+    send(&mut app, Message::Input(Input::DoubleClick([10.0, -5.0 / zoom])));
+    assert!(matches!(&app.prompt, Some(Prompt::FrameName { draft, .. }) if draft == "Frame"));
+    send(&mut app, Message::LinkDraft("Checkout".into()));
+    send(&mut app, Message::Answer(Answer::Confirm));
+    assert_eq!(app.tab().doc.editor.frame_title(&id), "Checkout");
+}

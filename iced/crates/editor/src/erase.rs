@@ -82,6 +82,8 @@ impl Editor {
         if ids.is_empty() {
             return;
         }
+        // A frame goes with what it holds.
+        let ids = self.with_frames(ids);
         self.selection = self.in_order(ids);
         self.delete_selected();
     }

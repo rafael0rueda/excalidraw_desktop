@@ -996,3 +996,45 @@ fn the_grid_snaps_new_shapes_moves_and_resizes() {
     let free = rect(&mut ed, 13.0, 207.0, 50.0, 50.0);
     assert_eq!(get(&ed, &free).x, 13.0, "off: no snapping");
 }
+
+#[test]
+fn frames_take_in_what_is_inside_and_carry_it() {
+    let mut ed = empty();
+    let inside = rect(&mut ed, 20.0, 20.0, 40.0, 40.0);
+    let half = rect(&mut ed, 180.0, 20.0, 60.0, 40.0);
+    let outside = rect(&mut ed, 400.0, 20.0, 40.0, 40.0);
+    ed.key(Key::Char('f'), NONE);
+    assert_eq!(ed.tool, Tool::Frame);
+    drag(&mut ed, [0.0, 0.0], [200.0, 100.0], NONE);
+    let f = ed.selection[0].clone();
+    let fe = get(&ed, &f);
+    assert_eq!(fe.kind, Kind::Frame);
+    assert_eq!((fe.raw()["strokeColor"].clone(), fe.raw()["roughness"].clone(), fe.raw()["name"].clone()), (json!("#bbb"), json!(0), Value::Null));
+    assert_eq!(get(&ed, &inside).frame_id.as_deref(), Some(f.as_str()), "wholly inside: taken in");
+    assert_eq!(get(&ed, &half).frame_id, None, "half in: not");
+    assert_eq!(ed.frame_title(&f), "Frame");
+
+    // The frame moves what it holds.
+    drag(&mut ed, [40.0, 0.0], [40.0, 200.0], NONE);
+    assert_eq!(get(&ed, &f).y, 200.0);
+    assert_eq!(get(&ed, &inside).y, 220.0);
+    // Its name picks it.
+    ed.selection.clear();
+    assert_eq!(ed.frame_name_at([10.0, 195.0]), Some(f.clone()));
+
+    // Dragged onto the frame, a shape joins it; dragged off, it leaves.
+    ed.selection = vec![outside.clone()];
+    drag(&mut ed, [410.0, 20.0], [110.0, 240.0], NONE);
+    assert_eq!(get(&ed, &outside).frame_id.as_deref(), Some(f.as_str()));
+    ed.selection = vec![inside.clone()];
+    drag(&mut ed, [30.0, 220.0], [600.0, 600.0], NONE);
+    assert_eq!(get(&ed, &inside).frame_id, None);
+
+    // Renamed; deleting the frame deletes what it holds.
+    ed.rename_frame(&f, "Login screen");
+    assert_eq!(ed.frame_title(&f), "Login screen");
+    ed.selection = vec![f.clone()];
+    ed.key(Key::Delete, NONE);
+    assert!(get(&ed, &outside).is_deleted);
+    assert!(!get(&ed, &inside).is_deleted);
+}

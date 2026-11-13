@@ -21,7 +21,6 @@ pub enum Icon {
     Text,
     Eraser,
     Image,
-    #[allow(dead_code)]
     Frame,
     Lock(bool),
     Undo,

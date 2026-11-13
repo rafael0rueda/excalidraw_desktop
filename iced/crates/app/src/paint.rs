@@ -261,10 +261,12 @@ fn item_into(
                     .with_width(w)
                     .with_color(color(render::color::parse(c), opacity)),
             );
-            if let Some(name) = name {
+            // `getFrameLikeTitle`: an unnamed frame is called Frame.
+            let title = name.clone().unwrap_or_else(|| if *magic { "AI Frame".into() } else { "Frame".into() });
+            {
                 let size = 14.0 / zoom;
                 f.fill_text(Text {
-                    content: name.clone(),
+                    content: title,
                     position: Point::new(0.0, -3.0 / zoom),
                     size: Pixels(size),
                     color: color(render::color::parse("#999999"), opacity),

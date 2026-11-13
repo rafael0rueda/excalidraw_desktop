@@ -11,6 +11,7 @@
 mod arrange;
 mod binding;
 mod erase;
+mod frames;
 pub mod geometry;
 mod history;
 mod insert;
@@ -48,6 +49,7 @@ pub enum Tool {
     FreeDraw,
     Text,
     Eraser,
+    Frame,
 }
 
 impl Tool {
@@ -59,6 +61,7 @@ impl Tool {
             Tool::Arrow => "arrow",
             Tool::Line => "line",
             Tool::FreeDraw => "freedraw",
+            Tool::Frame => "frame",
             _ => return None,
         })
     }
@@ -163,6 +166,8 @@ pub struct Editor {
     pub marquee: Option<Bounds>,
     /// The shape an arrow being drawn would bind to, for the overlay.
     pub binding_hint: Option<String>,
+    /// The frame what is being dragged would join, for the overlay.
+    pub frame_hint: Option<String>,
     /// The line point last picked, which Delete removes.
     pub selected_point: Option<usize>,
     /// The text being typed, if any: the app shows its own text box over it.
@@ -222,6 +227,7 @@ impl Editor {
             dirty: false,
             marquee: None,
             binding_hint: None,
+            frame_hint: None,
             selected_point: None,
             editing: None,
             font_family: 5.0,
@@ -411,6 +417,11 @@ impl Editor {
         }
     }
 
+    /// `element_at`, or failing that a frame by its name.
+    fn element_or_frame_at(&self, p: Point) -> Option<&Element> {
+        self.element_at(p).or_else(|| self.frame_name_at(p).and_then(|id| self.visible(&id)))
+    }
+
     /// The label inside `container`, if it has a live one.
     pub fn bound_text_of(&self, container: &str) -> Option<String> {
         let c = self.scene.by_id(container)?;
@@ -521,6 +532,9 @@ impl Editor {
             let p = if kind == "freedraw" { p } else { self.snap(p, m) };
             self.begin();
             let mut raw = new_element(kind, p[0], p[1], &self.style);
+            if kind == "frame" {
+                frames::frame_style(&mut raw);
+            }
             if kind == "freedraw" {
                 raw.insert("points".into(), json!([[0, 0]]));
             } else if kind == "line" || kind == "arrow" {
@@ -568,7 +582,7 @@ impl Editor {
             });
             return;
         }
-        let hit = self.element_at(p).map(|e| e.id.clone());
+        let hit = self.element_or_frame_at(p).map(|e| e.id.clone());
         let in_selection_box =
             self.selection.len() > 1 && self.selection_bounds().is_some_and(|b| contains(b, p));
         match hit {
@@ -599,7 +613,7 @@ impl Editor {
                 return;
             }
         }
-        let ids = self.with_labels(self.selected_in_order());
+        let ids = self.with_contents(self.selected_in_order());
         let origins = ids
             .iter()
             .filter_map(|id| self.scene.by_id(id))
@@ -664,6 +678,7 @@ impl Editor {
                 for id in &moving {
                     self.update_bound_arrows(id, &moving);
                 }
+                self.frame_hint = self.frame_at(p, &moving);
                 self.gesture = Some(Gesture::Drag { start, origins, corner });
             }
             Some(Gesture::Resize(r)) => {
@@ -775,6 +790,7 @@ impl Editor {
         self.pointer_move(p, m);
         self.marquee = None;
         self.binding_hint = None;
+        self.frame_hint = None;
         match self.gesture.take() {
             Some(Gesture::Create { id, .. }) => {
                 let e = self.scene.by_id(&id);
@@ -799,6 +815,9 @@ impl Editor {
                 // `bindOrUnbindLinearElement`: both ends, to what they are on.
                 if self.scene.by_id(&id).is_some_and(|e| e.kind == Kind::Arrow) {
                     self.rebind(&id);
+                }
+                if self.scene.by_id(&id).is_some_and(|e| e.kind == Kind::Frame) {
+                    self.adopt_into_new_frame(&id);
                 }
                 self.commit();
                 if !self.tool_locked && self.tool != Tool::FreeDraw {
@@ -842,6 +861,11 @@ impl Editor {
                     if bound_elsewhere || unbound_arrow {
                         self.rebind(id);
                     }
+                }
+                // Moved at all: onto a frame, or out of one.
+                let moved = origins.iter().any(|(id, x, y)| self.scene.by_id(id).is_some_and(|e| e.x != *x || e.y != *y));
+                if moved {
+                    self.update_frames_after_drag(&moving, p);
                 }
                 self.commit();
             }
@@ -950,6 +974,7 @@ impl Editor {
                     'p' | '7' => Tool::FreeDraw,
                     't' | '8' => Tool::Text,
                     'e' | '0' => Tool::Eraser,
+                    'f' => Tool::Frame,
                     'h' => Tool::Hand,
                     'q' => {
                         self.tool_locked = !self.tool_locked;
@@ -990,7 +1015,7 @@ impl Editor {
     }
 
     pub fn translate_selected(&mut self, dx: f64, dy: f64) {
-        let ids = self.with_labels(self.selected_in_order());
+        let ids = self.with_contents(self.selected_in_order());
         let moves: Vec<(String, f64, f64)> = ids
             .iter()
             .filter_map(|id| self.scene.by_id(id))
@@ -1011,7 +1036,7 @@ impl Editor {
     }
 
     pub fn delete_selected(&mut self) {
-        let ids = self.with_labels(self.selected_in_order());
+        let ids = self.with_contents(self.selected_in_order());
         if ids.is_empty() {
             return;
         }
@@ -1854,7 +1879,7 @@ impl Editor {
 
     /// Ctrl+D: copies just above the originals, offset, and selected.
     pub fn duplicate(&mut self) {
-        let ids = self.in_order(self.with_labels(self.selected_in_order()));
+        let ids = self.in_order(self.with_contents(self.selected_in_order()));
         if ids.is_empty() {
             return;
         }
@@ -1880,7 +1905,7 @@ impl Editor {
 
     /// The selection in Excalidraw's clipboard format, files included.
     pub fn copy(&self) -> Option<String> {
-        let ids = self.in_order(self.with_labels(self.selected_in_order()));
+        let ids = self.in_order(self.with_contents(self.selected_in_order()));
         if ids.is_empty() {
             return None;
         }

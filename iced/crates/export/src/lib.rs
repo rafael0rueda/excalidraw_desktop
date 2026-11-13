@@ -201,7 +201,7 @@ impl Export<'_> {
                 continue;
             }
             let mut eb = editor::geometry::bounds(e);
-            if frames.contains(e.id.as_str()) && e.frame_name.as_deref().is_some_and(|s| !s.is_empty()) {
+            if frames.contains(e.id.as_str()) {
                 eb[1] -= FRAME_NAME_SIZE * 1.25 + 3.0;
             }
             b = Some(b.map_or(eb, |b| editor::geometry::union(b, eb)));
@@ -448,7 +448,7 @@ impl Export<'_> {
                 )
                 .unwrap();
             }
-            Item::Frame { width, height, name, .. } => {
+            Item::Frame { width, height, name, magic } => {
                 write!(
                     out,
                     r##"<rect width="{}" height="{}" rx="{FRAME_RADIUS}" ry="{FRAME_RADIUS}" fill="none" stroke="#bbb" stroke-width="2"/>"##,
@@ -456,7 +456,9 @@ impl Export<'_> {
                     n(*height)
                 )
                 .unwrap();
-                if let Some(name) = name.as_deref().filter(|s| !s.is_empty()) {
+                // `getFrameLikeTitle`: unnamed frames are labelled too.
+                let title = frame_title(name.as_deref(), *magic);
+                if let Some(name) = Some(title.as_str()).filter(|s| !s.is_empty()) {
                     let family = match mode {
                         Mode::File => excalidraw_family(2.0).1.to_owned(),
                         Mode::Raster => (self.font)(2.0).map_or("sans-serif".to_owned(), |f| f.family.to_owned()),
@@ -503,9 +505,9 @@ impl Export<'_> {
         let spare = (self.font)(FALLBACK_FAMILY);
         let spare_face = spare.and_then(|f| ttf_parser::Face::parse(f.data, 0).ok());
         for e in self.elements() {
-            let (family, text) = match (&e.text, e.kind) {
-                (Some(t), _) => (t.font_family, t.text.as_str()),
-                (None, Kind::Frame | Kind::MagicFrame) => (2.0, e.frame_name.as_deref().unwrap_or("")),
+            let (family, text): (f64, std::borrow::Cow<'_, str>) = match (&e.text, e.kind) {
+                (Some(t), _) => (t.font_family, t.text.as_str().into()),
+                (None, Kind::Frame | Kind::MagicFrame) => (2.0, frame_title(e.frame_name.as_deref(), e.kind == Kind::MagicFrame).into()),
                 _ => continue,
             };
             let Some(font) = (self.font)(family) else { continue };
@@ -563,6 +565,15 @@ impl Export<'_> {
 }
 
 /// Premultiplied pixels made straight RGBA.
+/// `getFrameLikeTitle`.
+fn frame_title(name: Option<&str>, magic: bool) -> String {
+    match name {
+        Some(n) => n.to_owned(),
+        None if magic => "AI Frame".into(),
+        None => "Frame".into(),
+    }
+}
+
 fn straight(pixmap: resvg::tiny_skia::Pixmap) -> (u32, u32, Vec<u8>) {
     let (w, h) = (pixmap.width(), pixmap.height());
     let mut data = Vec::with_capacity(pixmap.data().len());
