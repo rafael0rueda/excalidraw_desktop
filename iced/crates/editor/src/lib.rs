@@ -111,6 +111,9 @@ enum Gesture {
     Drag {
         start: Point,
         origins: Vec<(String, f64, f64)>,
+        /// The selection's top left when it was picked up: what the grid
+        /// snaps.
+        corner: Point,
     },
     Resize(transform::Resize),
     Rotate(transform::Rotate),
@@ -259,6 +262,36 @@ impl Editor {
 
     pub fn mark_saved(&mut self) {
         self.dirty = false;
+    }
+
+    // --- the grid (`gridModeEnabled`, kept in the drawing's appState)
+
+    /// The grid's spacing when it is on (`gridSize`, 20 unless the drawing
+    /// says otherwise).
+    pub fn grid_size(&self) -> Option<f64> {
+        if self.scene.app_state("gridModeEnabled") != Some(&Value::Bool(true)) {
+            return None;
+        }
+        Some(self.scene.app_state("gridSize").and_then(Value::as_f64).filter(|g| *g >= 1.0).unwrap_or(20.0))
+    }
+
+    /// Every how many lines a bold one comes (`gridStep`, 5).
+    pub fn grid_step(&self) -> f64 {
+        self.scene.app_state("gridStep").and_then(Value::as_f64).filter(|s| *s >= 1.0).unwrap_or(5.0)
+    }
+
+    /// Ctrl+': the grid on or off, for this drawing.
+    pub fn toggle_grid(&mut self) {
+        let on = self.grid_size().is_none();
+        self.scene.set_app_state("gridModeEnabled", Value::Bool(on));
+    }
+
+    /// `getGridPoint`: `p` on the grid, unless it is off or Ctrl is held.
+    fn snap(&self, p: Point, m: Modifiers) -> Point {
+        match self.grid_size() {
+            Some(g) if !m.ctrl => [(p[0] / g).round() * g, (p[1] / g).round() * g],
+            _ => p,
+        }
     }
 
     // --- changing the scene, always through these
@@ -485,6 +518,7 @@ impl Editor {
             return;
         }
         if let Some(kind) = self.tool.element_type() {
+            let p = if kind == "freedraw" { p } else { self.snap(p, m) };
             self.begin();
             let mut raw = new_element(kind, p[0], p[1], &self.style);
             if kind == "freedraw" {
@@ -572,8 +606,9 @@ impl Editor {
             .filter(|e| !arrange::is_locked(e))
             .map(|e| (e.id.clone(), e.x, e.y))
             .collect();
+        let corner = self.selection_bounds().map_or(p, |b| [b[0], b[1]]);
         self.begin();
-        self.gesture = Some(Gesture::Drag { start: p, origins });
+        self.gesture = Some(Gesture::Drag { start: p, origins, corner });
     }
 
     pub fn pointer_move(&mut self, p: Point, m: Modifiers) {
@@ -609,7 +644,7 @@ impl Editor {
                 self.select(ids);
                 self.gesture = Some(Gesture::Marquee { start, base });
             }
-            Some(Gesture::Drag { start, origins }) => {
+            Some(Gesture::Drag { start, origins, corner }) => {
                 let (mut dx, mut dy) = (p[0] - start[0], p[1] - start[1]);
                 if m.shift {
                     // Shift keeps the drag on one axis.
@@ -619,6 +654,9 @@ impl Editor {
                         dx = 0.0;
                     }
                 }
+                // The selection's top left lands on the grid.
+                let to = self.snap([corner[0] + dx, corner[1] + dy], m);
+                let (dx, dy) = (to[0] - corner[0], to[1] - corner[1]);
                 for (id, x, y) in &origins {
                     self.change(id, vec![update_num("x", x + dx), update_num("y", y + dy)]);
                 }
@@ -626,10 +664,10 @@ impl Editor {
                 for id in &moving {
                     self.update_bound_arrows(id, &moving);
                 }
-                self.gesture = Some(Gesture::Drag { start, origins });
+                self.gesture = Some(Gesture::Drag { start, origins, corner });
             }
             Some(Gesture::Resize(r)) => {
-                let updates = r.updates(p, m);
+                let updates = r.updates(self.snap(p, m), m);
                 let moving: HashSet<String> = updates.iter().map(|u| u.0.clone()).collect();
                 for (id, updates) in updates {
                     self.change(&id, updates);
@@ -650,11 +688,13 @@ impl Editor {
                 self.gesture = Some(Gesture::Rotate(r));
             }
             Some(Gesture::Point { id, index }) => {
-                self.move_point(&id, index, p, m);
+                self.move_point(&id, index, self.snap(p, m), m);
                 self.gesture = Some(Gesture::Point { id, index });
             }
             Some(Gesture::Create { id, origin }) => {
-                self.create_to(&id, origin, p, m);
+                let freehand = self.scene.by_id(&id).is_some_and(|e| e.kind == Kind::FreeDraw);
+                let q = if freehand { p } else { self.snap(p, m) };
+                self.create_to(&id, origin, q, m);
                 // What the arrow's end would bind to, shown while drawing.
                 self.binding_hint = self
                     .scene

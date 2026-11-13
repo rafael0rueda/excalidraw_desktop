@@ -16,7 +16,7 @@ use iced::advanced::renderer::{self, Renderer as _};
 use iced::advanced::widget::{tree, Tree, Widget};
 use iced::advanced::{Clipboard, Shell};
 use iced::mouse::{self, ScrollDelta};
-use iced::widget::canvas::{Frame, Path, Stroke};
+use iced::widget::canvas::{self, Frame, Path, Stroke};
 use iced::{
     keyboard, Color, Element, Event, Length, Point, Rectangle, Size, Transformation, Vector,
 };
@@ -72,6 +72,8 @@ pub enum Input {
     Move([f64; 2], editor::Modifiers),
     Up([f64; 2], editor::Modifiers),
     DoubleClick([f64; 2]),
+    /// The right button: where in the drawing, and where in the widget.
+    Context([f64; 2], Point),
     View(View),
 }
 
@@ -90,6 +92,8 @@ pub struct SceneView<'a, Message> {
     /// Selection outlines and handles: the theme's accent (Excalidraw's
     /// `--color-selection`).
     pub selection: Color,
+    /// The grid's lines: the theme's text colour, faint.
+    pub grid: Color,
     /// Dragging pans instead of editing: the Hand tool, or Space held.
     pub panning: bool,
     pub timings: Option<&'a RefCell<Timings>>,
@@ -127,6 +131,35 @@ fn outline(points: &[Point]) -> Path {
 }
 
 impl<Message> SceneView<'_, Message> {
+    /// `strokeGrid`: a line every `size`, bold every `gridStep`; the thin
+    /// ones dashed, and left out when closer than 10 pixels.
+    fn grid(&self, frame: &mut Frame<Renderer>, size: f64, area: Size) {
+        let step = self.editor.grid_step();
+        let px = (size * f64::from(self.view.zoom)) as f32;
+        let regular = Stroke::default().with_width(1.0).with_color(Color { a: self.grid.a * 0.55, ..self.grid });
+        let regular = Stroke { line_dash: canvas::LineDash { segments: &[3.0, 3.0], offset: 0 }, ..regular };
+        let bold = Stroke::default().with_width(1.0).with_color(self.grid);
+        let tl = self.view.to_scene(Point::ORIGIN);
+        for (axis, start) in tl.into_iter().enumerate() {
+            let first = (start / size).floor() as i64;
+            let extent = if axis == 0 { area.width } else { area.height };
+            let count = (extent / px).ceil() as i64 + 2;
+            for i in first..first + count {
+                let major = step > 1.0 && (i as f64).rem_euclid(step) == 0.0;
+                if !major && px < 10.0 {
+                    continue;
+                }
+                let at = self.view.to_screen(if axis == 0 { [i as f64 * size, 0.0] } else { [0.0, i as f64 * size] });
+                let path = if axis == 0 {
+                    Path::line(Point::new(at.x.round() + 0.5, 0.0), Point::new(at.x.round() + 0.5, area.height))
+                } else {
+                    Path::line(Point::new(0.0, at.y.round() + 0.5), Point::new(area.width, at.y.round() + 0.5))
+                };
+                frame.stroke(&path, if major { bold } else { regular });
+            }
+        }
+    }
+
     /// Selection outlines, handles and the rubber band, in screen pixels.
     fn overlay(&self, frame: &mut Frame<Renderer>) {
         let to = |p: [f64; 2]| self.view.to_screen(p);
@@ -292,6 +325,11 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for SceneView<'_, Message>
             Transformation::translate(bounds.x + self.view.pan.x, bounds.y + self.view.pan.y)
                 * Transformation::scale(scale);
         renderer.with_layer(bounds, |renderer| {
+            if let Some(size) = self.editor.grid_size() {
+                let mut frame = Frame::new(renderer, bounds.size());
+                self.grid(&mut frame, size, bounds.size());
+                renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| renderer.draw_geometry(frame.into_geometry()));
+            }
             for chunk in &self.layers.chunks {
                 let Some(b) = chunk.bounds else { continue };
                 if b[2] < tl[0] || b[0] > br[0] || b[3] < tl[1] || b[1] > br[1] {
@@ -351,6 +389,8 @@ impl<Message, Theme> Widget<Message, Theme, Renderer> for SceneView<'_, Message>
                     || (*button == mouse::Button::Left && self.panning)
                 {
                     state.pan = Some((p, self.view.pan));
+                } else if *button == mouse::Button::Right {
+                    shell.publish((self.on_input)(Input::Context(self.view.to_scene(p), p)));
                 } else if *button == mouse::Button::Left {
                     let click = iced::advanced::mouse::Click::new(p, *button, state.last_click);
                     state.last_click = Some(click);

@@ -435,3 +435,34 @@ fn links_through_the_app() {
     send(&mut app, Message::Answer(Answer::Discard));
     assert_eq!(app.tab().doc.editor.scene.by_id(&id).unwrap().link, None);
 }
+
+#[test]
+fn the_right_click_menu_and_the_grid() {
+    use context_menu::Action;
+    let mut app = App::boot(Args { screenshot: Some("/dev/null".into()), chrome: true, ..Args::default() }).0;
+    draw_rectangle(&mut app, [0.0, 0.0]);
+    let id = app.tab().doc.editor.selection[0].clone();
+    app.tab_mut().doc.editor.selection.clear();
+    // On its outline: it is selected, and the menu is the selection's.
+    send(&mut app, Message::Input(Input::Context([0.0, 25.0], Point::new(10.0, 10.0))));
+    assert_eq!(app.context, Some(Point::new(10.0, 10.0)));
+    assert_eq!(app.tab().doc.editor.selection, vec![id.clone()]);
+    assert!(context_menu::view(&app).is_some());
+    send(&mut app, Message::Context(Action::Lock));
+    assert!(app.context.is_none(), "an entry closes it");
+    assert!(app.tab().doc.editor.selection_locked());
+    // On nothing: the selection goes; the canvas menu offers Unlock all.
+    send(&mut app, Message::Input(Input::Context([500.0, 500.0], Point::new(10.0, 10.0))));
+    assert!(app.tab().doc.editor.selection.is_empty());
+    send(&mut app, Message::Context(Action::UnlockAll));
+    assert_eq!(app.tab().doc.editor.selection, vec![id.clone()]);
+    // A click away closes it and does nothing else.
+    send(&mut app, Message::Input(Input::Context([500.0, 500.0], Point::new(10.0, 10.0))));
+    send(&mut app, Message::Input(Input::Down([0.0, 25.0], NONE)));
+    send(&mut app, Message::Input(Input::Up([0.0, 25.0], NONE)));
+    assert!(app.context.is_none());
+    assert!(app.tab().doc.editor.selection.is_empty(), "the click did not select");
+    // The grid, from the menu and from Ctrl+'.
+    send(&mut app, Message::Context(Action::ToggleGrid));
+    assert_eq!(app.tab().doc.editor.grid_size(), Some(20.0));
+}

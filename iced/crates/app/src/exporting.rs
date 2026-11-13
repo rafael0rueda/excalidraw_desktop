@@ -197,7 +197,13 @@ impl App {
     /// Copy image to clipboard: the whole drawing, at the PNG scale, never
     /// with the drawing inside (an image pasted elsewhere has no use for it).
     pub fn copy_image(&mut self) -> Task<Message> {
-        let job = match self.job(false) {
+        self.copy_image_of(false)
+    }
+
+    /// The same for the selection only, if `selection` (the right-click
+    /// menu's Copy to clipboard as PNG).
+    pub fn copy_image_of(&mut self, selection: bool) -> Task<Message> {
+        let job = match self.job(selection) {
             Ok(job) => job,
             Err(e) => {
                 self.prompt = Some(Prompt::Error(e));

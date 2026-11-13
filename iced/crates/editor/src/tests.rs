@@ -975,3 +975,24 @@ fn links_are_set_cleaned_and_found_by_their_icon() {
     assert_eq!(ed.link_targets(&format!("https://excalidraw.com/?element={other}")), vec![other.clone()]);
     assert!(ed.link_targets("https://example.com/?q=1").is_empty());
 }
+
+#[test]
+fn the_grid_snaps_new_shapes_moves_and_resizes() {
+    let mut ed = empty();
+    assert_eq!(ed.grid_size(), None);
+    ed.toggle_grid();
+    assert_eq!(ed.grid_size(), Some(20.0));
+    assert_eq!(ed.scene.app_state("gridModeEnabled"), Some(&json!(true)), "kept with the drawing");
+    let r = rect(&mut ed, 13.0, 27.0, 50.0, 50.0);
+    let e = get(&ed, &r);
+    assert_eq!((e.x, e.y, e.width, e.height), (20.0, 20.0, 40.0, 60.0), "corners on the grid: 13→20, 63→60, 27→20, 77→80");
+    // A move lands the top left on the grid; Ctrl moves freely.
+    drag(&mut ed, [30.0, 30.0], [37.0, 52.0], NONE);
+    assert_eq!((get(&ed, &r).x, get(&ed, &r).y), (20.0, 40.0));
+    drag(&mut ed, [30.0, 50.0], [33.0, 50.0], CTRL);
+    assert_eq!(get(&ed, &r).x, 23.0);
+    ed.toggle_grid();
+    assert_eq!(ed.grid_size(), None);
+    let free = rect(&mut ed, 13.0, 207.0, 50.0, 50.0);
+    assert_eq!(get(&ed, &free).x, 13.0, "off: no snapping");
+}

@@ -134,6 +134,22 @@ impl Scene {
         }
     }
 
+    /// A value of the drawing's saved `appState`.
+    pub fn app_state(&self, key: &str) -> Option<&Value> {
+        self.raw.get("appState")?.get(key)
+    }
+
+    /// Sets a value of the saved `appState`. Not an edit: nothing to undo.
+    pub fn set_app_state(&mut self, key: &str, value: Value) {
+        let state = self.raw.entry("appState").or_insert_with(|| Value::Object(Default::default()));
+        if !state.is_object() {
+            *state = Value::Object(Default::default());
+        }
+        if let Some(state) = state.as_object_mut() {
+            state.insert(key.to_owned(), value);
+        }
+    }
+
     /// An embedded image by `fileId`: its MIME type and `data:` URL.
     pub fn file(&self, id: &str) -> Option<(&str, &str)> {
         let file = self.raw.get("files")?.get(id)?;

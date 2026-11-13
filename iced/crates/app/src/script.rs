@@ -17,6 +17,7 @@
 //!                              font, size, align, valign, opacity
 //!   popup NAME                 the panel's popup open in the screenshot:
 //!                              stroke, background, start, end, fonts
+//!   context X Y                the right-click menu open at X Y
 //!
 //! Lines starting with `#` are comments.
 
@@ -42,7 +43,7 @@ pub fn run(editor: &mut Editor, text: &str) -> Result<(), String> {
         };
         match words[0] {
             // The app's, not the editor's.
-            "popup" => {}
+            "popup" | "context" => {}
             "tool" => {
                 editor.tool = match words.get(1).copied() {
                     Some("rectangle") => Tool::Rectangle,

@@ -25,6 +25,7 @@
 
 mod bench;
 mod chrome;
+mod context_menu;
 mod doc;
 mod exporting;
 mod icons;
@@ -176,6 +177,8 @@ pub enum Message {
     ExportChoice(exporting::Choice),
     Library(library::Msg),
     Props(properties::Msg),
+    /// An entry of the right-click menu.
+    Context(context_menu::Action),
     /// Ctrl+K, and the link editor's field as typed.
     EditLink,
     LinkDraft(String),
@@ -256,6 +259,8 @@ pub struct App {
     /// fonts), and its hex field as typed.
     popup: Option<properties::Popup>,
     hex: String,
+    /// The right-click menu, open where it was asked for.
+    context: Option<Point>,
 }
 
 /// The text box's widget id, to focus it when typing starts.
@@ -319,6 +324,7 @@ impl App {
             library: library::Library::load(false).0,
             popup: None,
             hex: String::new(),
+            context: None,
         };
         if app.dev {
             app.boot_dev(&args);
@@ -381,6 +387,14 @@ impl App {
         }
         self.bench = args.bench.map(|s| bench::Bench::new(s, view));
         self.tabs.push(Tab::new(tabs::new_id(), path, d, view));
+        // `context X Y`: the right-click menu open there, for a screenshot.
+        let text = args.script.as_deref().and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
+        if let Some(at) = text.lines().rev().find_map(|l| l.trim().strip_prefix("context ")) {
+            let n: Vec<f64> = at.split_whitespace().filter_map(|w| w.parse().ok()).collect();
+            if let [x, y] = n[..] {
+                self.open_context([x, y], view.to_screen([x, y]));
+            }
+        }
     }
 
     /// The last session back, and the drawings named on the command line.
@@ -837,11 +851,16 @@ impl App {
                     self.follow_link(&link);
                 }
             }
+            Message::Input(Input::Context(p, screen)) => self.open_context(p, screen),
             Message::Input(input) => {
                 let pointer = &mut self.pointer;
                 let editor = &mut self.tabs[self.active].doc.editor;
                 if matches!(input, Input::Down(..)) {
                     self.popup = None;
+                    if self.context.take().is_some() {
+                        // A click away only closes the menu.
+                        return Task::none();
+                    }
                 }
                 match input {
                     Input::Down(p, m) => editor.pointer_down(p, m),
@@ -851,7 +870,7 @@ impl App {
                     }
                     Input::Up(p, m) => editor.pointer_up(p, m),
                     Input::DoubleClick(p) => editor.double_click(p),
-                    Input::View(_) => {}
+                    Input::View(_) | Input::Context(..) => {}
                 }
             }
             Message::Tool(tool) => {
@@ -893,6 +912,7 @@ impl App {
             Message::Paste(text) => return self.paste(text),
             Message::InsertImage => return self.pick_image(),
             Message::EditLink => return self.edit_link(),
+            Message::Context(action) => return self.context_action(action),
             Message::LinkDraft(d) => {
                 if let Some(Prompt::Link { draft }) = &mut self.prompt {
                     *draft = d;
@@ -1014,7 +1034,7 @@ impl App {
                     return Task::none();
                 }
                 if key == Key::Named(Named::Escape) {
-                    if self.menu.take().is_some() || self.popup.take().is_some() {
+                    if self.menu.take().is_some() || self.popup.take().is_some() || self.context.take().is_some() {
                         return Task::none();
                     }
                     if self.panel.is_some() {
@@ -1077,6 +1097,7 @@ impl App {
                     (_, "v") if ctrl => return inserting::read_clipboard(),
                     (_, "9") if !ctrl => return self.pick_image(),
                     (_, "k") if ctrl => return self.edit_link(),
+                    (_, "'") if ctrl => self.toggle_grid(),
                     // Ctrl+1…8: that tab; Ctrl+9: the last.
                     (_, d) if ctrl && d.len() == 1 && ("1"..="9").contains(&d) => {
                         let n: usize = d.parse().unwrap_or(1);
@@ -1114,6 +1135,7 @@ impl App {
             view: tab.view,
             background: if self.file_background { d.background } else { look.canvas },
             selection: look.accent,
+            grid: Color { a: if look.dark { 0.16 } else { 0.13 }, ..look.text },
             panning: self.space || d.editor.tool == Tool::Hand,
             timings: self.bench.as_ref().map(|_| &self.timings),
             on_input: Box::new(Message::Input),
@@ -1136,6 +1158,9 @@ impl App {
         layers = layers.push(container(top).padding(iced::Padding { right: beside, ..iced::Padding::ZERO }));
         if let Some(props) = properties::view(self) {
             layers = layers.push(props);
+        }
+        if let Some(menu) = context_menu::view(self) {
+            layers = layers.push(menu);
         }
         if let Some(panel) = &self.panel {
             // Takes the pointer over it; the drawing beside it stays live.
