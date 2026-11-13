@@ -19,7 +19,10 @@ Phase 5 (themes: ten presets, user themes, theme editor, follow system) is
 done.
 Phase 6 (Export menu: PNG, SVG, copy image, embedded drawing; the Library
 panel with the ER and Kanagawa ERD sets, `.excalidrawlib` import/export) is
-done. Next: phase 7 (packaging), only when asked.
+done.
+Phase 7 (packaging: `iced/packaging/package.sh` builds an .rpm and a .deb in
+a Debian 12 container, glibc floor 2.35, beside the Tauri package) is done.
+Next: phase 8 (parity review), only when asked.
 
 ## Decisions already made (do not re-litigate)
 
@@ -659,6 +662,7 @@ cargo test --lib --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path iced/Cargo.toml   # the shared core crate: config, session, atomic writes
 cargo build --manifest-path src-tauri/Cargo.toml
 npm run bundle                 # RPM and deb
+iced/packaging/package.sh      # the Iced build's RPM and deb (podman; --host to skip the container)
 
 # inspecting the package without installing it
 R="$(ls -t src-tauri/target/release/bundle/rpm/*.rpm | head -1)"

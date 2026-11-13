@@ -286,7 +286,8 @@ Kept or added:
 | 4 | Files, tabs, session | **Done** 2026-11-12 (results below) |
 | 5 | Themes | **Done** 2026-11-12 (results below) |
 | 6 | Export + library | **Done** 2026-11-13 (results below) |
-| 7–8 | | Not started |
+| 7 | Packaging | **Done** 2026-11-13 (results below) |
+| 8 | | Not started |
 
 ### Phase 2 result, 2026-11-11
 
@@ -598,3 +599,74 @@ Checked:
   - screenshots of the Export menu and the Library panel.
 
 92 tests in the workspace, one more by hand (the desktop clipboard).
+
+### Phase 7 result, 2026-11-13
+
+`iced/packaging/package.sh` writes both packages into
+`iced/target/packages/`:
+
+- `excalidraw-desktop-iced-VERSION-1.x86_64.rpm`, from `rpmbuild`;
+- `excalidraw-desktop-iced_VERSION_amd64.deb`, assembled with `tar` and
+  `ar`, since this machine has no `dpkg-deb`.
+
+VERSION is `package.json`'s.
+
+**Built in a Debian 12 container** (`rust:1-bookworm`, podman, crates
+cached in a volume). Built on Fedora 45, the binary needs glibc 2.44: glibc
+2.43 and 2.44 gave `cosh`, `sinh`, `acosf` and others new symbol versions.
+Built on Debian 12 it needs **glibc 2.35**, from `hypot`. So one build runs
+on Ubuntu 22.04, Debian 12 and Fedora 36 and later, where the Tauri
+packages need glibc 2.39. The packages state the floor:
+
+- RPM: rpm finds it from the binary.
+- deb: `libc6 (>= …)`, read from the binary with `objdump`.
+
+`--host` builds with this machine's toolchain instead.
+
+**Beside the Tauri app, not replacing it,** until phase 8 decides:
+
+- package `excalidraw-desktop-iced`, binary `/usr/bin/excalidraw-iced`;
+- `excalidraw-desktop-iced.desktop` ("Excalidraw Desktop (Iced)");
+- its own config directory.
+
+Both apps claim `.excalidraw` files. The MIME definition and the post-install
+and post-remove scripts are `packaging/`'s, reused. The definition is
+installed as `excalidraw-desktop-iced.xml`, so neither package owns a file
+of the other's (dpkg refuses shared files).
+
+**Desktop integration:**
+
+- The window's Wayland app id and X11 class is `excalidraw-desktop-iced`
+  (`APP_ID`), matching the `.desktop` file, so the desktop finds its icon.
+  X11 also gets a window icon.
+- Icons are installed in hicolor at 32, 64, 128, 256 and 512 px, plus
+  scalable.
+- `Exec=excalidraw-iced %F`: the single-instance hand-over from phase 4
+  turns several files into tabs.
+
+**Dependencies:**
+
+- The binary itself needs only libc, libm and libgcc_s.
+- It loads these as it runs (checked with `LD_DEBUG`):
+  - libxkbcommon: required;
+  - libwayland-client and libwayland-egl, or the X11 libraries, for the
+    session's display server: recommended;
+  - libvulkan or libEGL: recommended. Without either, iced draws in
+    software (tiny-skia).
+
+Checked:
+
+- **`desktop-file-validate`** passes.
+- **Clean containers:** the `.deb` on Debian 12 and Ubuntu 22.04
+  (`--no-install-recommends`), the `.rpm` on Fedora 42 (no weak deps). On
+  each:
+  - the package installs; `rpm -V` passes on Fedora;
+  - the installed binary exports a drawing, byte-identical on all three and
+    to this machine's export;
+  - `*.excalidraw` lands in the MIME database, and the `.desktop` file in
+    `mimeinfo.cache` for `application/vnd.excalidraw+json`;
+  - after removal, the MIME type is gone.
+- **On this Fedora 45 Wayland desktop:** the container-built binary opens
+  its window and draws with Vulkan.
+- **Not done here:** installing the RPM on this machine (it needs root) and
+  checking that GNOME shows the icon. Per decision 2, nothing is published.

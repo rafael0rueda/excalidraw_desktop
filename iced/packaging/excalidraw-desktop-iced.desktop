@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Excalidraw Desktop (Iced)
+GenericName=Drawing
+Comment=Local-first Excalidraw, the native Iced build
+Categories=Graphics;
+# The name the window gives as its Wayland app id and X11 class (APP_ID in
+# main.rs), so the desktop ties the window to this entry and its icon.
+Icon=excalidraw-desktop-iced
+StartupWMClass=excalidraw-desktop-iced
+# %F: several drawings selected in the file manager arrive in one launch,
+# and the running copy opens each in a tab.
+Exec=excalidraw-iced %F
+TryExec=excalidraw-iced
+MimeType=application/vnd.excalidraw+json;
+Terminal=false
+StartupNotify=true
+Keywords=drawing;diagram;sketch;whiteboard;excalidraw;

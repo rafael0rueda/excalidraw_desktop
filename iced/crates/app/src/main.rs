@@ -64,6 +64,9 @@ const WINDOW: Size = Size::new(1280.0, 800.0);
 
 /// This build's config directory, apart from the Tauri app's.
 const APP_DIR: &str = "excalidraw-desktop-iced";
+/// The Wayland app id and X11 class: the installed `.desktop` file's name,
+/// which is how the desktop finds the window's icon and name.
+const APP_ID: &str = "excalidraw-desktop-iced";
 
 #[derive(Clone, Debug, Default)]
 struct Args {
@@ -1197,7 +1200,13 @@ fn main() -> iced::Result {
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
-        .window_size(WINDOW)
+        .window(window::Settings {
+            size: WINDOW,
+            // X11 shows this; Wayland takes the icon from the .desktop file.
+            icon: window::icon::from_file_data(include_bytes!("../../../../src-tauri/icons/128x128.png"), None).ok(),
+            platform_specific: window::settings::PlatformSpecific { application_id: APP_ID.into(), ..Default::default() },
+            ..window::Settings::default()
+        })
         .exit_on_close_request(false)
         .antialiasing(std::env::var_os("NO_MSAA").is_none());
     load_fonts();
