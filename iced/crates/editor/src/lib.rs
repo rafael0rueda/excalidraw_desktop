@@ -10,6 +10,7 @@
 
 mod arrange;
 mod binding;
+pub mod elbow;
 mod erase;
 mod frames;
 pub mod geometry;
@@ -32,7 +33,7 @@ use std::collections::HashSet;
 pub use arrange::{Align, Axis};
 pub use insert::ImageFile;
 pub use links::{link_handle, normalize_link, LINK_SIZE};
-pub use props::{Field, Panel, Prop, FONT_SIZES};
+pub use props::{ArrowType, Field, Panel, Prop, FONT_SIZES};
 pub use text::Measure;
 pub use transform::Handle;
 
@@ -498,7 +499,14 @@ impl Editor {
 
     /// The transform handles of the selection, for drawing them.
     pub fn handles(&self) -> Option<transform::Handles> {
-        transform::handles(&self.selected(), self.zoom)
+        let selected = self.selected();
+        // An elbow arrow alone is shaped by its route, not by handles.
+        if let [one] = selected.as_slice() {
+            if one.linear.as_ref().is_some_and(|l| l.elbowed) {
+                return None;
+            }
+        }
+        transform::handles(&selected, self.zoom)
     }
 
     fn handle_at(&self, p: Point) -> Option<Handle> {
@@ -742,6 +750,18 @@ impl Editor {
                 if points.last() != Some(&next) {
                     points.push(next);
                     self.change(id, vec![update_points(&points)]);
+                }
+            }
+            Kind::Arrow if self.scene.by_id(id).and_then(|e| e.linear.as_ref()).is_some_and(|l| l.elbowed) => {
+                // Routed as it is drawn, around what its ends are over.
+                let Some(a) = self.scene.by_id(id).cloned() else { return };
+                let l = a.linear.clone().unwrap_or_else(|| unreachable!());
+                let hs = self.bindable_at(origin, id).and_then(|h| self.visible(&h).cloned());
+                let he = self.bindable_at(p, id).and_then(|h| self.visible(&h).cloned());
+                let start = elbow::End { point: origin, bound: None, hovered: hs.as_ref(), arrowhead: l.start_arrowhead.is_some() };
+                let end = elbow::End { point: p, bound: None, hovered: he.as_ref(), arrowhead: l.end_arrowhead.is_some() };
+                if let Some((x, y, points)) = elbow::route(&start, &end, true) {
+                    self.change(id, vec![update_points(&points), update_num("x", x), update_num("y", y)]);
                 }
             }
             Kind::Line | Kind::Arrow => {
@@ -1264,7 +1284,7 @@ impl Editor {
             return;
         };
         let Some(l) = a.linear.clone() else { return };
-        if a.kind != Kind::Arrow || l.elbowed || l.points.len() < 2 {
+        if a.kind != Kind::Arrow || l.points.len() < 2 {
             return;
         }
         let start_target = self.bindable_at(geometry::to_scene(&a, l.points[0]), id);
@@ -1272,7 +1292,7 @@ impl Editor {
             self.bindable_at(geometry::to_scene(&a, l.points[l.points.len() - 1]), id);
         // `isLinearElementSimpleAndAlreadyBound`: a straight arrow does not
         // bind both ends to the same element.
-        if l.points.len() == 2 && start_target.is_some() && start_target == end_target {
+        if !l.elbowed && l.points.len() == 2 && start_target.is_some() && start_target == end_target {
             end_target = None;
         }
         let old = self.bindings_of(&a);
@@ -1296,10 +1316,21 @@ impl Editor {
                     else {
                         continue;
                     };
-                    let Some((focus, gap)) = binding::focus_and_gap(&arrow, start, &el) else {
-                        continue;
+                    let value = if l.elbowed {
+                        // `calculateFixedPointForElbowArrowBinding`.
+                        let pts = &arrow.linear.as_ref().map(|l| l.points.clone()).unwrap_or_default();
+                        let Some(q) = (if start { pts.first() } else { pts.last() }).map(|q| geometry::to_scene(&arrow, *q)) else {
+                            continue;
+                        };
+                        let [fx, fy] = elbow::fixed_point_for(q, &el);
+                        json!({ "elementId": t, "focus": 0, "gap": 0, "fixedPoint": [scene::edit::num(fx), scene::edit::num(fy)] })
+                    } else {
+                        let Some((focus, gap)) = binding::focus_and_gap(&arrow, start, &el) else {
+                            continue;
+                        };
+                        json!({ "elementId": t, "focus": scene::edit::num(focus), "gap": scene::edit::num(gap) })
                     };
-                    self.change(id, vec![update(key, json!({ "elementId": t, "focus": scene::edit::num(focus), "gap": scene::edit::num(gap) }))]);
+                    self.change(id, vec![update(key, value)]);
                     if !self.bound_arrows_of(&t).contains(&id.to_owned()) {
                         let mut bound = match el.raw().get("boundElements") {
                             Some(Value::Array(b)) => b.clone(),
@@ -1314,6 +1345,57 @@ impl Editor {
                 }
             }
         }
+        if l.elbowed {
+            self.reroute(id);
+        }
+    }
+
+    /// An elbow arrow routed again between its ends, bound ones at their
+    /// fixed points (`updateElbowArrowPoints`).
+    fn reroute(&mut self, id: &str) {
+        let Some(a) = self.scene.by_id(id).cloned() else { return };
+        let Some(l) = a.linear.clone() else { return };
+        if !l.elbowed || l.points.len() < 2 {
+            return;
+        }
+        let bound = |key: &str| -> Option<(Element, [f64; 2])> {
+            let b = a.raw().get(key)?;
+            let e = self.visible(b.get("elementId")?.as_str()?)?.clone();
+            let fp = b.get("fixedPoint")?.as_array()?;
+            Some((e, [fp.first()?.as_f64()?, fp.get(1)?.as_f64()?]))
+        };
+        let (sb, eb) = (bound("startBinding"), bound("endBinding"));
+        let start = elbow::End {
+            point: geometry::to_scene(&a, l.points[0]),
+            bound: sb.as_ref().map(|(e, fp)| (e, *fp)),
+            hovered: None,
+            arrowhead: l.start_arrowhead.is_some(),
+        };
+        let end = elbow::End {
+            point: geometry::to_scene(&a, l.points[l.points.len() - 1]),
+            bound: eb.as_ref().map(|(e, fp)| (e, *fp)),
+            hovered: None,
+            arrowhead: l.end_arrowhead.is_some(),
+        };
+        if let Some((x, y, points)) = elbow::route(&start, &end, false) {
+            self.set_elbow_route(id, x, y, &points);
+        }
+    }
+
+    /// `normalizeArrowElementUpdate`'s fields: the route, no fixed segments.
+    fn set_elbow_route(&mut self, id: &str, x: f64, y: f64, points: &[Point]) {
+        self.change(
+            id,
+            vec![
+                update_points(points),
+                update_num("x", x),
+                update_num("y", y),
+                update("fixedSegments", Value::Null),
+                update("startIsSpecial", Value::Null),
+                update("endIsSpecial", Value::Null),
+            ],
+        );
+        self.sync_label(id, false);
     }
 
     /// `updateBoundElements`: the arrows bound to `id` follow it, except
@@ -1337,6 +1419,10 @@ impl Editor {
             else {
                 continue;
             };
+            if a.linear.as_ref().is_some_and(|l| l.elbowed) {
+                self.reroute(&arrow_id);
+                continue;
+            }
             let Some(mut points) = a.linear.as_ref().map(|l| l.points.clone()) else {
                 continue;
             };

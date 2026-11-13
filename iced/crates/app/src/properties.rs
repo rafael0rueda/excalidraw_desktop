@@ -387,13 +387,15 @@ pub fn view(app: &App) -> Option<Element<'_, Message>> {
             ]),
         ));
     }
-    if let Some(v) = p.arrow_round {
+    if let Some(v) = p.arrow_type {
+        use editor::ArrowType;
         col = col.push(section(
             look,
             "Arrow type",
             buttons(vec![
-                (Icon::ArrowSharp, v == Some(false), Msg::Set(Prop::ArrowRound(false)), "Sharp"),
-                (Icon::ArrowRound, v == Some(true), Msg::Set(Prop::ArrowRound(true)), "Curved"),
+                (Icon::ArrowSharp, v == Some(ArrowType::Sharp), Msg::Set(Prop::ArrowType(ArrowType::Sharp)), "Sharp"),
+                (Icon::ArrowRound, v == Some(ArrowType::Round), Msg::Set(Prop::ArrowType(ArrowType::Round)), "Curved"),
+                (Icon::ArrowElbow, v == Some(ArrowType::Elbow), Msg::Set(Prop::ArrowType(ArrowType::Elbow)), "Elbow"),
             ]),
         ));
     }

@@ -38,6 +38,7 @@ pub enum Icon {
     FillSolid,
     ArrowSharp,
     ArrowRound,
+    ArrowElbow,
     /// An arrowhead, at the right end (`start` flips it to the left).
     Head(Head, bool),
     AlignLeft,
@@ -371,6 +372,10 @@ fn paint(icon: Icon, p: &mut Pen) {
         }
         Icon::ArrowSharp => {
             p.line(&[(4.0, 18.0), (12.0, 8.0), (20.0, 8.0)]);
+            p.line(&[(16.5, 5.0), (20.0, 8.0), (16.5, 11.0)]);
+        }
+        Icon::ArrowElbow => {
+            p.line(&[(4.0, 18.0), (12.0, 18.0), (12.0, 8.0), (20.0, 8.0)]);
             p.line(&[(16.5, 5.0), (20.0, 8.0), (16.5, 11.0)]);
         }
         Icon::ArrowRound => {

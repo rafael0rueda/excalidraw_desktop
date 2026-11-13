@@ -13,7 +13,7 @@
 //!   type X Y WORDS…            double-click there and type, still typing
 //!   prop NAME VALUE            a properties panel change: stroke, background
 //!                              (colours), fill, width, style, rough, round,
-//!                              arrow-round, start, end (an arrowhead or none),
+//!                              arrow-type (sharp, round, elbow), start, end (an arrowhead or none),
 //!                              font, size, align, valign, opacity
 //!   popup NAME                 the panel's popup open in the screenshot:
 //!                              stroke, background, start, end, fonts
@@ -70,7 +70,11 @@ pub fn run(editor: &mut Editor, text: &str) -> Result<(), String> {
                     Some("style") => Prop::StrokeStyle(value.into()),
                     Some("rough") => Prop::Roughness(f()?),
                     Some("round") => Prop::Round(value == "true"),
-                    Some("arrow-round") => Prop::ArrowRound(value == "true"),
+                    Some("arrow-type") => Prop::ArrowType(match value {
+                        "elbow" => editor::ArrowType::Elbow,
+                        "round" => editor::ArrowType::Round,
+                        _ => editor::ArrowType::Sharp,
+                    }),
                     Some("start") => Prop::StartArrowhead(head()),
                     Some("end") => Prop::EndArrowhead(head()),
                     Some("font") => Prop::FontFamily(f()?),

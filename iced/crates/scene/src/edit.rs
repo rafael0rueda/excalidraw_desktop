@@ -72,8 +72,10 @@ pub struct Style {
     pub opacity: f64,
     /// `currentItemRoundness`: "round" or "sharp".
     pub round: bool,
-    /// `currentItemArrowType`: "round" or "sharp" (elbow arrows: phase 10).
+    /// `currentItemArrowType`: "round" or "sharp"…
     pub arrow_round: bool,
+    /// …or "elbow", which wins.
+    pub elbow: bool,
     pub start_arrowhead: Option<String>,
     pub end_arrowhead: Option<String>,
 }
@@ -91,6 +93,7 @@ impl Default for Style {
             opacity: 100.0,
             round: true,
             arrow_round: true,
+            elbow: false,
             start_arrowhead: None,
             end_arrowhead: Some("arrow".into()),
         }
@@ -122,7 +125,7 @@ pub fn new_element(kind: &str, x: f64, y: f64, style: &Style) -> Map<String, Val
     // `getDefaultRoundnessTypeForElement`.
     let roundness = match kind {
         // New arrows take theirs from the arrow type.
-        "arrow" if style.arrow_round => json!({ "type": 2 }),
+        "arrow" if style.arrow_round && !style.elbow => json!({ "type": 2 }),
         "arrow" => Value::Null,
         _ if !style.round => Value::Null,
         "rectangle" | "embeddable" | "iframe" | "image" => json!({ "type": 3 }),
@@ -169,7 +172,13 @@ pub fn new_element(kind: &str, x: f64, y: f64, style: &Style) -> Map<String, Val
             if kind == "arrow" {
                 put("startArrowhead", head(&style.start_arrowhead));
                 put("endArrowhead", head(&style.end_arrowhead));
-                put("elbowed", json!(false));
+                put("elbowed", json!(style.elbow));
+                if style.elbow {
+                    // `newArrowElement`'s elbow fields.
+                    put("fixedSegments", json!([]));
+                    put("startIsSpecial", json!(false));
+                    put("endIsSpecial", json!(false));
+                }
             } else {
                 put("startArrowhead", Value::Null);
                 put("endArrowhead", Value::Null);

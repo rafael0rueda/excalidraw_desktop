@@ -24,8 +24,8 @@ pub enum Prop {
     Roughness(f64),
     /// Edges: round or sharp.
     Round(bool),
-    /// Arrow type: round (curved) or sharp.
-    ArrowRound(bool),
+    /// Arrow type: sharp, curved or elbow.
+    ArrowType(ArrowType),
     StartArrowhead(Option<String>),
     EndArrowhead(Option<String>),
     FontFamily(f64),
@@ -33,6 +33,14 @@ pub enum Prop {
     TextAlign(String),
     VerticalAlign(String),
     Opacity(f64),
+}
+
+/// `ARROW_TYPE`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArrowType {
+    Sharp,
+    Round,
+    Elbow,
 }
 
 /// One section of the panel: `None` when it is not shown, `Some(None)` when
@@ -49,7 +57,7 @@ pub struct Panel {
     pub stroke_style: Field<String>,
     pub roughness: Field<f64>,
     pub round: Field<bool>,
-    pub arrow_round: Field<bool>,
+    pub arrow_type: Field<ArrowType>,
     /// Both ends: shown together.
     pub arrowheads: Option<(Option<String>, Option<String>)>,
     pub font_family: Field<f64>,
@@ -245,13 +253,23 @@ impl Editor {
                     Some(s.round),
                 ),
             ),
-            arrow_round: show(
+            arrow_type: show(
                 arrow_shown,
                 self.form(
-                    |e| (e.kind == Kind::Arrow).then_some(e.roundness.is_some()),
+                    |e| {
+                        (e.kind == Kind::Arrow).then(|| match (e.linear.as_ref().is_some_and(|l| l.elbowed), e.roundness.is_some()) {
+                            (true, _) => ArrowType::Elbow,
+                            (false, true) => ArrowType::Round,
+                            (false, false) => ArrowType::Sharp,
+                        })
+                    },
                     |e| e.kind == Kind::Arrow,
                     None,
-                    Some(s.arrow_round),
+                    Some(match (s.elbow, s.arrow_round) {
+                        (true, _) => ArrowType::Elbow,
+                        (false, true) => ArrowType::Round,
+                        (false, false) => ArrowType::Sharp,
+                    }),
                 ),
             ),
             arrowheads: arrow_shown.then(|| {
@@ -326,7 +344,10 @@ impl Editor {
             Prop::StrokeStyle(v) => s.stroke_style = v.clone(),
             Prop::Roughness(r) => s.roughness = *r,
             Prop::Round(r) => s.round = *r,
-            Prop::ArrowRound(r) => s.arrow_round = *r,
+            Prop::ArrowType(t) => {
+                s.elbow = *t == ArrowType::Elbow;
+                s.arrow_round = *t == ArrowType::Round;
+            }
             Prop::StartArrowhead(h) => s.start_arrowhead = h.clone(),
             Prop::EndArrowhead(h) => s.end_arrowhead = h.clone(),
             Prop::FontFamily(f) => self.font_family = *f,
@@ -387,8 +408,24 @@ impl Editor {
                 let kind = if e.kind.uses_adaptive_radius() { 3 } else { 2 };
                 set("roundness", if *r { json!({ "type": kind }) } else { Value::Null })
             }
-            Prop::ArrowRound(r) if e.kind == Kind::Arrow && !e.linear.as_ref().is_some_and(|l| l.elbowed) => {
-                set("roundness", if *r { json!({ "type": 2 }) } else { Value::Null })
+            Prop::ArrowType(t) if e.kind == Kind::Arrow => {
+                // `actionChangeArrowType`: to or from elbow, only the ends stay.
+                let was = e.linear.as_ref().is_some_and(|l| l.elbowed);
+                let elbow = *t == ArrowType::Elbow;
+                let mut u = vec![update("roundness", if *t == ArrowType::Round { json!({ "type": 2 }) } else { Value::Null }), update("elbowed", elbow)];
+                if was || elbow {
+                    if let Some(l) = &e.linear {
+                        if let (Some(a), Some(b)) = (l.points.first(), l.points.last()) {
+                            u.push(scene::edit::update_points(&[*a, *b]));
+                        }
+                    }
+                }
+                self.change(id, u);
+                if was != elbow {
+                    // Bound again, the way the new type binds, and routed.
+                    self.rebind(id);
+                }
+                return;
             }
             Prop::StartArrowhead(h) if e.kind.is_linear() => set("startArrowhead", json!(h)),
             Prop::EndArrowhead(h) if e.kind.is_linear() => set("endArrowhead", json!(h)),

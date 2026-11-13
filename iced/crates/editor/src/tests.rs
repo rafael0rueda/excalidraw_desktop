@@ -699,7 +699,7 @@ fn the_panel_shows_what_the_tool_and_selection_can_change() {
     ed.tool = Tool::Arrow;
     let p = ed.panel().unwrap();
     assert_eq!(p.arrowheads, Some((None, Some("arrow".into()))));
-    assert_eq!(p.arrow_round, Some(Some(true)));
+    assert_eq!(p.arrow_type, Some(Some(ArrowType::Round)));
     assert_eq!(p.round, None, "arrows have an arrow type instead of edges");
 
     ed.tool = Tool::Text;
@@ -757,7 +757,7 @@ fn changing_properties_is_one_undo_step_each() {
 #[test]
 fn arrow_type_and_arrowheads() {
     let mut ed = empty();
-    ed.set_prop(Prop::ArrowRound(false));
+    ed.set_prop(Prop::ArrowType(ArrowType::Sharp));
     ed.set_prop(Prop::StartArrowhead(Some("dot".into())));
     ed.tool = Tool::Arrow;
     drag(&mut ed, [0.0, 0.0], [100.0, 0.0], NONE);
@@ -766,7 +766,7 @@ fn arrow_type_and_arrowheads() {
     assert_eq!(e.roundness, None, "a sharp arrow");
     assert_eq!(e.linear.as_ref().unwrap().start_arrowhead.as_deref(), Some("dot"));
     ed.set_prop(Prop::EndArrowhead(Some("crowfoot_many".into())));
-    ed.set_prop(Prop::ArrowRound(true));
+    ed.set_prop(Prop::ArrowType(ArrowType::Round));
     let e = get(&ed, &a);
     assert_eq!(e.linear.as_ref().unwrap().end_arrowhead.as_deref(), Some("crowfoot_many"));
     assert_eq!(e.roundness.map(|r| r.kind), Some(2.0));
@@ -1037,4 +1037,45 @@ fn frames_take_in_what_is_inside_and_carry_it() {
     ed.key(Key::Delete, NONE);
     assert!(get(&ed, &outside).is_deleted);
     assert!(!get(&ed, &inside).is_deleted);
+}
+
+#[test]
+fn elbow_arrows_route_bind_and_follow() {
+    let orthogonal = |e: &Element| {
+        let pts = &e.linear.as_ref().unwrap().points;
+        pts.windows(2).all(|w| w[0][0] == w[1][0] || w[0][1] == w[1][1])
+    };
+    let mut ed = empty();
+    let a = rect(&mut ed, 0.0, 0.0, 100.0, 60.0);
+    let b = rect(&mut ed, 300.0, 200.0, 100.0, 60.0);
+    ed.set_prop(Prop::ArrowType(ArrowType::Elbow));
+    ed.tool = Tool::Arrow;
+    drag(&mut ed, [50.0, 30.0], [350.0, 230.0], NONE);
+    let arrow = ed.selection[0].clone();
+    let e = get(&ed, &arrow).clone();
+    assert!(e.linear.as_ref().unwrap().elbowed);
+    assert!(orthogonal(&e), "{:?}", e.linear.as_ref().unwrap().points);
+    assert!(e.linear.as_ref().unwrap().points.len() >= 3, "it turns");
+    assert_eq!(binding(&ed, &arrow, "startBinding").as_deref(), Some(a.as_str()));
+    assert_eq!(binding(&ed, &arrow, "endBinding").as_deref(), Some(b.as_str()));
+    assert!(e.raw()["endBinding"]["fixedPoint"].is_array(), "bound by fixed point");
+    assert_eq!(e.raw()["fixedSegments"], Value::Null);
+
+    // Moving a shape routes it again, still in right angles, to its new place.
+    ed.selection = vec![b.clone()];
+    ed.translate_selected(0.0, 200.0);
+    let e = get(&ed, &arrow).clone();
+    assert!(orthogonal(&e));
+    let end = end_of(&ed, &arrow);
+    assert!(end[1] > 380.0 && end[1] < 480.0, "near the moved shape: {end:?}");
+
+    // Back to a straight arrow: two points, bound by focus and gap.
+    ed.selection = vec![arrow.clone()];
+    ed.set_prop(Prop::ArrowType(ArrowType::Sharp));
+    let e = get(&ed, &arrow).clone();
+    assert!(!e.linear.as_ref().unwrap().elbowed);
+    assert_eq!(e.linear.as_ref().unwrap().points.len(), 2);
+    assert!(e.raw()["endBinding"]["focus"].is_number());
+    assert!(e.raw()["endBinding"].get("fixedPoint").is_none());
+    assert!(ed.handles().is_some());
 }

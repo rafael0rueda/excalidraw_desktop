@@ -343,6 +343,11 @@ fn intersect(e: &Element, seg: (Point, Point), offset: f64) -> Vec<Point> {
         .collect()
 }
 
+/// Where a segment crosses `e`'s outline.
+pub fn intersect_outline(e: &Element, seg: (Point, Point)) -> Vec<Point> {
+    intersect(e, seg, 0.0)
+}
+
 /// Whether an arrow end at `p` binds to `e`: inside it, or within its
 /// binding gap of the outline.
 pub fn catches(e: &Element, p: Point, zoom: f64) -> bool {
