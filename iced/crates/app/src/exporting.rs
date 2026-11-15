@@ -6,7 +6,7 @@
 //! Drawing an image takes a while for a large drawing, so it happens on a
 //! thread of its own, from a copy of the scene.
 
-use crate::{App, Message, Prompt};
+use crate::{App, Message};
 use excalidraw_desktop_core::settings::{self, ExportPreferences};
 use iced::Task;
 use std::collections::HashSet;
@@ -146,7 +146,7 @@ impl App {
     /// Export…: asks where, suggesting a name beside the drawing.
     pub fn export_start(&mut self, kind: Kind) -> Task<Message> {
         if let Err(e) = self.job(kind == Kind::PngSelection) {
-            self.prompt = Some(Prompt::Error(e));
+            self.report_error(e);
             return Task::none();
         }
         let ext = kind.extension();
@@ -179,7 +179,7 @@ impl App {
         let job = match self.job(kind == Kind::PngSelection) {
             Ok(job) => job,
             Err(e) => {
-                self.prompt = Some(Prompt::Error(e));
+                self.report_error(e);
                 return Task::none();
             }
         };
@@ -206,7 +206,7 @@ impl App {
         let job = match self.job(selection) {
             Ok(job) => job,
             Err(e) => {
-                self.prompt = Some(Prompt::Error(e));
+                self.report_error(e);
                 return Task::none();
             }
         };
@@ -225,7 +225,7 @@ impl App {
             Ok(done) => self.status = Some(done),
             Err(e) => {
                 self.status = None;
-                self.prompt = Some(Prompt::Error(format!("Export failed: {e}")));
+                self.report_error(format!("Export failed: {e}"));
             }
         }
     }

@@ -165,10 +165,29 @@ fn files_tabs_autosave_recovery_and_quit() {
     send(&mut app, Message::SelectTab(0));
     send(&mut app, Message::HandedOver(vec![b.clone()]));
     assert_eq!((app.tabs.len(), app.active), (2, 1));
-    send(&mut app, Message::OpenPath(bad));
+    send(&mut app, Message::OpenPath(bad.clone()));
     assert!(matches!(app.prompt, Some(Prompt::Error(_))));
     assert_eq!(app.tabs.len(), 2);
+    // Handed over while that dialog is up (IR-1): opened behind it, not
+    // held for good; a second error joins the one showing (IR-6).
+    let d = tmp.join("d.excalidraw");
+    std::fs::write(&d, doc::EMPTY).unwrap();
+    send(&mut app, Message::HandedOver(vec![d.clone(), bad.clone()]));
+    assert_eq!(app.tabs.len(), 3);
+    assert!(app.pending_open.is_empty());
+    assert!(matches!(&app.prompt, Some(Prompt::Error(e)) if e.matches("Could not open").count() == 2), "{:?}", app.prompt.as_ref().map(|_| ()));
     send(&mut app, Message::Answer(Answer::Cancel));
+    assert!(app.prompt.is_none());
+    // An error while another kind of dialog is up waits for it to close.
+    draw_rectangle(&mut app, [0.0, 0.0]);
+    { let id = app.tab().id.clone(); send(&mut app, Message::CloseTab(id)); }
+    assert!(matches!(app.prompt, Some(Prompt::Unsaved { .. })));
+    send(&mut app, Message::HandedOver(vec![bad]));
+    assert!(matches!(app.prompt, Some(Prompt::Unsaved { .. })), "the question is not replaced");
+    send(&mut app, Message::Answer(Answer::Discard));
+    assert!(matches!(&app.prompt, Some(Prompt::Error(e)) if e.contains("Could not open")));
+    send(&mut app, Message::Answer(Answer::Cancel));
+    assert_eq!(app.tabs.len(), 2);
 
     // Closing the last tab leaves an empty one.
     { let id = app.tabs[1].id.clone(); send(&mut app, Message::CloseTab(id)); }
@@ -319,6 +338,23 @@ fn files_tabs_autosave_recovery_and_quit() {
     assert_eq!(app.library.items.len(), 29, "added, in memory");
     assert_eq!(std::fs::read_to_string(&lib_file).unwrap(), "not json");
     assert!(app.status.as_deref().is_some_and(|s| s.contains("not saved")), "{:?}", app.status);
+
+    // A clean session whose snapshot cannot be read (IR-5): the copy is
+    // kept, and the next launch says where, alongside the library's error.
+    send(&mut app, Message::OpenPath(a.clone()));
+    send(&mut app, Message::Quit);
+    while matches!(app.prompt, Some(Prompt::Unsaved { .. })) {
+        send(&mut app, Message::Answer(Answer::Discard));
+    }
+    assert_eq!(meta(&dir)["clean_exit"], true);
+    let id = meta(&dir)["tabs"].as_array().unwrap().iter().find(|t| t["path"] == a.to_str().unwrap()).unwrap()["id"].as_str().unwrap().to_owned();
+    std::fs::write(dir.join("session").join(format!("{id}.excalidraw")), "not json").unwrap();
+    drop(app);
+    let app = boot(Vec::new());
+    let Some(Prompt::Error(e)) = &app.prompt else { panic!("expected an error") };
+    assert!(e.contains("was kept at"), "{e}");
+    assert!(e.contains("library"), "both problems are said: {e}");
+    assert!(dir.join("session/unreadable").read_dir().unwrap().next().is_some());
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

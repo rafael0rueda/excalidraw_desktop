@@ -19,19 +19,21 @@ pub const QUIET: Duration = Duration::from_millis(1200);
 
 /// What was found at start-up.
 pub enum Restored {
-    /// Nothing, or a clean session: these tabs, as they were.
-    Tabs(Vec<Tab>, Option<String>),
+    /// Nothing, or a clean session: these tabs, as they were, and what
+    /// could not be read.
+    Tabs(Vec<Tab>, Option<String>, Vec<String>),
     /// Unsaved work from a run that did not end normally: ask first.
     Ask(Session),
 }
 
 pub fn load(app: &App) -> Restored {
-    let Some(s) = session::load(&app.allowed) else { return Restored::Tabs(Vec::new(), None) };
+    let Some(s) = session::load(&app.allowed) else { return Restored::Tabs(Vec::new(), None, Vec::new()) };
     if !s.clean_exit && s.tabs.iter().any(|t| t.dirty) {
         return Restored::Ask(s);
     }
     let active = s.active.clone();
-    Restored::Tabs(open(app, s, true).0, active)
+    let (tabs, problems) = open(app, s, true);
+    Restored::Tabs(tabs, active, problems)
 }
 
 /// The session's tabs as tabs: with their snapshots when `recover`, else as

@@ -199,7 +199,7 @@ impl App {
                     let id = panel.draft.id.clone();
                     match self.themes.delete(&id) {
                         Ok(()) => self.panel = None,
-                        Err(e) => self.prompt = Some(Prompt::Error(format!("Could not delete theme: {e}"))),
+                        Err(e) => self.report_error(format!("Could not delete theme: {e}")),
                     }
                 } else {
                     self.prompt = Some(Prompt::DeleteTheme { name: panel.draft.name.clone() });
@@ -212,12 +212,12 @@ impl App {
     fn commit(&mut self, mut next: Theme) {
         next.name = next.name.trim().to_owned();
         if next.name.is_empty() {
-            self.prompt = Some(Prompt::Error("Give the theme a name first.".into()));
+            self.report_error("Give the theme a name first.".into());
             return;
         }
         let invalid = theme::invalid_fields(&next);
         if !invalid.is_empty() {
-            self.prompt = Some(Prompt::Error(format!("Not a colour: {}.\n\nUse a hex value like #1f1f28, # included.", invalid.join(", "))));
+            self.report_error(format!("Not a colour: {}.\n\nUse a hex value like #1f1f28, # included.", invalid.join(", ")));
             return;
         }
         match self.themes.save(next.clone()) {
@@ -230,7 +230,7 @@ impl App {
                     self.status = Some(format!("Saved {path}"));
                 }
             }
-            Err(e) => self.prompt = Some(Prompt::Error(format!("Could not save theme: {e}"))),
+            Err(e) => self.report_error(format!("Could not save theme: {e}")),
         }
     }
 

@@ -329,7 +329,7 @@ impl App {
                     }
                 }
                 if !problems.is_empty() {
-                    self.prompt = Some(Prompt::Error(format!("Could not import:\n{}", problems.join("\n"))));
+                    self.report_error(format!("Could not import:\n{}", problems.join("\n")));
                 }
                 if added > 0 {
                     self.library_saved(&format!("Imported {added} shape{}", if added == 1 { "" } else { "s" }));
@@ -358,7 +358,7 @@ impl App {
                 }
                 match files::write_atomic(&path, self.library.to_json().as_bytes()) {
                     Ok(()) => self.status = Some(format!("Exported the library to {}", path.display())),
-                    Err(e) => self.prompt = Some(Prompt::Error(format!("Could not export the library: {e}"))),
+                    Err(e) => self.report_error(format!("Could not export the library: {e}")),
                 }
             }
             Msg::Pictures(pictures) => {

@@ -54,7 +54,7 @@ impl App {
                 std::thread::spawn(move || child.wait());
                 self.status = Some(format!("Opened {link}"));
             }
-            Err(e) => self.prompt = Some(Prompt::Error(format!("Could not open {link}: {e}"))),
+            Err(e) => self.report_error(format!("Could not open {link}: {e}")),
         }
     }
 }

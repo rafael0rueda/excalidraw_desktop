@@ -249,6 +249,9 @@ pub struct App {
     quitting: Option<Quitting>,
     /// Drawings named on the command line, opened once recovery is settled.
     pending_open: Vec<PathBuf>,
+    /// Errors that came while another kind of dialog was open, shown once
+    /// it closes rather than replacing it.
+    queued_errors: Vec<String>,
     /// When drawing last changed anything, for autosave.
     last_change: Option<Instant>,
     dev: bool,
@@ -321,6 +324,7 @@ impl App {
             file_background: args.dev() && args.theme.is_none(),
             quitting: None,
             pending_open: Vec::new(),
+            queued_errors: Vec::new(),
             last_change: None,
             dev: args.dev(),
             timings: Default::default(),
@@ -347,8 +351,8 @@ impl App {
             app.load_export_preferences();
             let (library, problem) = library::Library::load(true);
             app.library = library;
-            if let (Some(p), None) = (problem, &app.prompt) {
-                app.prompt = Some(Prompt::Error(p));
+            if let Some(p) = problem {
+                app.report_error(p);
             }
         }
         let task = app.sync();
@@ -418,8 +422,11 @@ impl App {
         }
         self.pending_open = args.paths.iter().filter(|p| p.is_file()).cloned().collect();
         match session::load(self) {
-            session::Restored::Tabs(tabs, active) => {
+            session::Restored::Tabs(tabs, active, problems) => {
                 self.tabs = tabs;
+                if !problems.is_empty() {
+                    self.report_error(problems.join("\n"));
+                }
                 self.active = active.and_then(|a| self.tabs.iter().position(|t| t.id == a)).unwrap_or(0);
                 self.after_restore();
             }
@@ -441,6 +448,19 @@ impl App {
         }
         self.active = self.active.min(self.tabs.len() - 1);
         self.snapshot();
+    }
+
+    /// Shows an error: added to one already showing, or held until another
+    /// kind of dialog closes, never put in place of either.
+    fn report_error(&mut self, message: String) {
+        match &mut self.prompt {
+            None => self.prompt = Some(Prompt::Error(message)),
+            Some(Prompt::Error(shown)) => {
+                shown.push_str("\n\n");
+                shown.push_str(&message);
+            }
+            Some(_) => self.queued_errors.push(message),
+        }
     }
 
     fn snapshot(&mut self) {
@@ -596,7 +616,7 @@ impl App {
         }
         self.recent = recent::list(&self.allowed);
         if !problems.is_empty() {
-            self.prompt = Some(Prompt::Error(format!("Could not open:\n{}", problems.join("\n"))));
+            self.report_error(format!("Could not open:\n{}", problems.join("\n")));
         }
         if !self.tabs.is_empty() {
             self.snapshot();
@@ -664,7 +684,7 @@ impl App {
                 Ok(()) => then.map_or(Task::none(), |then| self.continue_after(&id, then, false)),
                 Err(e) => {
                     self.quitting = None;
-                    self.prompt = Some(Prompt::Error(format!("Could not save: {e}")));
+                    self.report_error(format!("Could not save: {e}"));
                     Task::none()
                 }
             },
@@ -684,17 +704,17 @@ impl App {
         let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
         if let Some(other) = self.tabs.iter().find(|t| t.id != id && t.path.as_deref() == Some(canonical.as_path())) {
             self.quitting = None;
-            self.prompt = Some(Prompt::Error(format!(
+            self.report_error(format!(
                 "{} is open in another tab. Close that tab first, or save under a different name.",
                 other.title()
-            )));
+            ));
             return Task::none();
         }
         match self.write_to(&id, path) {
             Ok(()) => then.map_or(Task::none(), |then| self.continue_after(&id, then, false)),
             Err(e) => {
                 self.quitting = None;
-                self.prompt = Some(Prompt::Error(format!("Could not save: {e}")));
+                self.report_error(format!("Could not save: {e}"));
                 Task::none()
             }
         }
@@ -801,8 +821,9 @@ impl App {
                     self.active = 0;
                 }
                 if !problems.is_empty() {
-                    self.prompt = Some(Prompt::Error(problems.join("\n")));
+                    self.report_error(problems.join("\n"));
                 }
+                // Its own errors are added to these, not put in their place.
                 self.after_restore();
                 Task::none()
             }
@@ -845,6 +866,9 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle(message);
+        if self.prompt.is_none() && !self.queued_errors.is_empty() {
+            self.prompt = Some(Prompt::Error(std::mem::take(&mut self.queued_errors).join("\n\n")));
+        }
         Task::batch([task, self.sync()])
     }
 
@@ -962,7 +986,10 @@ impl App {
                 for p in &paths {
                     self.allowed.allow(p);
                 }
-                if self.prompt.is_some() {
+                // Held only until the recovery question is answered, which
+                // decides the tabs they join; any other dialog stays on top
+                // of them, and nothing else empties `pending_open`.
+                if matches!(self.prompt, Some(Prompt::Recover { .. })) {
                     self.pending_open.extend(paths);
                 } else {
                     self.open_paths(paths);

@@ -3,7 +3,7 @@
 //! Excalidraw shapes, plain text or an image.
 
 use crate::exporting::off_thread;
-use crate::{images, App, Message, Prompt};
+use crate::{images, App, Message};
 use editor::ImageFile;
 use iced::{clipboard, Point, Task};
 use std::path::PathBuf;
@@ -62,7 +62,7 @@ impl App {
                 self.tab_mut().doc.editor.insert_image(&file, at, max);
             }
             Err(e) if pasted => self.status = Some(e),
-            Err(e) => self.prompt = Some(Prompt::Error(e)),
+            Err(e) => self.report_error(e),
         }
     }
 
