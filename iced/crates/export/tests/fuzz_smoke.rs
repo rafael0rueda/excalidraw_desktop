@@ -9,8 +9,10 @@
 //! in the temp directory, for runs that hang or are killed, and
 //! `FUZZ_FILE=drawing … replay` runs one drawing again.
 
-use editor::{Align, Axis, Editor};
-use scene::Scene;
+#[path = "common/exercise.rs"]
+mod exercise;
+
+use exercise::exercise;
 use serde_json::{json, Value};
 
 struct Rng(u64);
@@ -100,45 +102,6 @@ fn mutate(doc: &mut Value, rng: &mut Rng) {
         // Not an element at all.
         _ => elements[i] = nasty(rng),
     }
-}
-
-fn exercise(text: &str, png: bool) {
-    let Ok(scene) = Scene::parse(text) else { return };
-    for e in scene.visible() {
-        let _ = render::prepare(e, &scene, "#ffffff");
-    }
-    let export = |scene: &Scene| {
-        let x = export::Export { scene, only: None, canvas: "#ffffff", transparent: false, font: &|_| None };
-        let _ = x.svg(None);
-        if png {
-            let _ = x.png(0.25, None);
-        }
-    };
-    export(&scene);
-    let mut ed = Editor::new(scene);
-    ed.select_all();
-    ed.translate_selected(5.0, -3.0);
-    ed.align(Align::Left);
-    ed.distribute(Axis::Y);
-    ed.flip(Axis::X);
-    ed.group();
-    ed.duplicate();
-    let copied = ed.copy();
-    ed.toggle_lock();
-    ed.unlock_all();
-    ed.delete_selected();
-    ed.undo();
-    ed.undo();
-    ed.redo();
-    if let Some(c) = copied {
-        ed.paste(&c, [10.0, 10.0]);
-    }
-    ed.select_all();
-    ed.pointer_down([0.0, 0.0], editor::Modifiers::default());
-    ed.pointer_move([40.0, 25.0], editor::Modifiers::default());
-    ed.pointer_up([40.0, 25.0], editor::Modifiers::default());
-    let _ = ed.scene.to_file_json();
-    export(&ed.scene);
 }
 
 /// `FUZZ_FILE=drawing cargo test -p export --test fuzz_smoke replay`:

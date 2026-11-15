@@ -1,0 +1,42 @@
+# cargo-deny, for the Iced app's dependencies (docs/iced-port/PLAN.md,
+# "Security"). Run from iced/:
+#
+#   cargo deny check licenses bans sources
+#
+# CI runs those three on every change (.github/workflows/ci.yml);
+# advisories are audit.yml's job, on a schedule, so a newly published one
+# doesn't turn an unrelated push red.
+
+[graph]
+# The packages built for Linux, the only target.
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = false
+
+[licenses]
+# What may be linked into an MIT app that is shipped as a binary.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Iced and resvg each bring their own versions of a few crates; that costs
+# build time, not correctness, so it is reported, not refused.
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies within the workspace have no version.
+allow-wildcard-paths = true
+
+[sources]
+# crates.io only: no git dependencies, no other registries.
+unknown-registry = "deny"
+unknown-git = "deny"

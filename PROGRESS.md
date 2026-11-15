@@ -30,7 +30,16 @@ benchmarks still clear the gate. Recommended: keep both, add phases 9–11
 keep both, do phases 9–11.
 Phase 9 (the properties panel, toolbar icons) is done.
 Phase 10 (images, eraser, links, arrange, right-click menu, zoom, grid,
-frames, elbow arrows) is done; phase 11 (desktop parity) is next.
+frames, elbow arrows) is done.
+Phase 11 (shortcuts on every layout, Ctrl+T and Ctrl+PageUp/Down, the
+window size remembered, library items dragged onto the drawing, fuzzing,
+cargo-deny) is done, except the by-hand checks, which need a desktop:
+IME, live light/dark switching, the installed RPM. Next: those checks,
+then the parity review again.
+Fuzzing: `FUZZ_ROUNDS=20000 cargo test --release -p export --test
+fuzz_smoke` (stable), or `iced/fuzz` with cargo-fuzz (nightly). Neither
+nightly, cargo-fuzz nor cargo-deny is on this machine; they run in the
+podman `rust:1-bookworm` container with the `excalidraw-cargo-home` volume.
 
 ## Decisions already made (do not re-litigate)
 

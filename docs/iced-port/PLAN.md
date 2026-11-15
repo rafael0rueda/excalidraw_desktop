@@ -291,7 +291,7 @@ Kept or added:
 | 8 | Parity review | **Done** 2026-11-13: not at parity, decision: keep both, phases 9–11 |
 | 9 | Properties panel | **Done** 2026-11-13 (results below) |
 | 10 | The rest of the editor | **Done** 2026-11-13 (results below) |
-| 11 | Desktop parity | In progress |
+| 11 | Desktop parity | **Done** 2026-11-15, except the by-hand checks (results below) |
 
 ### Phase 2 result, 2026-11-11
 
@@ -939,3 +939,72 @@ Not done:
 - Truncating a long frame name to the frame's width.
 - Laser pointer, lasso, search, zen and view modes, help, command palette
   (not in this phase's list).
+
+### Phase 11 result, 2026-11-15: desktop parity
+
+- **Shortcuts on every layout,** by the Tauri app's `shortcutKey` rule:
+  - letters as the layout types them, or by the key's position on layouts
+    without Latin letters (Cyrillic, Greek);
+  - digits always by position.
+
+  Tool letters follow the same rule.
+- **Tabs:** Ctrl+T opens a new tab; Ctrl+PageUp and Ctrl+PageDown go to the
+  previous and next tab.
+- **The window's size and maximized state** are remembered in
+  `window.json` in the config directory, saved on the way out and read
+  before the window opens. Position is left to the desktop, because Wayland
+  gives apps none.
+- **Library items dragged onto the drawing:**
+  - pressed in the panel and dragged with a faded picture under the
+    pointer;
+  - dropped centred where they are let go;
+  - a press without moving is still a click, which puts the item in the
+    middle of the view;
+  - let go over the panel, nothing happens.
+- **Fuzzing:**
+  - `export/tests/fuzz_smoke.rs` damages real drawings:
+    - fields set to hostile values (1e308, huge strings and arrays,
+      wrong types);
+    - fields removed;
+    - types swapped;
+    - elements duplicated or pointed at themselves;
+    - elements replaced with non-elements.
+  - Each damaged drawing goes through parsing, drawing, SVG and PNG
+    export, the editor's actions, saving, and export again.
+  - CI runs it on every change (300 rounds, 2 s). Three runs of 20,000
+    rounds in release pass.
+  - `iced/fuzz` is the coverage-guided version (cargo-fuzz, nightly; how to
+    run it is in its Cargo.toml). It shares the same code.
+  - It found four ways a damaged file could hang the app or run it out of
+    memory. All four are fixed:
+
+    | Cause | Fix |
+    |---|---|
+    | An ellipse 1e308 wide asked rough.js for billions of points | The step count is capped |
+    | Ramer–Douglas–Peucker recursed forever with a negative epsilon | Recursion only on a real split |
+    | Bézier flattening never finished on huge curves | At most 16 halvings |
+    | Hachure fills of huge shapes ran out of memory | See below |
+
+    The renderer now skips elements over a million units in size, stroke
+    width, roughness or point offset. Excalidraw would freeze on such
+    elements too (rough.js has the same loops). The rough.js and
+    Excalidraw fixtures are unchanged.
+- **`cargo-deny`** (`iced/deny.toml`, the `deny` job in CI):
+  - licenses limited to permissive ones (MIT, Apache-2.0, BSD, ISC, Zlib,
+    BSL, Unicode, CC0);
+  - crates.io only;
+  - no wildcard versions;
+  - duplicate versions reported, not refused.
+
+  It passes. Advisories stay with `audit.yml`, which runs on a schedule.
+
+Still to check by hand, on a desktop (this environment has none):
+
+- IME typing (fcitx5, ibus), dead keys, and the caret on centred labels.
+- Switching the desktop between light and dark while the app runs.
+- The RPM installed: the icon in GNOME, and double-clicking a drawing in
+  Files.
+- Library drag and the remembered window size, in a real session.
+
+Phases 9–11 are done apart from those checks, and the review of phase 8
+can be run again.

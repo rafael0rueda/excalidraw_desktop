@@ -79,6 +79,19 @@ jobs:
       - run: cargo test --manifest-path iced/Cargo.toml
       - run: cargo clippy --manifest-path iced/Cargo.toml --all-targets -- -D warnings
 
+  # The Iced app's dependencies: licenses it may ship under, crates.io only,
+  # no wildcard versions (iced/deny.toml). Advisories are audit.yml's.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: iced/Cargo.toml
+          arguments: --locked
+          command: check
+          command-arguments: licenses bans sources
+
   # The `rust-version` Cargo.toml promises (README: "Rust 1.88 or newer").
   # Nothing else builds with it: the jobs above take the latest stable.
   msrv:

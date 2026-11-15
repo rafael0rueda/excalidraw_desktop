@@ -1,0 +1,35 @@
+# Coverage-guided fuzzing of everything that reads a drawing (nightly):
+#
+#   cargo +nightly fuzz run drawing fuzz/corpus crates/scene/tests/fixtures \
+#       -- -dict=fuzz/drawing.dict -max_total_time=600
+#
+# Run from iced/: new inputs go to fuzz/corpus, the fixtures seed it, and
+# a crash is written to fuzz/artifacts/drawing/. Not a workspace member, so stable builds never see it;
+# the deterministic version, which CI runs, is
+# crates/export/tests/fuzz_smoke.rs.
+[package]
+name = "excalidraw-fuzz"
+version = "0.0.0"
+authors = ["rafa"]
+license = "MIT"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+scene = { path = "../crates/scene" }
+render = { path = "../crates/render" }
+editor = { path = "../crates/editor" }
+export = { path = "../crates/export" }
+
+[[bin]]
+name = "drawing"
+path = "fuzz_targets/drawing.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
