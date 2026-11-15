@@ -64,6 +64,7 @@ use iced::widget::{column, container, opaque, stack, text, text_editor};
 use iced::{clipboard, window, Color, Element, Length, Point, Size, Subscription, Task};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tabs::Tab;
 use view::{Input, SceneView, Timings, View};
@@ -167,6 +168,8 @@ pub enum Message {
     Quit,
     Answer(Answer),
     Autosave(Instant),
+    /// A snapshot's write finished: the tabs it held, at which change count.
+    Autosaved(Vec<(String, u64)>, Result<(), String>),
     HandedOver(Vec<PathBuf>),
     /// From the Theme menu: a theme id, or `theme::SYSTEM`.
     SelectTheme(String),
@@ -229,7 +232,7 @@ pub struct App {
     /// Paths this app may read and write: picked in a dialog, named on the
     /// command line, or from its own lists. Recent files and the session
     /// only ever hold these (core's rule, shared with the Tauri app).
-    allowed: Allowed,
+    allowed: Arc<Allowed>,
     /// The drawing's area: the window less the tab bar, if shown.
     size: Size,
     /// The tab bar's height, or nothing when it is not shown.
@@ -256,6 +259,12 @@ pub struct App {
     queued_errors: Vec<String>,
     /// When drawing last changed anything, for autosave.
     last_change: Option<Instant>,
+    /// A snapshot is wanted: taken once the current message is handled.
+    snapshot_due: bool,
+    /// A snapshot is being written; the next waits for it.
+    autosaving: bool,
+    /// Set, under its lock, once the session's last snapshot is written.
+    session_ended: Arc<Mutex<bool>>,
     dev: bool,
     timings: std::cell::RefCell<Timings>,
     bench: Option<bench::Bench>,
@@ -313,7 +322,7 @@ impl App {
         let mut app = Self {
             tabs: Vec::new(),
             active: 0,
-            allowed: Allowed::default(),
+            allowed: Arc::default(),
             size: Size::new(WINDOW.width, WINDOW.height - bar),
             bar,
             sized: false,
@@ -330,6 +339,9 @@ impl App {
             pending_open: Vec::new(),
             queued_errors: Vec::new(),
             last_change: None,
+            snapshot_due: false,
+            autosaving: false,
+            session_ended: Arc::default(),
             dev: args.dev(),
             timings: Default::default(),
             bench: None,
@@ -359,8 +371,10 @@ impl App {
                 app.report_error(p);
             }
         }
-        let task = app.sync();
-        (app, task)
+        let synced = app.sync();
+        // The first snapshot, which marks the run open.
+        let saving = app.start_snapshot();
+        (app, Task::batch([synced, saving]))
     }
 
     /// One drawing, edited by `--script`, measured by `--bench`.
@@ -467,14 +481,35 @@ impl App {
         }
     }
 
+    /// Asks for a snapshot, taken once the current message is handled.
     fn snapshot(&mut self) {
-        if self.dev {
-            return;
+        if !self.dev {
+            self.snapshot_due = true;
         }
+    }
+
+    /// Takes the snapshot asked for, and writes it on a thread of its own:
+    /// a large drawing's serializing and fsync would freeze the window
+    /// (IR-7). One write at a time; one asked for meanwhile follows it.
+    fn start_snapshot(&mut self) -> Task<Message> {
+        if !self.snapshot_due || self.autosaving {
+            return Task::none();
+        }
+        self.snapshot_due = false;
         let discarded = self.quitting.as_ref().map(|q| q.discarded.clone()).unwrap_or_default();
-        if let Err(e) = session::snapshot(self, &discarded) {
-            self.status = Some(format!("Autosave failed: {e}"));
+        let pending = session::prepare(self, &discarded);
+        let taken = pending.taken.clone();
+        let (allowed, ended) = (self.allowed.clone(), self.session_ended.clone());
+        if cfg!(test) {
+            // No runtime to run tasks in tests: written here, as it lands.
+            let result = session::write(pending, &allowed, &ended);
+            session::written(self, &taken, result);
+            return Task::none();
         }
+        self.autosaving = true;
+        Task::perform(exporting::off_thread(move || session::write(pending, &allowed, &ended)), move |result| {
+            Message::Autosaved(taken.clone(), result.unwrap_or_else(|| Err("the autosave thread stopped".into())))
+        })
     }
 
     /// The theme on screen: the editor's draft while it is open.
@@ -523,7 +558,7 @@ impl App {
         let tab = &mut self.tabs[self.active];
         let changes = tab.doc.editor.take_changes();
         if !changes.ids.is_empty() || changes.order {
-            tab.unsnapshotted = true;
+            tab.touch();
             if !dev {
                 self.last_change = Some(Instant::now());
             }
@@ -670,7 +705,7 @@ impl App {
         let tab = &mut self.tabs[i];
         tab.doc.editor.mark_saved();
         tab.path = Some(path.clone());
-        tab.unsnapshotted = true;
+        tab.touch();
         self.status = Some(format!("Saved {}", path.display()));
         let _ = recent::push(&self.allowed, path.to_string_lossy().into_owned());
         self.recent = recent::list(&self.allowed);
@@ -878,19 +913,21 @@ impl App {
         if self.prompt.is_none() && !self.queued_errors.is_empty() {
             self.prompt = Some(Prompt::Error(std::mem::take(&mut self.queued_errors).join("\n\n")));
         }
-        Task::batch([task, self.sync()])
+        let synced = self.sync();
+        let saving = self.start_snapshot();
+        Task::batch([task, synced, saving])
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         // While a question is up, it is the only thing that can be answered.
-        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::LinkDraft(_) | Message::Key(_) | Message::Resized(_) | Message::WindowState(..) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_) | library::Msg::Cancel | library::Msg::Hover(..))) {
+        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::LinkDraft(_) | Message::Key(_) | Message::Resized(_) | Message::WindowState(..) | Message::Autosave(_) | Message::Autosaved(..) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_) | library::Msg::Cancel | library::Msg::Hover(..))) {
             return Task::none();
         }
         // The menu closes on anything done in the window (a click outside it
         // only closes it), not on the clocks or the pointer passing over.
         let action = !matches!(
             message,
-            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::WindowState(..) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Library(library::Msg::DragMove(_) | library::Msg::Cancel | library::Msg::Hover(..)) | Message::Input(Input::Move(..))
+            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Autosaved(..) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::WindowState(..) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Library(library::Msg::DragMove(_) | library::Msg::Cancel | library::Msg::Hover(..)) | Message::Input(Input::Move(..))
         );
         if self.menu.is_some() && action {
             self.menu = None;
@@ -1032,6 +1069,10 @@ impl App {
             Message::Library(m) => return self.library(m),
             Message::Quit => return self.quit(),
             Message::Answer(a) => return self.answer(a),
+            Message::Autosaved(taken, result) => {
+                self.autosaving = false;
+                session::written(self, &taken, result);
+            }
             Message::Autosave(now) => {
                 if !self.dev && self.quitting.is_none() {
                     session::tick(self, now);

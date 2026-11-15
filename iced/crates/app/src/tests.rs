@@ -64,6 +64,39 @@ fn files_tabs_autosave_recovery_and_quit() {
     assert_eq!(rectangles(&std::fs::read_to_string(dir.join(format!("session/{id_a}.excalidraw"))).unwrap()), 1);
     assert_eq!(rectangles(&std::fs::read_to_string(&a).unwrap()), 0, "never to the drawing's own file");
 
+    // A failed autosave is tried again, not forgotten (IR-2): a directory
+    // where the snapshot goes, so the write fails; then out of the way.
+    let snapshot_file = dir.join(format!("session/{id_a}.excalidraw"));
+    let snapshot_a = || rectangles(&std::fs::read_to_string(&snapshot_file).unwrap());
+    draw_rectangle(&mut app, [0.0, 100.0]);
+    std::fs::remove_file(&snapshot_file).unwrap();
+    std::fs::create_dir_all(snapshot_file.join("in-the-way")).unwrap();
+    autosave(&mut app);
+    assert!(app.status.as_deref().is_some_and(|s| s.starts_with("Autosave failed")), "{:?}", app.status);
+    assert!(app.tab().unsnapshotted(), "still to be written");
+    assert!(app.last_change.is_some(), "and the clock set to try again");
+    std::fs::remove_dir_all(&snapshot_file).unwrap();
+    autosave(&mut app);
+    assert!(!app.tab().unsnapshotted());
+    assert_eq!(snapshot_a(), 2);
+    // A change made while a snapshot is being written stays to be written.
+    draw_rectangle(&mut app, [0.0, 200.0]);
+    let pending = session::prepare(&mut app, &HashSet::new());
+    draw_rectangle(&mut app, [0.0, 300.0]);
+    let taken = pending.taken.clone();
+    let result = session::write(pending, &app.allowed, &app.session_ended);
+    session::written(&mut app, &taken, result);
+    assert_eq!(snapshot_a(), 3, "what was taken is written");
+    assert!(app.tab().unsnapshotted(), "the later change is not marked written");
+    autosave(&mut app);
+    assert_eq!(snapshot_a(), 4);
+    // Undone, so the rest of this test sees one rectangle on this tab.
+    for _ in 0..3 {
+        send(&mut app, Message::Undo);
+    }
+    autosave(&mut app);
+    assert_eq!(snapshot_a(), 1);
+
     // A second, untitled tab with its own drawing.
     send(&mut app, Message::NewTab);
     assert_eq!((app.tabs.len(), app.active), (2, 1));
@@ -145,6 +178,13 @@ fn files_tabs_autosave_recovery_and_quit() {
     assert_eq!(m["tabs"].as_array().unwrap().len(), 1, "the discarded untitled drawing is gone");
     assert_eq!(m["tabs"][0]["dirty"], false);
     assert_eq!(rectangles(&std::fs::read_to_string(&a).unwrap()), 1);
+    // A write still in flight when the session ended never lands after it
+    // (the clean-exit mark would be lost, and a dead run's tabs come back).
+    app.tabs[0].touch();
+    let pending = session::prepare(&mut app, &HashSet::new());
+    assert!(!pending.taken.is_empty());
+    assert_eq!(session::write(pending, &app.allowed, &app.session_ended), Ok(()));
+    assert_eq!(meta(&dir)["clean_exit"], true);
 
     // A clean session comes back without a question, as the files are.
     drop(app);

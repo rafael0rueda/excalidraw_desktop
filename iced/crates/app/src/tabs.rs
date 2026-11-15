@@ -18,8 +18,10 @@ pub struct Tab {
     pub built_at: RefCell<Option<f32>>,
     /// The text box over the text being typed: (element id, its contents).
     pub text_box: Option<(String, text_editor::Content)>,
-    /// Changed since its last snapshot.
-    pub unsnapshotted: bool,
+    /// Counts its changes: a snapshot records the count it was taken at.
+    pub changes: u64,
+    /// The change count its last written snapshot has; `None` before any.
+    pub snapshotted: Option<u64>,
     /// The theme stroke and fill last given to its new elements.
     pub themed: Option<(String, String)>,
 }
@@ -34,7 +36,17 @@ pub fn new_id() -> String {
 
 impl Tab {
     pub fn new(id: String, path: Option<PathBuf>, doc: Document, view: View) -> Self {
-        Self { id, path, doc, view, built_at: RefCell::new(None), text_box: None, unsnapshotted: true, themed: None }
+        Self { id, path, doc, view, built_at: RefCell::new(None), text_box: None, changes: 0, snapshotted: None, themed: None }
+    }
+
+    /// Something changed that the snapshot on disk does not have.
+    pub fn touch(&mut self) {
+        self.changes += 1;
+    }
+
+    /// Changed since its last written snapshot.
+    pub fn unsnapshotted(&self) -> bool {
+        self.snapshotted != Some(self.changes)
     }
 
     /// The file's name, or what an unsaved drawing is called.

@@ -41,8 +41,8 @@ fuzz_smoke` (stable), or `iced/fuzz` with cargo-fuzz (nightly). Neither
 nightly, cargo-fuzz nor cargo-deny is on this machine; they run in the
 podman `rust:1-bookworm` container with the `excalidraw-cargo-home` volume.
 Review 2026-11-15 of the branch (`docs/reviews/2026-11-15-iced-port.md`,
-IR-1..IR-10) is being fixed, one commit per group; its table says which
-are done.
+IR-1..IR-10) is fixed. IR-4 and IR-10 (library drag, cell hover) still
+want a by-hand look on a desktop.
 
 ## Decisions already made (do not re-litigate)
 

@@ -10,8 +10,10 @@ use crate::doc::{self, Document};
 use crate::tabs::Tab;
 use crate::App;
 use excalidraw_desktop_core::session::{self, Session, TabInput};
+use excalidraw_desktop_core::scope::Allowed;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// How long drawing has to pause before a snapshot is taken.
@@ -60,7 +62,8 @@ pub fn open(app: &App, s: Session, recover: bool) -> (Vec<Tab>, Vec<String>) {
                 }
                 let view = doc::fit(d.layers.bounds(), app.size);
                 let mut tab = Tab::new(t.id, path, d, view);
-                tab.unsnapshotted = false;
+                // Its snapshot is the one just read.
+                tab.snapshotted = Some(tab.changes);
                 tabs.push(tab);
             }
             Err(e) => {
@@ -91,11 +94,23 @@ pub fn describe(s: &Session) -> String {
     }
 }
 
-/// Writes every tab's state; scenes only for tabs changed since their last
-/// snapshot. `discarded` tabs are written as their files are (or left out,
-/// if they have none): what was discarded on the way out stays discarded.
-pub fn snapshot(app: &mut App, discarded: &HashSet<String>) -> Result<(), String> {
-    let mut inputs = Vec::new();
+/// A snapshot taken on the UI thread, to be written off it: the scenes are
+/// copies, serialized and fsynced where they cannot freeze the window
+/// (review 2026-11-15, IR-7; the Tauri app kept this off the UI thread too).
+pub struct Pending {
+    tabs: Vec<(TabInput, Option<Box<scene::Scene>>)>,
+    active: Option<String>,
+    /// Each tab whose scene is in it, at the change count it was taken at.
+    pub taken: Vec<(String, u64)>,
+}
+
+/// Every tab's state; scenes only for tabs changed since their last
+/// snapshot. `discarded` tabs are taken as their files are (or left out, if
+/// they have none): what was discarded on the way out stays discarded.
+/// Nothing is marked snapshotted here: that waits for the write (IR-2).
+pub fn prepare(app: &mut App, discarded: &HashSet<String>) -> Pending {
+    let mut tabs = Vec::new();
+    let mut taken = Vec::new();
     let canvas = app.canvas();
     for tab in &mut app.tabs {
         if let Some(canvas) = &canvas {
@@ -105,32 +120,81 @@ pub fn snapshot(app: &mut App, discarded: &HashSet<String>) -> Result<(), String
         if discarded.contains(&tab.id) {
             let Some(p) = &tab.path else { continue };
             let Ok(text) = std::fs::read_to_string(p) else { continue };
-            inputs.push(TabInput { id: tab.id.clone(), path, dirty: false, scene: Some(text) });
+            tabs.push((TabInput { id: tab.id.clone(), path, dirty: false, scene: Some(text) }, None));
             continue;
         }
-        let scene = tab.unsnapshotted.then(|| tab.doc.editor.scene.to_file_json());
-        tab.unsnapshotted = false;
-        inputs.push(TabInput { id: tab.id.clone(), path, dirty: tab.dirty(), scene });
+        let scene = tab.unsnapshotted().then(|| Box::new(tab.doc.editor.scene.clone()));
+        if scene.is_some() {
+            taken.push((tab.id.clone(), tab.changes));
+        }
+        tabs.push((TabInput { id: tab.id.clone(), path, dirty: tab.dirty(), scene: None }, scene));
     }
     let active = app.tabs.get(app.active).map(|t| t.id.clone());
-    session::save(&app.allowed, inputs, active)
+    Pending { tabs, active, taken }
+}
+
+/// Writes a snapshot, unless the session has ended since it was taken:
+/// `ended` is held for the whole write, so one still in flight at quit can
+/// never land after the last snapshot and the clean-exit mark.
+pub fn write(pending: Pending, allowed: &Allowed, ended: &Mutex<bool>) -> Result<(), String> {
+    let ended = ended.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if *ended {
+        return Ok(());
+    }
+    write_now(pending, allowed)
+}
+
+fn write_now(pending: Pending, allowed: &Allowed) -> Result<(), String> {
+    let inputs = pending
+        .tabs
+        .into_iter()
+        .map(|(mut input, scene)| {
+            if let Some(scene) = scene {
+                input.scene = Some(scene.to_file_json());
+            }
+            input
+        })
+        .collect();
+    session::save(allowed, inputs, pending.active)
+}
+
+/// A write finished. Saved tabs are marked snapshotted at the change count
+/// they were taken at, so a change made meanwhile is still to be written.
+/// A failed one is tried again once drawing pauses, rather than never.
+pub fn written(app: &mut App, taken: &[(String, u64)], result: Result<(), String>) {
+    match result {
+        Ok(()) => {
+            for (id, changes) in taken {
+                if let Some(tab) = app.tabs.iter_mut().find(|t| &t.id == id) {
+                    tab.snapshotted = Some(*changes);
+                }
+            }
+        }
+        Err(e) => {
+            app.status = Some(format!("Autosave failed: {e}"));
+            app.last_change.get_or_insert_with(Instant::now);
+        }
+    }
 }
 
 /// The autosave clock: a snapshot once drawing has paused.
 pub fn tick(app: &mut App, now: Instant) {
     if app.last_change.is_some_and(|t| now.duration_since(t) >= QUIET) {
         app.last_change = None;
-        if let Err(e) = snapshot(app, &HashSet::new()) {
-            app.status = Some(format!("Autosave failed: {e}"));
-        }
+        app.snapshot_due = true;
     }
 }
 
 /// The last snapshot, and the mark that says this run ended on purpose.
+/// Written here and now, with no write still in flight able to follow it.
 pub fn end(app: &mut App, discarded: &HashSet<String>) {
+    let gate = app.session_ended.clone();
+    let mut ended = gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    *ended = true;
     for tab in &mut app.tabs {
-        tab.unsnapshotted = true;
+        tab.snapshotted = None;
     }
-    let _ = snapshot(app, discarded);
+    let pending = prepare(app, discarded);
+    let _ = write_now(pending, &app.allowed);
     let _ = session::mark_clean_exit();
 }
