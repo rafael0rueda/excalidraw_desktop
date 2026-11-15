@@ -72,6 +72,12 @@ pub enum Msg {
     /// Let go: on the drawing it lands there; a click without moving puts it
     /// in the middle of the view.
     Drop,
+    /// The held item let go of without landing: the pointer left the
+    /// window or it lost focus, where the release may never be seen, or a
+    /// dialog came up. Otherwise the next click anywhere would drop it.
+    Cancel,
+    /// The pointer over an item's cell, or off it.
+    Hover(String, bool),
 }
 
 /// An item being dragged out of the panel.
@@ -95,6 +101,10 @@ pub struct Library {
     pending: std::collections::HashSet<String>,
     pub open: bool,
     pub drag: Option<Drag>,
+    /// The cell under the pointer. Kept here because the cell's button has
+    /// no press of its own (the `mouse_area` around it takes the press, to
+    /// start a drag), and a button without one is disabled and never hovered.
+    pub hovered: Option<String>,
 }
 
 /// `restoreLibraryItems`: version 2's `libraryItems`, or version 1's
@@ -171,7 +181,7 @@ impl Library {
                 Err(e) => (Vec::new(), false, Some(format!("The library could not be read: {e}"))),
             }
         };
-        let library = Self { items, writable, persist, pictures: HashMap::new(), pending: Default::default(), open: false, drag: None };
+        let library = Self { items, writable, persist, pictures: HashMap::new(), pending: Default::default(), open: false, drag: None, hovered: None };
         (library, problem)
     }
 
@@ -261,6 +271,13 @@ impl App {
                             self.insert_library_item(&d.id, at);
                         }
                     }
+                }
+            }
+            Msg::Cancel => self.library.drag = None,
+            Msg::Hover(id, true) => self.library.hovered = Some(id),
+            Msg::Hover(id, false) => {
+                if self.library.hovered.as_ref() == Some(&id) {
+                    self.library.hovered = None;
                 }
             }
             Msg::Insert(id) => {
@@ -433,8 +450,8 @@ fn cell<'a>(app: &'a App, item: &'a Map<String, Value>) -> Element<'a, Message> 
     };
     // Pressed, then dragged onto the drawing or let go as a click.
     let held = app.library.drag.as_ref().is_some_and(|d| d.id == id);
-    let body = button(container(face).center(CELL - 2.0)).padding(0).width(CELL).height(CELL).style(move |_, status| {
-        let hover = held || matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let hover = held || app.library.hovered.as_ref() == Some(&id);
+    let body = button(container(face).center(CELL - 2.0)).padding(0).width(CELL).height(CELL).style(move |_, _| {
         button::Style {
             background: Some(Background::Color(look.canvas)),
             border: Border { color: if hover { look.accent } else { look.surface_alt }, width: 1.0, radius: 6.0.into() },
@@ -442,7 +459,11 @@ fn cell<'a>(app: &'a App, item: &'a Map<String, Value>) -> Element<'a, Message> 
             ..button::Style::default()
         }
     });
-    let body = mouse_area(body).on_press(lib(Msg::Grab(id.clone()))).interaction(iced::mouse::Interaction::Grab);
+    let body = mouse_area(body)
+        .on_press(lib(Msg::Grab(id.clone())))
+        .on_enter(lib(Msg::Hover(id.clone(), true)))
+        .on_exit(lib(Msg::Hover(id.clone(), false)))
+        .interaction(iced::mouse::Interaction::Grab);
     let remove = button(text("×").size(11)).on_press(lib(Msg::Remove(id))).padding([0, 4]).style(chrome::chip(look, false));
     let both = stack![body, container(remove).align_right(CELL)];
     match name(item) {

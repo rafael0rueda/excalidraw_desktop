@@ -870,6 +870,11 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle(message);
+        // A dialog takes the pointer: a held library item is let go of, or
+        // the release (which the dialog swallows) would never end the drag.
+        if self.prompt.is_some() {
+            self.library.drag = None;
+        }
         if self.prompt.is_none() && !self.queued_errors.is_empty() {
             self.prompt = Some(Prompt::Error(std::mem::take(&mut self.queued_errors).join("\n\n")));
         }
@@ -878,14 +883,14 @@ impl App {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         // While a question is up, it is the only thing that can be answered.
-        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::LinkDraft(_) | Message::Key(_) | Message::Resized(_) | Message::WindowState(..) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_))) {
+        if self.prompt.is_some() && !matches!(message, Message::Answer(_) | Message::LinkDraft(_) | Message::Key(_) | Message::Resized(_) | Message::WindowState(..) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_) | library::Msg::Cancel | library::Msg::Hover(..))) {
             return Task::none();
         }
         // The menu closes on anything done in the window (a click outside it
         // only closes it), not on the clocks or the pointer passing over.
         let action = !matches!(
             message,
-            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::WindowState(..) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Library(library::Msg::DragMove(_)) | Message::Input(Input::Move(..))
+            Message::ToggleMenu(_) | Message::Key(_) | Message::Autosave(_) | Message::Tick(_) | Message::Shot(_) | Message::Resized(_) | Message::WindowState(..) | Message::Paste(_) | Message::Opened(_) | Message::HandedOver(_) | Message::SaveAsPicked(..) | Message::ImagePicked(_) | Message::ImageReady(..) | Message::SystemDark(_) | Message::ExportTo(..) | Message::Exported(_) | Message::Library(library::Msg::Pictures(_) | library::Msg::Imported(_) | library::Msg::ExportTo(_)) | Message::Library(library::Msg::DragMove(_) | library::Msg::Cancel | library::Msg::Hover(..)) | Message::Input(Input::Move(..))
         );
         if self.menu.is_some() && action {
             self.menu = None;
@@ -1321,6 +1326,10 @@ impl App {
             subs.push(iced::event::listen_with(|event, _, _| match event {
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => Some(Message::Library(library::Msg::DragMove(position))),
                 iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => Some(Message::Library(library::Msg::Drop)),
+                // Out of the window, the release may never come (IR-4).
+                iced::Event::Mouse(iced::mouse::Event::CursorLeft) | iced::Event::Window(iced::window::Event::Unfocused) => {
+                    Some(Message::Library(library::Msg::Cancel))
+                }
                 _ => None,
             }));
         }

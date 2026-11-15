@@ -600,4 +600,25 @@ fn library_items_are_dragged_onto_the_drawing() {
     send(&mut app, Message::Library(Msg::DragMove(Point::new(1150.0, 320.0))));
     send(&mut app, Message::Library(Msg::Drop));
     assert_eq!(count(&app), n);
+    // Let go of where the release is not seen (IR-4): out of the window,
+    // or under a dialog. The next release then drops nothing.
+    send(&mut app, Message::Library(Msg::Grab(id.clone())));
+    send(&mut app, Message::Library(Msg::DragMove(Point::new(200.0, 300.0))));
+    send(&mut app, Message::Library(Msg::Cancel));
+    assert!(app.library.drag.is_none());
+    send(&mut app, Message::Library(Msg::Grab(id.clone())));
+    send(&mut app, Message::Library(Msg::DragMove(Point::new(200.0, 300.0))));
+    send(&mut app, Message::Library(Msg::Remove(id.clone())));
+    assert!(matches!(app.prompt, Some(Prompt::RemoveLibraryItem { .. })));
+    assert!(app.library.drag.is_none(), "a dialog lets go of it");
+    send(&mut app, Message::Answer(Answer::Cancel));
+    send(&mut app, Message::Library(Msg::Drop));
+    assert_eq!(count(&app), n);
+    // Hover is tracked by the cell itself (IR-10).
+    send(&mut app, Message::Library(Msg::Hover(id.clone(), true)));
+    assert_eq!(app.library.hovered.as_deref(), Some(id.as_str()));
+    send(&mut app, Message::Library(Msg::Hover("other".into(), false)));
+    assert_eq!(app.library.hovered.as_deref(), Some(id.as_str()), "leaving another cell does not clear it");
+    send(&mut app, Message::Library(Msg::Hover(id, false)));
+    assert!(app.library.hovered.is_none());
 }
