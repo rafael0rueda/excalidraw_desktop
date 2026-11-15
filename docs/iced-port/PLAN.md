@@ -230,7 +230,10 @@ Kept or added:
   render embedded SVG with `usvg`, which does not fetch external resources.
 - Keep atomic writes and the private config dir from `store.rs` as they are.
 - Links open in the system browser only for `http`, `https` and `mailto`.
-- `#![forbid(unsafe_code)]` in `core`, `scene` and `render`.
+- `#![forbid(unsafe_code)]` in `rough`, `scene`, `render`, `editor`,
+  `fontmerge` and `export`. Not in `core`, which calls `flock` and
+  `getpwuid_r` through `libc` (in `store.rs` only), nor yet in `app`,
+  which has no unsafe code.
 - `cargo-deny` and `cargo-audit` in CI.
 - Fuzz the scene parser with `cargo-fuzz`, seeded from the golden corpus.
 
@@ -987,10 +990,20 @@ Not done:
     | Bézier flattening never finished on huge curves | At most 16 halvings |
     | Hachure fills of huge shapes ran out of memory | See below |
 
-    The renderer now skips elements over a million units in size, stroke
-    width, roughness or point offset. Excalidraw would freeze on such
-    elements too (rough.js has the same loops). The rough.js and
-    Excalidraw fixtures are unchanged.
+    Elements past 1e9 units in size, stroke width, roughness or point
+    offset are not drawn (first a million; review IR-9 raised it). Below
+    that, the work is capped where it grows:
+    - the hachure scan's rows and lines (IR-9);
+    - dashes per stroke (IR-9);
+    - the strokes a fill makes, rows × crossings. A closed line zigzagging
+      2,000 times crosses every row 2,000 times: 7.6 million operations at
+      10,000 units, 28 million at a million. Now at most 50,000 strokes,
+      spaced wider past that;
+    - the points a run of curve segments is flattened into (200,000).
+
+    Excalidraw would freeze on such elements too, since rough.js has the
+    same loops. The rough.js and Excalidraw fixtures are unchanged.
+    `render/tests/large_elements.rs` covers each case.
 - **`cargo-deny`** (`iced/deny.toml`, the `deny` job in CI):
   - licenses limited to permissive ones (MIT, Apache-2.0, BSD, ISC, Zlib,
     BSL, Unicode, CC0);

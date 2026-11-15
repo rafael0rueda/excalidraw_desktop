@@ -56,17 +56,32 @@ fn flatness(points: &[Point], offset: usize) -> f64 {
 /// or doubles its output for every level until memory runs out.
 const MAX_SPLITS: u32 = 16;
 
+/// Not in points-on-curve either: about the most points one run of
+/// segments is flattened into. A run of thousands of segments, each
+/// millions of units long, would otherwise take tens of millions of points
+/// (a damaged file), and every pass after this one over all of them. Real
+/// curves end far sooner: each segment stops splitting once it is flat.
+const MAX_POINTS: usize = 200_000;
+
 fn points_on_bezier_curve_with_splitting(
     points: &[Point],
     offset: usize,
     tolerance: f64,
     out: &mut Vec<Point>,
+    max_depth: u32,
 ) {
-    split(points, offset, tolerance, out, 0);
+    split(points, offset, tolerance, out, 0, max_depth);
 }
 
-fn split(points: &[Point], offset: usize, tolerance: f64, out: &mut Vec<Point>, depth: u32) {
-    if depth >= MAX_SPLITS || flatness(points, offset) < tolerance {
+fn split(
+    points: &[Point],
+    offset: usize,
+    tolerance: f64,
+    out: &mut Vec<Point>,
+    depth: u32,
+    max_depth: u32,
+) {
+    if depth >= max_depth || flatness(points, offset) < tolerance {
         let p0 = points[offset];
         match out.last() {
             Some(&last) => {
@@ -89,8 +104,8 @@ fn split(points: &[Point], offset: usize, tolerance: f64, out: &mut Vec<Point>, 
         let r1 = lerp(q1, q2, t);
         let r2 = lerp(q2, q3, t);
         let red = lerp(r1, r2, t);
-        split(&[p1, q1, r1, red], 0, tolerance, out, depth + 1);
-        split(&[red, r2, q3, p4], 0, tolerance, out, depth + 1);
+        split(&[p1, q1, r1, red], 0, tolerance, out, depth + 1, max_depth);
+        split(&[red, r2, q3, p4], 0, tolerance, out, depth + 1, max_depth);
     }
 }
 
@@ -146,9 +161,18 @@ pub fn points_on_bezier_curves(
     let mut new_points = Vec::new();
     if !points.is_empty() {
         let num_segments = (points.len() as f64 - 1.0) / 3.0;
+        // 2^depth points at most per segment, all of them within MAX_POINTS.
+        let per_segment = MAX_POINTS / (points.len() / 3).max(1);
+        let max_depth = (usize::BITS - 1 - per_segment.max(1).leading_zeros()).min(MAX_SPLITS);
         let mut i = 0usize;
         while (i as f64) < num_segments && i * 3 + 3 < points.len() {
-            points_on_bezier_curve_with_splitting(points, i * 3, tolerance, &mut new_points);
+            points_on_bezier_curve_with_splitting(
+                points,
+                i * 3,
+                tolerance,
+                &mut new_points,
+                max_depth,
+            );
             i += 1;
         }
     }

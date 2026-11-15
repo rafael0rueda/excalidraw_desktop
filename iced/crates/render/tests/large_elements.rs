@@ -68,3 +68,29 @@ fn a_long_dashed_line_is_cut_into_a_bounded_number_of_dashes() {
     assert!(length / period <= 20_001.0 && length / period > 5_000.0, "{long:?}");
     assert!((long[0] / long[1] - 8.0 / 9.0).abs() < 1e-9, "same proportions: {long:?}");
 }
+
+/// A closed line zigzagging 2,000 times, filled: every hachure row crosses
+/// it 2,000 times, so rough.js makes a stroke per pair of crossings (about
+/// 28 million operations at a million units), and its outline, flattened,
+/// runs to tens of millions of points. Both are bounded, at any size.
+#[test]
+fn a_filled_outline_crossing_every_row_thousands_of_times_is_bounded() {
+    for size in [1e4, 1e6, 9e8] {
+        let mut points: Vec<[f64; 2]> = (0..2000).map(|i| [(i % 2) as f64 * size, (i / 2 % 2) as f64 * size / 2.0 + i as f64]).collect();
+        points.push([0.0, 0.0]);
+        for fill in ["hachure", "cross-hatch", "zigzag", "solid"] {
+            let mut e = element("line", size, fill, "solid", 1.0);
+            e["points"] = serde_json::json!(points);
+            e["roundness"] = serde_json::json!({ "type": 2 });
+            let doc = serde_json::json!({ "type": "excalidraw", "version": 2, "elements": [e] });
+            let scene = Scene::parse(&doc.to_string()).unwrap();
+            let started = Instant::now();
+            let shapes = render::shape::element_shapes(&scene.elements[0], "#ffffff");
+            let took = started.elapsed();
+            let ops: usize = shapes.iter().flat_map(|d| &d.sets).map(|s| s.ops.len()).sum();
+            let what = format!("{size:e} {fill}: {ops} operations in {took:?}");
+            assert!(ops > 0 && ops < 1_000_000, "{what}");
+            assert!(took < Duration::from_secs(2), "{what}");
+        }
+    }
+}

@@ -168,13 +168,17 @@ fn sign(a: f64, b: f64) -> Ordering {
     }
 }
 
-/// The most hachure lines one fill draws, and the most rows its scan visits.
-/// Not in hachure-fill: it scans every unit of height (`step_offset` 1, the
-/// usual case) and draws height / gap lines, so a shape a billion units
-/// tall would never finish. Real drawings stay far below both; a larger
-/// shape is filled with lines spaced further apart instead.
+/// The most hachure lines one fill draws, the most rows its scan visits,
+/// and the most strokes it makes. Not in hachure-fill: it scans every unit
+/// of height (`step_offset` 1, the usual case) and draws height / gap
+/// lines, so a shape a billion units tall would never finish; and each
+/// line is a stroke per pair of edges it crosses, so an outline crossing
+/// every row thousands of times (a zigzag of 2,000 points, a damaged file)
+/// makes millions of strokes at any size. Real drawings stay far below
+/// all three; past them a shape is filled with lines spaced further apart.
 const MAX_HACHURE_LINES: f64 = 10_000.0;
 const MAX_SCAN_ROWS: f64 = 2_000_000.0;
+const MAX_HACHURE_STROKES: f64 = 50_000.0;
 
 fn straight_hachure_lines(polygons: &[Vec<Point>], gap: f64, step_offset: f64) -> Vec<[Point; 2]> {
     let mut vertex_array = Vec::new();
@@ -232,11 +236,33 @@ fn straight_hachure_lines(polygons: &[Vec<Point>], gap: f64, step_offset: f64) -
         return lines;
     }
 
-    let height = edges.iter().map(|e| e.ymax).fold(f64::NEG_INFINITY, f64::max) - edges[0].ymin;
-    let (gap, step_offset) = if height / gap > MAX_HACHURE_LINES || height / step_offset > MAX_SCAN_ROWS {
+    let height = edges
+        .iter()
+        .map(|e| e.ymax)
+        .fold(f64::NEG_INFINITY, f64::max)
+        - edges[0].ymin;
+    // Every row crosses each edge spanning it, and every two crossings are a
+    // stroke: a convex outline's edges add up to twice its height, so for
+    // one this is just the line count.
+    let crossed: f64 = edges.iter().map(|e| e.ymax - e.ymin).sum();
+    let strokes = crossed / (2.0 * gap);
+    let (gap, step_offset) = if height / gap > MAX_HACHURE_LINES
+        || height / step_offset > MAX_SCAN_ROWS
+        || strokes > MAX_HACHURE_STROKES
+    {
         // A line on every row: `step_offset != 1` draws each one.
-        let step = jsmath::max(gap, height / MAX_HACHURE_LINES);
-        (step, if step == 1.0 { 1.0 + f64::EPSILON } else { step })
+        let step = jsmath::max(
+            jsmath::max(gap, height / MAX_HACHURE_LINES),
+            crossed / (2.0 * MAX_HACHURE_STROKES),
+        );
+        (
+            step,
+            if step == 1.0 {
+                1.0 + f64::EPSILON
+            } else {
+                step
+            },
+        )
     } else {
         (gap, step_offset)
     };
