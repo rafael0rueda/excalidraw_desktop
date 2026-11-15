@@ -662,3 +662,24 @@ fn library_items_are_dragged_onto_the_drawing() {
     send(&mut app, Message::Library(Msg::Hover(id, false)));
     assert!(app.library.hovered.is_none());
 }
+
+#[test]
+fn a_drawing_handed_over_while_a_link_is_edited_opens_beside_it() {
+    // The link editor answers into the tab in view (IR-1): a drawing handed
+    // over meanwhile opens, but the edited tab stays in view and gets it.
+    let mut app = App::boot(Args { screenshot: Some("/dev/null".into()), chrome: true, ..Args::default() }).0;
+    draw_rectangle(&mut app, [0.0, 0.0]);
+    let id = app.tab().doc.editor.selection[0].clone();
+    let edited = app.tab().id.clone();
+    send(&mut app, Message::EditLink);
+    send(&mut app, Message::LinkDraft("https://example.com/".into()));
+    let other = std::env::temp_dir().join(format!("excalidraw-handed-over-{}.excalidraw", std::process::id()));
+    std::fs::write(&other, doc::EMPTY).unwrap();
+    send(&mut app, Message::HandedOver(vec![other.clone()]));
+    let _ = std::fs::remove_file(&other);
+    assert_eq!(app.tabs.len(), 2, "opened");
+    assert_eq!(app.tab().id, edited, "the edited tab stays in view");
+    assert!(matches!(app.prompt, Some(Prompt::Link { .. })));
+    send(&mut app, Message::Answer(Answer::Confirm));
+    assert_eq!(app.tab().doc.editor.scene.by_id(&id).unwrap().link.as_deref(), Some("https://example.com/"));
+}

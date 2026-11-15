@@ -1037,6 +1037,12 @@ impl App {
                 // of them, and nothing else empties `pending_open`.
                 if matches!(self.prompt, Some(Prompt::Recover { .. })) {
                     self.pending_open.extend(paths);
+                } else if matches!(self.prompt, Some(Prompt::Link { .. } | Prompt::FrameName { .. })) {
+                    // These edit the tab in view when answered: it stays in
+                    // view, and the drawings open beside it.
+                    let editing = self.tab().id.clone();
+                    self.open_paths(paths);
+                    self.active = self.position(&editing).unwrap_or(self.active);
                 } else {
                     self.open_paths(paths);
                 }
