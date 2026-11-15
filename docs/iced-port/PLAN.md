@@ -974,7 +974,9 @@ Not done:
   - CI runs it on every change (300 rounds, 2 s). Three runs of 20,000
     rounds in release pass.
   - `iced/fuzz` is the coverage-guided version (cargo-fuzz, nightly; how to
-    run it is in its Cargo.toml). It shares the same code.
+    run it is in its Cargo.toml). It shares the same code. A 10-minute
+    run (address sanitizer, 311,000 inputs, starting from the
+    every-element fixture) found nothing more.
   - It found four ways a damaged file could hang the app or run it out of
     memory. All four are fixed:
 
