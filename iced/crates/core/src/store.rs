@@ -17,20 +17,42 @@ pub fn set_app_dir(name: &'static str) -> bool {
 /// Config lives under XDG_CONFIG_HOME so it sits alongside the rest of the
 /// user's desktop configuration rather than in an app-private blob.
 pub fn config_dir() -> PathBuf {
-    config_base(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
-        // HOME unset or relative as well: ask the password database, as
-        // glib's `home_dir` did before this moved out of the Tauri crate.
-        .unwrap_or_else(|| home_dir().join(".config"))
+    config_root(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
         .join(APP_DIR.get().copied().unwrap_or("excalidraw-desktop"))
 }
 
-/// The user's home: `HOME` if set, else the password database entry, which
-/// is what `std` falls back to. `/` if neither answers, rather than a panic.
-// Deprecated for years over its Windows behaviour, which does not apply
-// here; allowed so the build stays quiet on toolchains that still say so.
-#[allow(deprecated)]
-fn home_dir() -> PathBuf {
-    std::env::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+/// The config base, always absolute: with `HOME` unset, empty or relative
+/// as well, the password database is asked, as glib's `home_dir` did before
+/// this moved out of the Tauri crate. `std::env::home_dir` would not do:
+/// it returns `HOME` whenever it is set, so the relative `HOME` just
+/// rejected came straight back and config was written under the working
+/// directory again (BE-4).
+fn config_root(xdg: Option<OsString>, home: Option<OsString>) -> PathBuf {
+    config_base(xdg, home).unwrap_or_else(|| passwd_home().unwrap_or_else(|| PathBuf::from("/")).join(".config"))
+}
+
+/// This user's home directory from the password database, if it has an
+/// absolute one.
+fn passwd_home() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut buf = vec![0 as libc::c_char; 4096];
+    loop {
+        // SAFETY: `pwd` and `buf` outlive the call, and `buf.len()` is the
+        // buffer's real size; `pw_dir` points into `buf`, read before it goes.
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        let err = unsafe { libc::getpwuid_r(libc::getuid(), &mut pwd, buf.as_mut_ptr(), buf.len(), &mut found) };
+        if err == libc::ERANGE && buf.len() < 1 << 20 {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if err != 0 || found.is_null() || pwd.pw_dir.is_null() {
+            return None;
+        }
+        let dir = unsafe { std::ffi::CStr::from_ptr(pwd.pw_dir) };
+        let dir = PathBuf::from(std::ffi::OsStr::from_bytes(dir.to_bytes()));
+        return dir.is_absolute().then_some(dir);
+    }
 }
 
 /// The XDG base directory for config, as the spec defines it.
@@ -139,7 +161,7 @@ pub fn safe_id(id: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{config_base, ensure_private_dir, instance_lock_at, safe_id};
+    use super::{config_base, config_root, ensure_private_dir, instance_lock_at, safe_id};
     use std::ffi::OsString;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
@@ -173,6 +195,17 @@ mod tests {
         assert_eq!(config_base(s(".config"), home.clone()), Some(PathBuf::from("/home/u/.config")));
         assert_eq!(config_base(None, home), Some(PathBuf::from("/home/u/.config")));
         assert_eq!(config_base(s("rel"), s("also-rel")), None);
+    }
+
+    #[test]
+    fn a_relative_or_empty_home_never_gives_a_relative_config_directory() {
+        let s = |v: &str| Some(OsString::from(v));
+        for home in [s("relative"), s(""), None] {
+            let root = config_root(None, home.clone());
+            assert!(root.is_absolute(), "HOME={home:?} gave {}", root.display());
+            assert!(root.ends_with(".config"));
+        }
+        assert_eq!(config_root(None, s("/home/u")), PathBuf::from("/home/u/.config"));
     }
 
     #[test]

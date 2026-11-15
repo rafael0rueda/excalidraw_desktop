@@ -40,6 +40,9 @@ Fuzzing: `FUZZ_ROUNDS=20000 cargo test --release -p export --test
 fuzz_smoke` (stable), or `iced/fuzz` with cargo-fuzz (nightly). Neither
 nightly, cargo-fuzz nor cargo-deny is on this machine; they run in the
 podman `rust:1-bookworm` container with the `excalidraw-cargo-home` volume.
+Review 2026-11-15 of the branch (`docs/reviews/2026-11-15-iced-port.md`,
+IR-1..IR-10) is being fixed, one commit per group; its table says which
+are done.
 
 ## Decisions already made (do not re-litigate)
 
@@ -563,6 +566,7 @@ what state the project is in.
 | `2026-09-29-security.md` | S1–S3: clipboard decoding, capabilities, embeds; shipped as 0.5.2 |
 | `2026-10-07.md` | D, F, V, K, R and T findings in seven phases; shipped as 0.5.4 |
 | `2026-11-04.md` | 31 scored findings from four reviewers (security, frontend, backend, style); phases 1–7 as PRs |
+| `2026-11-15-iced-port.md` | IR-1..IR-10: the Iced app's session, dialogs, library drag, renderer cap; `store.rs` home fallback |
 
 ## Kanagawa ERD library (2026-09-29)
 
