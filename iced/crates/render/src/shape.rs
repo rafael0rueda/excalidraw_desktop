@@ -482,9 +482,27 @@ fn elbow_arrow_path(points: &[Point], radius: f64) -> String {
     d.join(" ")
 }
 
+/// The largest size, stroke width, roughness or point offset drawn.
+/// rough.js's work grows with all of them (hachure lines, curve
+/// splitting), so a damaged file asking for 1e308 would hang the app or
+/// run it out of memory; Excalidraw's canvas would show nothing sensible
+/// either. A million units is far beyond any real drawing.
+const MAX_EXTENT: f64 = 1e6;
+
+fn reasonable(e: &Element) -> bool {
+    let ok = |v: f64| v.is_finite() && v.abs() <= MAX_EXTENT;
+    let points = e.linear.as_ref().map(|l| &l.points).into_iter().chain(e.free_draw.as_ref().map(|f| &f.points));
+    [e.width, e.height, e.stroke_width, e.roughness].into_iter().all(ok)
+        && points.flatten().all(|p| ok(p[0]) && ok(p[1]))
+}
+
 /// `_generateElementShape`: everything rough.js draws for one element, in
-/// order. Empty for text, images and frames, which are not rough shapes.
+/// order. Empty for text, images and frames, which are not rough shapes,
+/// and for elements too large to draw (`MAX_EXTENT`).
 pub fn element_shapes(e: &Element, canvas_background: &str) -> Vec<Drawable> {
+    if !reasonable(e) {
+        return Vec::new();
+    }
     let n = js_number;
     match e.kind {
         Kind::Rectangle | Kind::Iframe | Kind::Embeddable => {

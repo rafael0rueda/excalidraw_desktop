@@ -89,6 +89,9 @@ pub struct EllipseParams {
     pub ry: f64,
 }
 
+/// Reached by ellipses about 6.6 million units across.
+const MAX_ELLIPSE_STEPS: f64 = 4096.0;
+
 pub fn generate_ellipse_params(
     width: f64,
     height: f64,
@@ -102,7 +105,10 @@ pub fn generate_ellipse_params(
         o.curve_step_count,
         (o.curve_step_count / 200f64.sqrt()) * psq,
     )
-    .ceil();
+    .ceil()
+    // Not in rough.js: an ellipse millions of units across (a damaged
+    // file) would otherwise take billions of points, or never finish.
+    .min(MAX_ELLIPSE_STEPS);
     let increment = (PI * 2.0) / step_count;
     let mut rx = (width / 2.0).abs();
     let mut ry = (height / 2.0).abs();

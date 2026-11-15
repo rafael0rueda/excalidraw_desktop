@@ -50,13 +50,23 @@ fn flatness(points: &[Point], offset: usize) -> f64 {
     ux + uy
 }
 
+/// Not in points-on-curve: how often a curve may be halved. Each halving
+/// cuts its flatness by about 16, so this changes nothing for curves under
+/// some 10⁹ units; past that (a damaged file) the original never finishes,
+/// or doubles its output for every level until memory runs out.
+const MAX_SPLITS: u32 = 16;
+
 fn points_on_bezier_curve_with_splitting(
     points: &[Point],
     offset: usize,
     tolerance: f64,
     out: &mut Vec<Point>,
 ) {
-    if flatness(points, offset) < tolerance {
+    split(points, offset, tolerance, out, 0);
+}
+
+fn split(points: &[Point], offset: usize, tolerance: f64, out: &mut Vec<Point>, depth: u32) {
+    if depth >= MAX_SPLITS || flatness(points, offset) < tolerance {
         let p0 = points[offset];
         match out.last() {
             Some(&last) => {
@@ -79,8 +89,8 @@ fn points_on_bezier_curve_with_splitting(
         let r1 = lerp(q1, q2, t);
         let r2 = lerp(q2, q3, t);
         let red = lerp(r1, r2, t);
-        points_on_bezier_curve_with_splitting(&[p1, q1, r1, red], 0, tolerance, out);
-        points_on_bezier_curve_with_splitting(&[red, r2, q3, p4], 0, tolerance, out);
+        split(&[p1, q1, r1, red], 0, tolerance, out, depth + 1);
+        split(&[red, r2, q3, p4], 0, tolerance, out, depth + 1);
     }
 }
 
@@ -112,7 +122,10 @@ fn simplify_points(points: &[Point], start: usize, end: usize, epsilon: f64, out
             max_ndx = i;
         }
     }
-    if max_dist_sq.sqrt() > epsilon {
+    // `max_dist_sq > 0` is not in points-on-curve: with a negative epsilon
+    // (a damaged roughness) and nothing off the line, the original
+    // recurses on the same span until the stack runs out.
+    if max_dist_sq.sqrt() > epsilon && max_dist_sq > 0.0 {
         simplify_points(points, start, max_ndx + 1, epsilon, out);
         simplify_points(points, max_ndx, end, epsilon, out);
     } else {
