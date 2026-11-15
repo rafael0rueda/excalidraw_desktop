@@ -139,7 +139,7 @@ fn draw(drawable: &Drawable, items: &mut Vec<Item>) {
                     path: ops_to_path(&set.ops),
                     color: color::parse(&o.stroke),
                     width: o.stroke_width,
-                    dash: o.stroke_line_dash.clone(),
+                    dash: bounded_dash(&set.ops, o.stroke_line_dash.as_deref()),
                 });
             }
             OpSetType::FillPath => items.push(Item::Fill {
@@ -151,9 +151,45 @@ fn draw(drawable: &Drawable, items: &mut Vec<Item>) {
                 path: ops_to_path(&set.ops),
                 color: color::parse(o.fill.as_deref().unwrap_or("")),
                 width: o.fill_sketch_width(),
-                dash: o.fill_line_dash.clone(),
+                dash: bounded_dash(&set.ops, o.fill_line_dash.as_deref()),
             }),
         }
+    }
+}
+
+/// The most dashes one stroke is cut into.
+const MAX_DASHES: f64 = 20_000.0;
+
+/// `dash`, lengthened if the path would take more than `MAX_DASHES` of it.
+/// The canvas and tiny-skia cut the whole path into dashes, offscreen or
+/// not, so a line a hundred million units long would be millions of them
+/// every frame. Its length is over-estimated by the control polygon, which
+/// is cheap and never short.
+fn bounded_dash(ops: &[Op], dash: Option<&[f64]>) -> Option<Vec<f64>> {
+    let dash = dash?;
+    let period: f64 = dash.iter().sum();
+    let mut length = 0.0;
+    let mut at: Point = [0.0, 0.0];
+    for op in ops {
+        let (to, through): (Point, &[Point]) = match op {
+            Op::Move(p) => {
+                at = *p;
+                continue;
+            }
+            Op::LineTo(p) => (*p, &[]),
+            Op::BCurveTo(d) => ([d[4], d[5]], &[[d[0], d[1]], [d[2], d[3]]]),
+        };
+        for &p in through.iter().chain([&to]) {
+            length += (p[0] - at[0]).hypot(p[1] - at[1]);
+            at = p;
+        }
+    }
+    let dashes = length / period;
+    if period > 0.0 && dashes > MAX_DASHES {
+        let k = dashes / MAX_DASHES;
+        Some(dash.iter().map(|d| d * k).collect())
+    } else {
+        Some(dash.to_vec())
     }
 }
 

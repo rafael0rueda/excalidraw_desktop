@@ -19,7 +19,6 @@ fn element(kind: &str, size: f64, fill: &str, stroke: &str, roughness: f64) -> s
 }
 
 #[test]
-#[ignore = "IR-9 in progress: fails until rough's hachure scan is capped and MAX_EXTENT lifted"]
 fn large_elements_are_drawn_in_reasonable_time() {
     let mut slowest = (Duration::ZERO, String::new());
     for size in [1.2e6, 5e7, 9e8] {
@@ -47,4 +46,25 @@ fn large_elements_are_drawn_in_reasonable_time() {
     }
     eprintln!("slowest: {:?} for {}", slowest.0, slowest.1);
     assert!(slowest.0 < Duration::from_secs(2), "{} took {:?}", slowest.1, slowest.0);
+}
+
+#[test]
+fn a_long_dashed_line_is_cut_into_a_bounded_number_of_dashes() {
+    let dash = |size: f64| {
+        let doc = serde_json::json!({ "type": "excalidraw", "version": 2, "elements": [element("line", size, "solid", "dashed", 0.0)] });
+        let scene = Scene::parse(&doc.to_string()).unwrap();
+        let prepared = render::prepare(&scene.elements[0], &scene, "#ffffff");
+        prepared.items.iter().find_map(|i| match i {
+            render::Item::Stroke { dash: Some(d), .. } => Some(d.clone()),
+            _ => None,
+        }).expect("a dashed stroke")
+    };
+    // An ordinary line keeps Excalidraw's dash exactly.
+    assert_eq!(dash(500.0), vec![8.0, 9.0]);
+    // A 9e8-unit one: the pattern is stretched to about 20,000 dashes.
+    let long = dash(9e8);
+    let period: f64 = long.iter().sum();
+    let length = 9e8 * std::f64::consts::SQRT_2;
+    assert!(length / period <= 20_001.0 && length / period > 5_000.0, "{long:?}");
+    assert!((long[0] / long[1] - 8.0 / 9.0).abs() < 1e-9, "same proportions: {long:?}");
 }

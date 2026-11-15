@@ -32,7 +32,7 @@ impl Rng {
 
 /// Values that have broken parsers and geometry code before.
 fn nasty(rng: &mut Rng) -> Value {
-    match rng.below(18) {
+    match rng.below(19) {
         0 => Value::Null,
         1 => json!(true),
         2 => json!(-1),
@@ -50,6 +50,8 @@ fn nasty(rng: &mut Rng) -> Value {
         14 => Value::Array((0..2000).map(|i| json!([i, -i])).collect()),
         15 => json!(["a", "b"]),
         16 => json!({ "elementId": "nope", "focus": 1e9, "gap": -5, "fixedPoint": [1e308, "x"] }),
+        // Huge but drawn (under `MAX_EXTENT`): every cap in rough is reached.
+        17 => json!(5e8),
         _ => json!(-0.0),
     }
 }

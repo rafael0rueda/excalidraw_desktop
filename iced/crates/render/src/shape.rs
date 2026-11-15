@@ -483,11 +483,12 @@ fn elbow_arrow_path(points: &[Point], radius: f64) -> String {
 }
 
 /// The largest size, stroke width, roughness or point offset drawn.
-/// rough.js's work grows with all of them (hachure lines, curve
-/// splitting), so a damaged file asking for 1e308 would hang the app or
-/// run it out of memory; Excalidraw's canvas would show nothing sensible
-/// either. A million units is far beyond any real drawing.
-const MAX_EXTENT: f64 = 1e6;
+/// What rough.js does grows with size (hachure rows, ellipse steps, curve
+/// splitting) and is capped where it does, so a timeline or a 1:1 map
+/// millions of units long draws (review 2026-11-15, IR-9). Past a billion,
+/// f32 coordinates on the canvas are too coarse to draw anything sensible,
+/// and only a damaged file asks for 1e308.
+const MAX_EXTENT: f64 = 1e9;
 
 fn reasonable(e: &Element) -> bool {
     let ok = |v: f64| v.is_finite() && v.abs() <= MAX_EXTENT;

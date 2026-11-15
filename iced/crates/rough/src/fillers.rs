@@ -168,6 +168,14 @@ fn sign(a: f64, b: f64) -> Ordering {
     }
 }
 
+/// The most hachure lines one fill draws, and the most rows its scan visits.
+/// Not in hachure-fill: it scans every unit of height (`step_offset` 1, the
+/// usual case) and draws height / gap lines, so a shape a billion units
+/// tall would never finish. Real drawings stay far below both; a larger
+/// shape is filled with lines spaced further apart instead.
+const MAX_HACHURE_LINES: f64 = 10_000.0;
+const MAX_SCAN_ROWS: f64 = 2_000_000.0;
+
 fn straight_hachure_lines(polygons: &[Vec<Point>], gap: f64, step_offset: f64) -> Vec<[Point; 2]> {
     let mut vertex_array = Vec::new();
     for polygon in polygons {
@@ -223,6 +231,15 @@ fn straight_hachure_lines(polygons: &[Vec<Point>], gap: f64, step_offset: f64) -
     if edges.is_empty() {
         return lines;
     }
+
+    let height = edges.iter().map(|e| e.ymax).fold(f64::NEG_INFINITY, f64::max) - edges[0].ymin;
+    let (gap, step_offset) = if height / gap > MAX_HACHURE_LINES || height / step_offset > MAX_SCAN_ROWS {
+        // A line on every row: `step_offset != 1` draws each one.
+        let step = jsmath::max(gap, height / MAX_HACHURE_LINES);
+        (step, if step == 1.0 { 1.0 + f64::EPSILON } else { step })
+    } else {
+        (gap, step_offset)
+    };
 
     let mut edges = std::collections::VecDeque::from(edges);
     let mut active: Vec<Edge> = Vec::new();
