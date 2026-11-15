@@ -37,6 +37,14 @@ pub fn save(state: WindowState) -> Result<(), String> {
     files::write_atomic(&store::config_dir().join(FILE), text.as_bytes())
 }
 
+/// What to remember after the window reports `size`: a maximized window's
+/// size is the screen's, never the normal one, so that stays as `known`
+/// had it, or `default` if nothing is known yet.
+pub fn observed(known: Option<WindowState>, size: Size, maximized: bool, default: Size) -> WindowState {
+    let normal = if maximized { known.map_or(default, |w| w.size) } else { size };
+    WindowState { size: normal, maximized }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,5 +56,19 @@ mod tests {
         assert_eq!(parse(r#"{"width":10,"height":800}"#), None);
         assert_eq!(parse(r#"{"width":1e9,"height":800}"#), None);
         assert_eq!(parse("not json"), None);
+    }
+
+    #[test]
+    fn a_maximized_size_is_never_kept_as_the_normal_one() {
+        let saved = WindowState { size: Size::new(1200.0, 800.0), maximized: true };
+        let screen = Size::new(1920.0, 1050.0);
+        let default = Size::new(1280.0, 800.0);
+        // A launch that starts maximized keeps the size it was saved with (IR-3).
+        assert_eq!(observed(Some(saved), screen, true, default), saved);
+        // Nothing saved yet, and the desktop maximizes it: the default.
+        assert_eq!(observed(None, screen, true, default).size, default);
+        // Un-maximized: whatever it is now is the normal size.
+        let small = Size::new(900.0, 700.0);
+        assert_eq!(observed(Some(saved), small, false, default), WindowState { size: small, maximized: false });
     }
 }

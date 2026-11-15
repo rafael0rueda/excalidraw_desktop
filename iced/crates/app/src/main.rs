@@ -89,6 +89,8 @@ struct Args {
     theme: Option<String>,
     /// The desktop prefers dark, as it said before the window opened.
     system_dark: bool,
+    /// The window as the last run left it, which this one opens with.
+    saved_window: Option<window_state::WindowState>,
     /// `--export OUT`: export the drawing and exit, no window.
     export: Option<String>,
 }
@@ -315,7 +317,9 @@ impl App {
             size: Size::new(WINDOW.width, WINDOW.height - bar),
             bar,
             sized: false,
-            window: None,
+            // Known from the start: a launch that opens maximized reports
+            // the screen's size, which must not become the normal one (IR-3).
+            window: args.saved_window,
             recent: Vec::new(),
             prompt: None,
             menu: None,
@@ -1029,8 +1033,7 @@ impl App {
                 }
             }
             Message::WindowState(size, maximized) => {
-                let normal = self.window.map_or(size, |w| w.size);
-                self.window = Some(window_state::WindowState { size: if maximized { normal } else { size }, maximized });
+                self.window = Some(window_state::observed(self.window, size, maximized, WINDOW));
             }
             Message::Resized(window_size) => {
                 let first = !self.sized;
@@ -1365,7 +1368,6 @@ fn main() -> iced::Result {
     }
     // Held until the app exits: the kernel lets go of it if the app dies.
     let mut _lock = None;
-    let mut window_state = None;
     if !args.dev() {
         use excalidraw_desktop_core::{files, store};
         store::set_app_dir(APP_DIR);
@@ -1383,12 +1385,13 @@ fn main() -> iced::Result {
         // light theme first. No portal: light, as the Tauri app assumes.
         args.system_dark = mundy::Preferences::once_blocking(mundy::Interest::ColorScheme, Duration::from_millis(300))
             .is_some_and(|p| p.color_scheme == mundy::ColorScheme::Dark);
-        window_state = window_state::load();
+        args.saved_window = window_state::load();
         // What a run that died mid-write left behind; nothing writes yet.
         for dir in ["", "session", "themes"] {
             files::sweep_temp_files(&store::config_dir().join(dir));
         }
     }
+    let window_state = args.saved_window;
     let app = iced::application(move || App::boot(args.clone()), App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
